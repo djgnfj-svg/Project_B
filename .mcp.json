@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "godot": {
+      "command": "npx",
+      "args": ["-y", "@satelliteoflove/godot-mcp"],
+      "env": {
+        "GODOT_PATH": "C:/Users/djgnf/Desktop/godot_games/Project_B/Godot_v4.7.1-stable_win64.exe"
+      }
+    },
+    "aseprite": {
+      "command": "uv",
+      "args": ["--directory", "C:/Users/djgnf/mcp-servers/aseprite-mcp", "run", "-m", "aseprite_mcp"],
+      "env": {
+        "ASEPRITE_PATH": "C:/Program Files (x86)/Steam/steamapps/common/Aseprite/Aseprite.exe"
+      }
+    }
+  }
+}

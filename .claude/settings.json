@@ -1,0 +1,12 @@
+{
+  "enabledPlugins": {
+    "harness@harness-marketplace": true
+  },
+  "permissions": {
+    "ask": [
+      "Edit(docs/GDD.md)",
+      "Write(docs/GDD.md)",
+      "MultiEdit(docs/GDD.md)"
+    ]
+  }
+}

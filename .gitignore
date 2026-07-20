@@ -1,0 +1,22 @@
+# Godot engine binary (too large for GitHub — each dev keeps their own)
+Godot_v*.exe
+*.exe
+
+# Godot 4+ editor cache / generated
+.godot/
+.import/
+*.translation
+
+# Export artifacts (may contain signing passwords — do not commit)
+export_presets.cfg
+export.cfg
+/build/
+/export/
+
+# Claude Code personal overrides (keep shared settings.json, ignore local)
+.claude/settings.local.json
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
