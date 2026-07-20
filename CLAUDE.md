@@ -22,6 +22,7 @@
 
 **에이전트 라우팅 (리드가 위임):**
 - 기획/GDD = `projectb-planner` (게임을 무엇으로 만들지 정함 · GDD 수정은 승인제)
+- 기획 검증 = `projectb-critic` (planner가 만든 기획의 정합성·모순·구멍을 적대적으로 뜯음 · GDD 수정 안 함)
 - 구현 = `projectb-dev` · 설계/계획 = `projectb-architect` · 리뷰 = `projectb-reviewer`
 - 아트(도트) = `projectb-art` · Control UI = `projectb-ui` · 애니 배선 = `projectb-animator`
 - 2D 셰이더 = `projectb-shader` · 성능 진단 = `projectb-profiler` · 에디터 툴 = `projectb-tools`
@@ -38,3 +39,4 @@
 | 2026-07-21 | 기획 담당 `projectb-planner` + 진실원 문서 `docs/GDD.md` 신설, GDD 수정 승인 게이트(settings.json `permissions.ask`) 추가 | agents/projectb-planner.md · docs/GDD.md · .claude/settings.json | 하나의 진실원 기획 문서로 개발하고, 그 문서 수정은 사용자 승인을 받도록 |
 | 2026-07-21 | 프로젝트 정체를 웹 게임(Web/HTML5 익스포트)으로 확정, 네트워크 리뷰 상시 필수 규칙 추가 | CLAUDE.md · projectb-rules · projectb-reviewer | 웹 게임이라 네트워크가 코어 — 리뷰에서 WebSocket·권한·검증을 매번 확인 |
 | 2026-07-21 | "비주얼은 스프라이트 기본, 도형으로 때우지 마라" 규약 추가 | projectb-rules §0 · projectb-dev · projectb-reviewer | 임시라도 스프라이트(텍스처)로 만들어야 나중에 이미지 교체가 쉬움 |
+| 2026-07-21 | 기획 검증 에이전트 `projectb-critic` + `projectb-plancheck` 스킬(7 정합성 렌즈) 신설 | agents/projectb-critic.md · skills/projectb-plancheck | planner가 만든 기획을 적대적으로 검증(생성-검증 짝). 모순·안 닫히는 루프·비현실적 범위를 잡되 GDD는 안 고침 — 수정은 planner 승인제로 |
