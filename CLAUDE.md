@@ -7,9 +7,7 @@
 - **정체:** 2D **픽셀아트 웹 게임** (코드네임 Project_B) — Godot 4.7.1, **Web(HTML5/WASM) 익스포트 타깃**, 렌더러 Compatibility(웹 필수). ⚠ 이 사실(플랫폼·엔진·렌더러·아트 스타일)은 `docs/GDD.md` §3과 **미러**다 — 한쪽을 고치면 다른 쪽도 같이 고친다.
 - 🔴 **네트워크 리뷰는 항상 필요하다.** 웹 게임이라 네트워크(WebSocket·RPC·동기화·권한·지연/재접속 처리)가 코어다. 네트워크에 닿는 코드는 예외 없이 `projectb-reviewer`의 네트워크 점검을 거친다 — 브라우저는 ENet(UDP)을 못 쓰므로 WebSocket 경로가 맞는지, 신뢰 경계·권한 검증이 있는지 매번 본다.
 - **엔진 실행 파일:** 루트의 `Godot_v4.7.1-stable_win64.exe`.
-- **상태:** 초기 단계 — 게임 설계·모듈·에셋 아직 미확정. 뼈대(하네스)만 구성됨. **게임 기획은 `docs/GDD.md`에서 `projectb-planner`와 함께 채운다.**
-
-> **TODO(리드):** 게임 장르·핵심 루프가 GDD에서 정해지면 `projectb-rules`의 §1~§5(오토로드·모듈 지도·하드 계약·데이터 주도·함정)를 실제 내용으로 채운다.
+- **상태:** 기획 확정(GDD v1.4, 해커톤 마감 2026-08-10) · 아키텍처 규칙 확정(`projectb-rules` §1~§5) — **Godot 프로젝트(`project.godot`)는 아직 없음.** 다음 단계 = 프로젝트 뼈대 + 웹 익스포트 검증.
 
 ## 하네스: Project_B (2D Godot)
 
@@ -56,3 +54,4 @@
 | 2026-07-21 | "비주얼은 스프라이트 기본, 도형으로 때우지 마라" 규약 추가 | projectb-rules §0 · projectb-dev · projectb-reviewer | 임시라도 스프라이트(텍스처)로 만들어야 나중에 이미지 교체가 쉬움 |
 | 2026-07-21 | 기획 검증 에이전트 `projectb-critic` + `projectb-plancheck` 스킬(7 정합성 렌즈) 신설 | agents/projectb-critic.md · skills/projectb-plancheck | planner가 만든 기획을 적대적으로 검증(생성-검증 짝). 모순·안 닫히는 루프·비현실적 범위를 잡되 GDD는 안 고침 — 수정은 planner 승인제로 |
 | 2026-07-21 | 커밋 규약 신설 — 한국어 메시지, 요약 줄 `동사: 내용` 형식(추가/변경/수정/삭제/문서/정리), 한 커밋=한 논리 변경(섞이면 먼저 질문) | CLAUDE.md 커밋 규약 절 | 커밋 언어·형식·단위를 고정해 이력을 읽기 쉽게, 뒤섞인 커밋 방지 |
+| 2026-07-21 | `projectb-rules` §1~§5를 GDD 기준 실제 값으로 채움 — 오토로드 6종(EventBus·Net·GameState·Db·SaveManager·Audio)+호스트 권한 모델, 모듈 지도 10종, 예약 하드 계약(combat_math·net_schema·호스트 확정), 데이터 주도 매핑, 물리 레이어 배정표(7층)+웹·멀티 고유 함정 | projectb-rules · CLAUDE.md 상태 줄 | GDD v1.4 확정에 따라 구현 착수 전 아키텍처 지도를 고정 — 이후 모든 위임이 같은 지도를 봄 |
