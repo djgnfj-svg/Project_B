@@ -35,6 +35,10 @@ var _last_remote_msec: int = -1
 @onready var _attack_fx: Sprite2D = $AttackFx
 
 
+func _ready() -> void:
+	add_to_group("player")
+
+
 func setup(p_peer_id: int, p_is_local: bool, spawn_pos: Vector2) -> void:
 	peer_id = p_peer_id
 	is_local = p_is_local
@@ -119,6 +123,12 @@ func _show_attack_fx(dir: Vector2) -> void:
 	_attack_fx.position = dir * (job.attack_range * 0.6)
 	_attack_fx.visible = true
 	_fx_left = ATTACK_FX_TIME
+
+
+# 네트워크 검증용 좌표 — 원격은 lerp된 표시 좌표가 아니라 (클램프된) 최신 수신 좌표를 쓴다.
+# 표시 보간 지연 때문에 호스트의 사거리 검증이 정당한 적중을 거부하는 문제 방지 (실기 진단에서 확인).
+func net_anchor() -> Vector2:
+	return global_position if is_local else _remote_target
 
 
 # 원격 플레이어의 공격 연출 (stage가 G_ATK 수신 시 호출)

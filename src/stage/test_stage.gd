@@ -103,10 +103,10 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 				return
 			var e := e_req as EnemyActor
 			var attacker := _players[from_id] as PlayerActor
-			# 신뢰 경계(rules §3): 공격자의 job 기준 사거리 검증(표시 좌표는 클램프됨 — player.apply_remote_pos)
-			# + _confirm_damage의 쿨다운 게이트. 통과한 것만 확정.
+			# 신뢰 경계(rules §3): 공격자의 job 기준 사거리 검증 + _confirm_damage의 쿨다운 게이트.
+			# 좌표는 net_anchor() — 스푸핑 클램프는 유지하되 표시 보간 지연은 검증에서 제외.
 			if CombatMath.is_hit_in_reach(
-					attacker.global_position, e.global_position, attacker.job):
+					attacker.net_anchor(), e.global_position, attacker.job):
 				_confirm_damage(e, attacker.job, from_id)
 		NetSchema.G_ENEMY_HP:
 			if Net.is_host():

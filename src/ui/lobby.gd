@@ -13,6 +13,11 @@ func _ready() -> void:
 	position = Vector2.ZERO
 	size = get_viewport_rect().size
 	_url_edit.text = Net.DEFAULT_RELAY_URL
+	if OS.has_feature("web"):
+		# 배포 관례: game.<도메인> 페이지면 릴레이 기본값 = wss://relay.<도메인> (로컬 개발은 localhost 유지)
+		var page_host := str(JavaScriptBridge.eval("window.location.hostname", true))
+		if page_host.begins_with("game."):
+			_url_edit.text = "wss://relay." + page_host.trim_prefix("game.")
 	if Net.state == Net.State.CONNECTED:
 		_status.text = "서버 연결됨 — 방을 만들거나 참가하세요"
 	_host_btn.pressed.connect(_on_host_pressed)
