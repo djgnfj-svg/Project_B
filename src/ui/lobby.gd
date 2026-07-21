@@ -30,7 +30,7 @@ func _ready() -> void:
 	_try_autostart()
 
 
-# 자동 시작 — 초대 링크(?join=코드&relay=wss://…, GDD §10 스트레치 골격) + 네이티브 인자(--host/--join=)
+# 자동 시작 — 초대 링크(?join=코드&relay=wss://…, GDD §10 스트레치 골격) + 네이티브 인자(--host/--join=/--relay=)
 func _try_autostart() -> void:
 	var req := {}
 	for arg: String in OS.get_cmdline_user_args():
@@ -38,6 +38,9 @@ func _try_autostart() -> void:
 			req["host"] = true
 		elif arg.begins_with("--join="):
 			req["join"] = arg.trim_prefix("--join=")
+		elif arg.begins_with("--relay="):
+			# 네이티브 기본값이 공용 릴레이라, 로컬 릴레이 개발 테스트는 이 인자로 겨눈다 (웹 ?relay=와 대칭)
+			_url_edit.text = arg.trim_prefix("--relay=")
 	if OS.has_feature("web"):
 		var search := str(JavaScriptBridge.eval("window.location.search", true))
 		for pair: String in search.trim_prefix("?").split("&"):

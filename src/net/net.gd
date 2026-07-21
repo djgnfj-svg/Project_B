@@ -5,7 +5,9 @@ extends Node
 
 const NetSchema := preload("res://src/core/net_schema.gd")
 
-const DEFAULT_RELAY_URL := "ws://localhost:9080"
+# 공용 릴레이 — 클론 실행·workers.dev 임시배포에서도 "방 만들기"가 바로 되는 기본값.
+const DEFAULT_RELAY_URL := "wss://relay.jachana.com"
+const LOCAL_RELAY_URL := "ws://localhost:9080"
 
 enum State { DISCONNECTED, CONNECTING, CONNECTED, IN_ROOM }
 
@@ -34,12 +36,16 @@ func is_host() -> bool:
 	return my_id == NetSchema.HOST_ID
 
 
-# 이 환경의 릴레이 기본값 — 배포 관례: game.<도메인> 페이지면 wss://relay.<도메인> (단일 소스, 로비도 이걸 쓴다)
+# 이 환경의 릴레이 기본값 — 배포 관례: game.<도메인> 페이지면 wss://relay.<도메인> (단일 소스, 로비도 이걸 쓴다).
+# 로컬 웹 빌드 테스트(localhost 서빙)만 로컬 릴레이, 그 외(네이티브·workers.dev 포함)는 공용 릴레이.
 func default_relay_url() -> String:
 	if OS.has_feature("web"):
 		var page_host := str(JavaScriptBridge.eval("window.location.hostname", true))
 		if page_host.begins_with("game."):
 			return "wss://relay." + page_host.trim_prefix("game.")
+		# LAN IP 서빙(폰 실기 등)은 여기 안 걸려 공용 릴레이로 간다 — 로컬 릴레이가 필요하면 ?relay= 부착
+		if page_host == "localhost" or page_host == "127.0.0.1":
+			return LOCAL_RELAY_URL
 	return DEFAULT_RELAY_URL
 
 

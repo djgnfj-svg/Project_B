@@ -1,0 +1,11 @@
+// Project_B 웹 빌드 정적 서빙 — game.jachana.com 고정 주소 배포용 (djgnfj의 Cloudflare 계정 전용).
+// 다른 계정에선 도메인 소유권이 없어 deploy가 실패한다 — 그 경우 기본 wrangler.jsonc(workers.dev)를 쓴다.
+// deploy_web.sh가 wrangler whoami 계정을 보고 이 파일을 자동 선택한다. 설정 변경 시 wrangler.jsonc와 같이 고칠 것.
+{
+	"name": "projectb-game",
+	"main": "src/index.js",
+	"compatibility_date": "2026-07-01",
+	"assets": { "directory": "./public", "binding": "ASSETS" },
+	"workers_dev": true, // ⚠ routes가 있으면 wrangler가 workers.dev를 기본 비활성화 — 스테이징 주소 유지용
+	"routes": [{ "pattern": "game.jachana.com", "custom_domain": true }]
+}

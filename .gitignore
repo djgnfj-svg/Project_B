@@ -7,8 +7,8 @@ Godot_v*.exe
 .import/
 *.translation
 
-# Export artifacts (may contain signing passwords — do not commit)
-export_presets.cfg
+# Export artifacts — export_presets.cfg는 커밋한다(웹 프리셋뿐, 비밀값 없음 — 클론만으로 익스포트 가능하게).
+# 모바일 프리셋(서명 비밀번호)을 추가하게 되면 그때 다시 분리할 것.
 export.cfg
 /build/
 /export/
