@@ -26,31 +26,32 @@ theme_override_constants/separation = 8
 
 [node name="Title" type="Label" parent="Center/Box"]
 layout_mode = 2
-text = "Project_B — 멀티 스파이크"
+text = "Project_B"
 horizontal_alignment = 1
 
-[node name="UrlEdit" type="LineEdit" parent="Center/Box"]
+[node name="HostBtn" type="Button" parent="Center/Box"]
 unique_name_in_owner = true
-layout_mode = 2
-placeholder_text = "중계 서버 주소"
-
-[node name="CodeEdit" type="LineEdit" parent="Center/Box"]
-unique_name_in_owner = true
-layout_mode = 2
-placeholder_text = "방 코드 (참가 시)"
-max_length = 4
-
-[node name="Buttons" type="HBoxContainer" parent="Center/Box"]
-layout_mode = 2
-theme_override_constants/separation = 8
-alignment = 1
-
-[node name="HostBtn" type="Button" parent="Center/Box/Buttons"]
-unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 text = "방 만들기"
 
-[node name="JoinBtn" type="Button" parent="Center/Box/Buttons"]
+[node name="JoinLabel" type="Label" parent="Center/Box"]
+layout_mode = 2
+text = "초대 코드로 참가"
+horizontal_alignment = 1
+
+[node name="JoinRow" type="HBoxContainer" parent="Center/Box"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="CodeEdit" type="LineEdit" parent="Center/Box/JoinRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "방 코드"
+max_length = 4
+
+[node name="JoinBtn" type="Button" parent="Center/Box/JoinRow"]
 unique_name_in_owner = true
 layout_mode = 2
 text = "참가"
@@ -59,3 +60,15 @@ text = "참가"
 unique_name_in_owner = true
 layout_mode = 2
 horizontal_alignment = 1
+
+[node name="AdvBtn" type="Button" parent="Center/Box"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "서버 주소 설정"
+flat = true
+
+[node name="UrlEdit" type="LineEdit" parent="Center/Box"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+placeholder_text = "중계 서버 주소"

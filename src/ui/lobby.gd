@@ -1,10 +1,12 @@
 extends Control
 # 로비 — 중계 서버 접속 + 방 만들기/참가. 방 성립 후 씬 전환은 조합 루트(src/main)가 한다.
+# 기본 흐름 = "방 만들기" 원클릭. 코드 참가는 폴백, 서버 주소는 접힌 고급 옵션.
 
 @onready var _url_edit: LineEdit = %UrlEdit
 @onready var _code_edit: LineEdit = %CodeEdit
 @onready var _host_btn: Button = %HostBtn
 @onready var _join_btn: Button = %JoinBtn
+@onready var _adv_btn: Button = %AdvBtn
 @onready var _status: Label = %Status
 
 
@@ -12,16 +14,12 @@ func _ready() -> void:
 	# Node2D(main) 아래 붙는 루트 Control — 비-Control 부모에선 씬 앵커가 안 펴지는 경우가 있어 뷰포트 크기 강제
 	position = Vector2.ZERO
 	size = get_viewport_rect().size
-	_url_edit.text = Net.DEFAULT_RELAY_URL
-	if OS.has_feature("web"):
-		# 배포 관례: game.<도메인> 페이지면 릴레이 기본값 = wss://relay.<도메인> (로컬 개발은 localhost 유지)
-		var page_host := str(JavaScriptBridge.eval("window.location.hostname", true))
-		if page_host.begins_with("game."):
-			_url_edit.text = "wss://relay." + page_host.trim_prefix("game.")
+	_url_edit.text = Net.default_relay_url()
 	if Net.state == Net.State.CONNECTED:
 		_status.text = "서버 연결됨 — 방을 만들거나 참가하세요"
 	_host_btn.pressed.connect(_on_host_pressed)
 	_join_btn.pressed.connect(_on_join_pressed)
+	_adv_btn.pressed.connect(func() -> void: _url_edit.visible = not _url_edit.visible)
 	EventBus.net_connected.connect(func() -> void: _status.text = "서버 연결됨…")
 	EventBus.net_connect_failed.connect(
 		func(reason: String) -> void: _set_idle("연결 실패: %s" % reason))

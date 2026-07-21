@@ -13,6 +13,7 @@ var state: State = State.DISCONNECTED
 var my_id: int = 0
 var room_code: String = ""
 var peer_ids: Array[int] = []  # 나를 제외한 방 피어
+var relay_url: String = ""  # 마지막으로 접속(시도)한 릴레이 주소 — invite_url()의 재료
 
 var _ws: WebSocketPeer = null
 var _pending_msg: Dictionary = {}  # 연결 완료 직후 보낼 create/join
@@ -31,6 +32,34 @@ func _bus() -> EventBusHub:
 
 func is_host() -> bool:
 	return my_id == NetSchema.HOST_ID
+
+
+# 이 환경의 릴레이 기본값 — 배포 관례: game.<도메인> 페이지면 wss://relay.<도메인> (단일 소스, 로비도 이걸 쓴다)
+func default_relay_url() -> String:
+	if OS.has_feature("web"):
+		var page_host := str(JavaScriptBridge.eval("window.location.hostname", true))
+		if page_host.begins_with("game."):
+			return "wss://relay." + page_host.trim_prefix("game.")
+	return DEFAULT_RELAY_URL
+
+
+# 초대 링크 — 방에 있을 때 이 URL을 열면 바로 같은 방에 참가한다 (GDD §10 "코드 포함 초대 링크").
+# 릴레이가 페이지 기본값과 다를 때만 &relay=를 붙인다. 페이지 주소를 못 정하면 빈 문자열(코드 공유 폴백).
+func invite_url() -> String:
+	if room_code.is_empty():
+		return ""
+	var base := ""
+	if OS.has_feature("web"):
+		base = str(JavaScriptBridge.eval("window.location.origin + window.location.pathname", true))
+	elif relay_url.begins_with("wss://relay."):
+		base = "https://game." + relay_url.trim_prefix("wss://relay.")  # 네이티브 개발 실행 → 배포 페이지로 유도
+	if base.is_empty():
+		return ""
+	# relay 파라미터는 웹에서만 — 네이티브는 base 자체를 relay_url에서 유도해 수신자 기본값과 항상 일치
+	var url := base + "?join=" + room_code
+	if OS.has_feature("web") and relay_url != default_relay_url():
+		url += "&relay=" + relay_url.uri_encode()
+	return url
 
 
 func is_in_room() -> bool:
@@ -59,9 +88,10 @@ func leave() -> void:
 func _start(url: String, first_msg: Dictionary) -> void:
 	match state:
 		State.CONNECTED:
-			# 방 종료·참가 실패 후 — 기존 연결 재사용, 바로 요청 (url 변경은 재사용 시 무시됨)
+			# 방 종료·참가 실패 후 — 기존 연결 재사용, 바로 요청 (url 변경은 재사용 시 무시됨 → relay_url도 유지)
 			_send(first_msg)
 		State.DISCONNECTED:
+			relay_url = url
 			_ws = WebSocketPeer.new()
 			var err := _ws.connect_to_url(url)
 			if err != OK:

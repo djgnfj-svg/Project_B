@@ -17,3 +17,11 @@ offset_left = 6.0
 offset_top = 4.0
 offset_right = 300.0
 offset_bottom = 22.0
+
+[node name="InviteBtn" type="Button" parent="HUD"]
+offset_left = 6.0
+offset_top = 26.0
+offset_right = 120.0
+offset_bottom = 46.0
+focus_mode = 0
+text = "초대 링크 복사"

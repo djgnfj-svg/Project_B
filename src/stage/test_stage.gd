@@ -13,6 +13,7 @@ const SPAWN_GAP := 80.0  # 피어별 가로 간격 (연출값)
 var _players: Dictionary = {}  # peer_id -> PlayerActor
 var _enemies: Dictionary = {}  # eid -> EnemyActor
 var _last_hit_msec: Dictionary = {}  # peer_id -> 마지막 스윙 앵커 msec (호스트 전용 — 연사 스팸 게이트)
+var _invite_fx_seq: int = 0  # 복사 연타 시 이전 타이머가 새 피드백을 지우지 않게
 
 
 func _ready() -> void:
@@ -27,6 +28,7 @@ func _ready() -> void:
 			_enemies[e.eid] = e
 	($HUD/RoomCode as Label).text = "방 %s · %s" % [
 		Net.room_code, "호스트" if Net.is_host() else "게스트"]
+	($HUD/InviteBtn as Button).pressed.connect(_on_invite_pressed)
 	_spawn(Net.my_id, true)
 	for pid: int in Net.peer_ids:
 		_spawn(pid, false)
@@ -39,6 +41,22 @@ func _spawn(peer_id: int, is_local: bool) -> void:
 	add_child(p)
 	p.setup(peer_id, is_local, SPAWN_BASE + Vector2(SPAWN_GAP * float(peer_id - 1), 0.0))
 	_players[peer_id] = p
+
+
+# 초대 링크(없으면 방 코드) 클립보드 복사 — URL 구성은 Net.invite_url()이 단일 소스
+func _on_invite_pressed() -> void:
+	var btn := $HUD/InviteBtn as Button
+	var url := Net.invite_url()
+	var copied := url if not url.is_empty() else Net.room_code
+	DisplayServer.clipboard_set(copied)
+	print("[PB] invite copied: %s" % copied)
+	btn.text = "복사됨!" if not url.is_empty() else "코드 복사됨 (%s)" % Net.room_code
+	_invite_fx_seq += 1
+	var seq := _invite_fx_seq
+	get_tree().create_timer(1.5).timeout.connect(
+		func() -> void:
+			if is_instance_valid(btn) and seq == _invite_fx_seq:
+				btn.text = "초대 링크 복사")
 
 
 func _on_peer_joined(peer_id: int) -> void:
