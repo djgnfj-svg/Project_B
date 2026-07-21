@@ -28,7 +28,7 @@
 
 **검증 명령 (정본):**
 - 테스트는 **Bash 툴에서** 돌린다(PowerShell은 자식 stdout을 안 보여준다). 스위트 전체 명령은 `projectb-verify` §1이 정본 — 새 `tests/*_auto.gd`를 추가하면 여기와 `projectb-verify` §1을 **동시에** 갱신한다.
-- 현재 스위트: `tests/test_net_room_auto.gd` — 멀티 방 왕복(릴레이+호스트+게스트 3프로세스, 실행법은 `projectb-verify` §1). 판정 = 양쪽 `TEST_OK` + exit 0 + `SCRIPT ERROR` 없음.
+- 현재 스위트: `tests/test_net_room_auto.gd`(멀티 방 왕복 — 릴레이+호스트+게스트 3프로세스) · `tests/test_combat_math_auto.gd`(전투 신뢰 경계 단위). 실행법은 `projectb-verify` §1. 판정 = `TEST_OK` + exit 0 + `SCRIPT ERROR` 없음.
 - 중계 서버 로컬 실행: `./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://server/relay/relay_server.gd -- --port=9080`
 - **웹 익스포트:** `./Godot_v4.7.1-stable_win64.exe --headless --path . --export-release "Web" build/web/index.html` → `cd build/web && python -m http.server 8910` 후 브라우저에서 `http://localhost:8910` 확인.
   - 웹 템플릿 필요: `%APPDATA%/Godot/export_templates/4.7.1.stable/` (web_*.zip — 설치돼 있음).
@@ -61,3 +61,4 @@
 | 2026-07-21 | `projectb-rules` §1~§5를 GDD 기준 실제 값으로 채움 — 오토로드 6종(EventBus·Net·GameState·Db·SaveManager·Audio)+호스트 권한 모델, 모듈 지도 10종, 예약 하드 계약(combat_math·net_schema·호스트 확정), 데이터 주도 매핑, 물리 레이어 배정표(7층)+웹·멀티 고유 함정 | projectb-rules · CLAUDE.md 상태 줄 | GDD v1.4 확정에 따라 구현 착수 전 아키텍처 지도를 고정 — 이후 모든 위임이 같은 지도를 봄 |
 | 2026-07-21 | Godot 프로젝트 뼈대 생성(project.godot — Compatibility·Nearest·640×360 임시+정수배, 부팅 씬 src/main) + 4.7.1 웹 템플릿 설치 + 웹 익스포트 파이프라인 검증(빌드 산출·로컬 서버 200 확인). 웹 익스포트 정본 명령을 검증 명령 절에 추가 | project.godot · src/main · CLAUDE.md | 웹 빌드가 제출물의 전부 — 익스포트 리스크를 Day 1에 제거 |
 | 2026-07-21 | 멀티 골격 스파이크 — 자체 JSON/WebSocket 프로토콜(net_schema 단일 소스) + 중계 서버(server/relay, 방 코드 스코프 릴레이) + Net 오토로드 + 로비/테스트 스테이지(피어당 스폰·위치 동기화). 첫 자동 테스트(tests/test_net_room_auto.gd — 방 왕복 + 방 종료 후 재생성, 뮤테이션 2종으로 검출력 증명), reviewer 네트워크 리뷰 Critical(방 종료 후 상태기계 데드락) 수정. 함정 추가: `-s`에선 오토로드 전역 식별자 컴파일 불가 → core/net은 /root+class_name 접근 | src/core·src/net·server/relay·src/player·src/stage·src/ui·tests · projectb-rules §2·§3·§5 · projectb-verify §1 | 네트워크가 코어(웹 게임) — 멀티 구조를 먼저 뚫고 그 위에 게임플레이를 쌓기 위해 |
+| 2026-07-21 | 전사 슬라이스 1단계 — 마우스 조준(2방향 플립)·좌클릭 공격(_unhandled_input, 원형 질의)·Shift 구르기 + 허수아비 적(EnemyDef·dummy.tres). 전투 동기화 = 호스트 권한: hit_req 사거리+쿨다운 검증(CombatMath, 같은 스윙 다중 타격 허용), 부활 확정 호스트 전용(enemy_hp_confirmed→ehp 브로드캐스트), ehp 송신자 검증, 원격 변위 클램프(순간이동 스푸핑 완화), 공격자 job 기반 판정. 테스트 추가: test_combat_math_auto(경계값, 뮤테이션 검출 확인) | src/core(combat_math·enemy_def·event_bus·net_schema)·src/enemies·src/player·src/stage·data·tests·project.godot | GDD v1.5 조작 확정 → 전투 코어 착수. reviewer Critical 3·Important 2 반영 |

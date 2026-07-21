@@ -6,3 +6,6 @@
 script = ExtResource("1")
 display_name = "전사"
 move_speed = 100.0
+attack_damage = 10
+attack_range = 24.0
+attack_cooldown = 0.4

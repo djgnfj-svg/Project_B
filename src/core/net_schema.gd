@@ -25,7 +25,10 @@ const FAIL_FULL := "full"
 
 # 게임 페이로드 (data 내부). "k" = 종류.
 const KEY_KIND := "k"
-const G_POS := "pos"                  # {k, x, y}  자기 캐릭터 위치 (각자 자기 것만 보낸다)
+const G_POS := "pos"                  # {k, x, y, f}  자기 캐릭터 위치+좌우 플립 (각자 자기 것만 보낸다)
+const G_ATK := "atk"                  # {k, dx, dy}   공격 연출 (방향) — 판정 아님, 원격 표시용
+const G_HIT_REQ := "hitreq"           # {k, eid}      게스트 → 호스트: 적중 요청 (호스트가 사거리 검증 후 확정)
+const G_ENEMY_HP := "ehp"             # {k, eid, hp}  호스트 → 전원: 적 HP 확정 브로드캐스트 (hp<=0 = 사망)
 
 const ROOM_CODE_LEN := 4
 const ROOM_CODE_CHARS := "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # 혼동 문자(I/L/O/0/1) 제외
