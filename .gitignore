@@ -23,3 +23,6 @@ desktop.ini
 
 
 .mcp.json
+server/game-worker/public/
+.wrangler/
+**/.wrangler/

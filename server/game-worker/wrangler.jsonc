@@ -1,0 +1,12 @@
+// Project_B 웹 빌드 정적 서빙 — Cloudflare Workers 정적 에셋 배포 설정.
+// ⚠ 에셋 파일당 25 MiB 제한 → index.wasm은 gzip(index.wasm.gz)으로 스테이징하고
+//   Worker(src/index.js)가 Content-Encoding: gzip으로 서빙한다.
+// 배포(스테이징 포함)는 scripts/deploy_web.sh 가 정본.
+{
+	"name": "projectb-game",
+	"main": "src/index.js",
+	"compatibility_date": "2026-07-01",
+	"assets": { "directory": "./public", "binding": "ASSETS" },
+	"workers_dev": true, // ⚠ routes가 있으면 wrangler가 workers.dev를 기본 비활성화 — 스테이징 주소 유지용
+	"routes": [{ "pattern": "game.jachana.com", "custom_domain": true }]
+}

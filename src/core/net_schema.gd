@@ -13,7 +13,7 @@ const C_RELAY := "relay"              # {t, data}  (data = 게임 페이로드 D
 # 중계 → 클라
 const S_CREATED := "created"          # {t, room, id}
 const S_JOINED := "joined"            # {t, room, id, peers}  (peers = 기존 피어 id 목록)
-const S_JOIN_FAIL := "join_fail"      # {t, reason}
+const S_JOIN_FAIL := "join_fail"      # {t, reason} — create 실패(server_full)에도 온다 (Workers 릴레이)
 const S_PEER_JOINED := "peer_joined"  # {t, id}
 const S_PEER_LEFT := "peer_left"      # {t, id}
 const S_ROOM_CLOSED := "room_closed"  # {t}  (호스트 이탈 — 클라는 로비로)
@@ -22,6 +22,7 @@ const S_MSG := "msg"                  # {t, from, data}
 # join_fail 사유
 const FAIL_NO_ROOM := "no_room"
 const FAIL_FULL := "full"
+const FAIL_SERVER_FULL := "server_full"  # 서버 전체 방 상한 (Workers 릴레이 자원 상한 — rules §2)
 
 # 게임 페이로드 (data 내부). "k" = 종류.
 const KEY_KIND := "k"

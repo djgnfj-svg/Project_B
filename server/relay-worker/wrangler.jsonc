@@ -1,0 +1,14 @@
+// Project_B 중계 서버 — Cloudflare Workers + Durable Objects 배포 설정.
+// 배포: cd server/relay-worker && npx wrangler deploy
+// 로컬: npx wrangler dev --port 9082 → ws://localhost:9082
+{
+	"name": "projectb-relay",
+	"main": "src/index.js",
+	"compatibility_date": "2026-07-01",
+	"durable_objects": {
+		"bindings": [{ "name": "RELAY_HUB", "class_name": "RelayHub" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["RelayHub"] }],
+	"workers_dev": true, // ⚠ routes가 있으면 wrangler가 workers.dev를 기본 비활성화 — 스테이징 주소 유지용
+	"routes": [{ "pattern": "relay.jachana.com", "custom_domain": true }]
+}
