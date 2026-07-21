@@ -27,7 +27,7 @@ func _ready() -> void:
 	_try_autostart()
 
 
-# 자동 시작 — 초대 링크(?join=코드, GDD §10 스트레치 골격) + 네이티브 인자(--host/--join=, 테스트용)
+# 자동 시작 — 초대 링크(?join=코드&relay=wss://…, GDD §10 스트레치 골격) + 네이티브 인자(--host/--join=)
 func _try_autostart() -> void:
 	var req := {}
 	for arg: String in OS.get_cmdline_user_args():
@@ -42,6 +42,8 @@ func _try_autostart() -> void:
 				req["host"] = true
 			elif pair.begins_with("join="):
 				req["join"] = pair.get_slice("=", 1)
+			elif pair.begins_with("relay="):
+				_url_edit.text = pair.get_slice("=", 1).uri_decode()
 	if req.has("host"):
 		_on_host_pressed()
 	elif req.has("join"):
