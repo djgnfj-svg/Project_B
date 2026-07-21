@@ -20,6 +20,7 @@ const ENEMY_BODY_MASK := 1 << 2  # 물리 레이어 3 enemy_body — rules §5 �
 
 var peer_id: int = 0
 var is_local: bool = false
+var scene_id: String = ""  # 소속 씬 (net_schema SCENE_*) — G_POS에 실어 다른 씬 피어의 유령 스폰 방지
 
 var _remote_target: Vector2 = Vector2.ZERO
 var _remote_flip: bool = false
@@ -40,9 +41,10 @@ func _ready() -> void:
 	add_to_group("player")
 
 
-func setup(p_peer_id: int, p_is_local: bool, spawn_pos: Vector2) -> void:
+func setup(p_peer_id: int, p_is_local: bool, spawn_pos: Vector2, p_scene_id: String) -> void:
 	peer_id = p_peer_id
 	is_local = p_is_local
+	scene_id = p_scene_id
 	global_position = spawn_pos
 	_remote_target = spawn_pos
 	if not is_local:
@@ -155,6 +157,7 @@ func _send_pos(delta: float) -> void:
 		_send_accum = 0.0
 		Net.send_game({
 			NetSchema.KEY_KIND: NetSchema.G_POS,
+			"s": scene_id,
 			"x": global_position.x,
 			"y": global_position.y,
 			"f": _sprite.flip_h,
