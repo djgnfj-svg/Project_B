@@ -27,8 +27,9 @@
 - **리드가 직접 하는 것:** core 스키마 변경, `mcp__godot` 필요 작업, `--import`, git 커밋, 회귀 위험이 큰 tight 검증 루프.
 
 **검증 명령 (정본):**
-- 아직 테스트 없음. 첫 `tests/*_auto.gd`를 추가하면 여기와 `projectb-verify` §1을 **동시에** 갱신한다.
-- 테스트는 **Bash 툴에서** `./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/<파일>` 로 돌린다(PowerShell은 자식 stdout을 안 보여준다).
+- 테스트는 **Bash 툴에서** 돌린다(PowerShell은 자식 stdout을 안 보여준다). 스위트 전체 명령은 `projectb-verify` §1이 정본 — 새 `tests/*_auto.gd`를 추가하면 여기와 `projectb-verify` §1을 **동시에** 갱신한다.
+- 현재 스위트: `tests/test_net_room_auto.gd` — 멀티 방 왕복(릴레이+호스트+게스트 3프로세스, 실행법은 `projectb-verify` §1). 판정 = 양쪽 `TEST_OK` + exit 0 + `SCRIPT ERROR` 없음.
+- 중계 서버 로컬 실행: `./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://server/relay/relay_server.gd -- --port=9080`
 - **웹 익스포트:** `./Godot_v4.7.1-stable_win64.exe --headless --path . --export-release "Web" build/web/index.html` → `cd build/web && python -m http.server 8910` 후 브라우저에서 `http://localhost:8910` 확인.
   - 웹 템플릿 필요: `%APPDATA%/Godot/export_templates/4.7.1.stable/` (web_*.zip — 설치돼 있음).
   - ⚠ `export_presets.cfg`는 gitignore(로컬 전용) — 없으면 Web 프리셋을 재생성한다 (`thread_support=false` 필수, `exclude_filter`에 `.mcp.json, .claude/*, docs/*, memory/*`).
@@ -59,3 +60,4 @@
 | 2026-07-21 | 커밋 규약 신설 — 한국어 메시지, 요약 줄 `동사: 내용` 형식(추가/변경/수정/삭제/문서/정리), 한 커밋=한 논리 변경(섞이면 먼저 질문) | CLAUDE.md 커밋 규약 절 | 커밋 언어·형식·단위를 고정해 이력을 읽기 쉽게, 뒤섞인 커밋 방지 |
 | 2026-07-21 | `projectb-rules` §1~§5를 GDD 기준 실제 값으로 채움 — 오토로드 6종(EventBus·Net·GameState·Db·SaveManager·Audio)+호스트 권한 모델, 모듈 지도 10종, 예약 하드 계약(combat_math·net_schema·호스트 확정), 데이터 주도 매핑, 물리 레이어 배정표(7층)+웹·멀티 고유 함정 | projectb-rules · CLAUDE.md 상태 줄 | GDD v1.4 확정에 따라 구현 착수 전 아키텍처 지도를 고정 — 이후 모든 위임이 같은 지도를 봄 |
 | 2026-07-21 | Godot 프로젝트 뼈대 생성(project.godot — Compatibility·Nearest·640×360 임시+정수배, 부팅 씬 src/main) + 4.7.1 웹 템플릿 설치 + 웹 익스포트 파이프라인 검증(빌드 산출·로컬 서버 200 확인). 웹 익스포트 정본 명령을 검증 명령 절에 추가 | project.godot · src/main · CLAUDE.md | 웹 빌드가 제출물의 전부 — 익스포트 리스크를 Day 1에 제거 |
+| 2026-07-21 | 멀티 골격 스파이크 — 자체 JSON/WebSocket 프로토콜(net_schema 단일 소스) + 중계 서버(server/relay, 방 코드 스코프 릴레이) + Net 오토로드 + 로비/테스트 스테이지(피어당 스폰·위치 동기화). 첫 자동 테스트(tests/test_net_room_auto.gd — 방 왕복 + 방 종료 후 재생성, 뮤테이션 2종으로 검출력 증명), reviewer 네트워크 리뷰 Critical(방 종료 후 상태기계 데드락) 수정. 함정 추가: `-s`에선 오토로드 전역 식별자 컴파일 불가 → core/net은 /root+class_name 접근 | src/core·src/net·server/relay·src/player·src/stage·src/ui·tests · projectb-rules §2·§3·§5 · projectb-verify §1 | 네트워크가 코어(웹 게임) — 멀티 구조를 먼저 뚫고 그 위에 게임플레이를 쌓기 위해 |
