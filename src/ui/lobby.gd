@@ -9,6 +9,9 @@ extends Control
 
 
 func _ready() -> void:
+	# Node2D(main) 아래 붙는 루트 Control — 비-Control 부모에선 씬 앵커가 안 펴지는 경우가 있어 뷰포트 크기 강제
+	position = Vector2.ZERO
+	size = get_viewport_rect().size
 	_url_edit.text = Net.DEFAULT_RELAY_URL
 	if Net.state == Net.State.CONNECTED:
 		_status.text = "서버 연결됨 — 방을 만들거나 참가하세요"
@@ -21,6 +24,29 @@ func _ready() -> void:
 		func(reason: String) -> void: _set_idle("참가 실패: %s" % reason))
 	EventBus.room_created.connect(
 		func(code: String) -> void: _status.text = "방 생성됨 — 코드: %s" % code)
+	_try_autostart()
+
+
+# 자동 시작 — 초대 링크(?join=코드, GDD §10 스트레치 골격) + 네이티브 인자(--host/--join=, 테스트용)
+func _try_autostart() -> void:
+	var req := {}
+	for arg: String in OS.get_cmdline_user_args():
+		if arg == "--host":
+			req["host"] = true
+		elif arg.begins_with("--join="):
+			req["join"] = arg.trim_prefix("--join=")
+	if OS.has_feature("web"):
+		var search := str(JavaScriptBridge.eval("window.location.search", true))
+		for pair: String in search.trim_prefix("?").split("&"):
+			if pair == "host":
+				req["host"] = true
+			elif pair.begins_with("join="):
+				req["join"] = pair.get_slice("=", 1)
+	if req.has("host"):
+		_on_host_pressed()
+	elif req.has("join"):
+		_code_edit.text = str(req["join"])
+		_on_join_pressed()
 
 
 func _on_host_pressed() -> void:

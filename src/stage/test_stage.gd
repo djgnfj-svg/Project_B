@@ -25,6 +25,8 @@ func _ready() -> void:
 		var e := node as EnemyActor
 		if e != null and not e.eid.is_empty():
 			_enemies[e.eid] = e
+	($HUD/RoomCode as Label).text = "방 %s · %s" % [
+		Net.room_code, "호스트" if Net.is_host() else "게스트"]
 	_spawn(Net.my_id, true)
 	for pid: int in Net.peer_ids:
 		_spawn(pid, false)
