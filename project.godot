@@ -14,6 +14,7 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 
 EventBus="*res://src/core/event_bus.gd"
 Net="*res://src/net/net.gd"
+GameState="*res://src/core/game_state.gd"
 DebugBridge="*res://src/core/debug_bridge.gd"
 
 [display]

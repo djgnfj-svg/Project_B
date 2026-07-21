@@ -13,6 +13,8 @@ const SPAWN_GAP := 80.0  # 피어별 가로 간격 (연출값)
 var _players: Dictionary = {}  # peer_id -> PlayerActor
 var _enemies: Dictionary = {}  # eid -> EnemyActor
 var _last_hit_msec: Dictionary = {}  # peer_id -> 마지막 스윙 앵커 msec (호스트 전용 — 연사 스팸 게이트)
+var _peer_jobs: Dictionary = {}  # peer_id -> 잠긴 직업 id — "시작 시 선택·이후 고정"(GDD §5) 강제
+var _pos_seen: Dictionary = {}  # peer_id -> true — 첫 G_POS 수신 시 재공지 트리거 (공지 유실 경합 복구)
 var _invite_fx_seq: int = 0  # 복사 연타 시 이전 타이머가 새 피드백을 지우지 않게
 
 
@@ -32,6 +34,7 @@ func _ready() -> void:
 	_spawn(Net.my_id, true)
 	for pid: int in Net.peer_ids:
 		_spawn(pid, false)
+	_announce_job()
 
 
 func _spawn(peer_id: int, is_local: bool) -> void:
@@ -40,7 +43,15 @@ func _spawn(peer_id: int, is_local: bool) -> void:
 	var p := PlayerScene.instantiate() as PlayerActor
 	add_child(p)
 	p.setup(peer_id, is_local, SPAWN_BASE + Vector2(SPAWN_GAP * float(peer_id - 1), 0.0))
+	if is_local:
+		p.set_job(GameState.selected_job())  # 원격은 기본(전사)으로 두고 G_JOB 공지로 확정
 	_players[peer_id] = p
+
+
+# 직업 공지 — 내 직업 id를 방 전원에 브로드캐스트.
+# 스테이지 입장 시 1회 + 새 피어 합류 시 재공지(늦게 온 피어도 기존 피어 직업을 알게).
+func _announce_job() -> void:
+	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_JOB, "job": GameState.selected_job_id})
 
 
 # 초대 링크(없으면 방 코드) 클립보드 복사 — URL 구성은 Net.invite_url()이 단일 소스
@@ -61,12 +72,16 @@ func _on_invite_pressed() -> void:
 
 func _on_peer_joined(peer_id: int) -> void:
 	_spawn(peer_id, false)
+	_announce_job()
 
 
 func _on_peer_left(peer_id: int) -> void:
 	if _players.has(peer_id):
 		_players[peer_id].queue_free()
 		_players.erase(peer_id)
+	_peer_jobs.erase(peer_id)  # 같은 id로 새 피어가 들어와도 이전 잠금·앵커가 남지 않게
+	_pos_seen.erase(peer_id)
+	_last_hit_msec.erase(peer_id)
 
 
 # 로컬 플레이어의 공격이 적에 닿음 (player가 자기 job을 실어 emit) — 확정은 권한 경로로
@@ -107,6 +122,22 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			_players[from_id].apply_remote_pos(
 				Vector2(float(data.get("x", 0.0)), float(data.get("y", 0.0))),
 				bool(data.get("f", false)))
+			if not _pos_seen.has(from_id):
+				# 첫 G_POS = 상대 스테이지가 듣고 있다는 증명 — 스테이지 입장 전 드랍된 공지를 재전송.
+				# (peer_joined 시점 공지는 상대 씬 전환 중이면 수신자 없이 유실될 수 있다)
+				_pos_seen[from_id] = true
+				_announce_job()
+		NetSchema.G_JOB:
+			if not _players.has(from_id):
+				_spawn(from_id, false)  # 공지가 스폰보다 먼저 온 경합 대비 (G_POS와 동일 패턴)
+				if not _players.has(from_id):
+					return
+			if _peer_jobs.has(from_id):
+				return  # 첫 공지에서 잠금 — 판 도중 직업 변경(스탯 취사선택 이득)은 무시 (GDD §5)
+			# 신뢰 경계(rules §3): id 문자열만 받고 수치는 내 data/jobs에서 리졸브.
+			# 모르는 id는 GameState가 기본 직업으로 떨어뜨린다. 이후 사거리·쿨다운 검증이 이 job 기준.
+			_peer_jobs[from_id] = str(data.get("job", ""))
+			_players[from_id].set_job(GameState.job_def(str(data.get("job", ""))))
 		NetSchema.G_ATK:
 			if _players.has(from_id):
 				var dir := Vector2(float(data.get("dx", 1.0)), float(data.get("dy", 0.0)))

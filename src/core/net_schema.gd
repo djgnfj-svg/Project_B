@@ -28,6 +28,7 @@ const FAIL_SERVER_FULL := "server_full"  # 서버 전체 방 상한 (Workers 릴
 const KEY_KIND := "k"
 const G_POS := "pos"                  # {k, x, y, f}  자기 캐릭터 위치+좌우 플립 (각자 자기 것만 보낸다)
 const G_ATK := "atk"                  # {k, dx, dy}   공격 연출 (방향) — 판정 아님, 원격 표시용
+const G_JOB := "job"                  # {k, job}      직업 공지 (id 문자열) — 스테이지 입장·피어 합류 시. 수신 측은 자기 data/jobs에서 리졸브(모르는 id = 기본 직업)
 const G_HIT_REQ := "hitreq"           # {k, eid}      게스트 → 호스트: 적중 요청 (호스트가 사거리 검증 후 확정)
 const G_ENEMY_HP := "ehp"             # {k, eid, hp}  호스트 → 전원: 적 HP 확정 브로드캐스트 (hp<=0 = 사망)
 

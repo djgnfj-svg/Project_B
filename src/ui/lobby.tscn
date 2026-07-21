@@ -1,6 +1,11 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://src/ui/lobby.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/player/warrior_16.png" id="2"]
+[ext_resource type="Texture2D" path="res://assets/sprites/player/archer_16.png" id="3"]
+[ext_resource type="Texture2D" path="res://assets/sprites/player/mage_16.png" id="4"]
+
+[sub_resource type="ButtonGroup" id="job_group"]
 
 [node name="Lobby" type="Control"]
 layout_mode = 3
@@ -28,6 +33,80 @@ theme_override_constants/separation = 8
 layout_mode = 2
 text = "Project_B"
 horizontal_alignment = 1
+
+[node name="JobLabel" type="Label" parent="Center/Box"]
+layout_mode = 2
+text = "직업 선택"
+horizontal_alignment = 1
+
+[node name="JobRow" type="HBoxContainer" parent="Center/Box"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 12
+
+[node name="WarriorBox" type="VBoxContainer" parent="Center/Box/JobRow"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Icon" type="TextureRect" parent="Center/Box/JobRow/WarriorBox"]
+custom_minimum_size = Vector2(32, 32)
+layout_mode = 2
+size_flags_horizontal = 4
+texture = ExtResource("2")
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="WarriorBtn" type="Button" parent="Center/Box/JobRow/WarriorBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(64, 0)
+layout_mode = 2
+toggle_mode = true
+button_pressed = true
+button_group = SubResource("job_group")
+text = "전사"
+
+[node name="ArcherBox" type="VBoxContainer" parent="Center/Box/JobRow"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Icon" type="TextureRect" parent="Center/Box/JobRow/ArcherBox"]
+custom_minimum_size = Vector2(32, 32)
+layout_mode = 2
+size_flags_horizontal = 4
+texture = ExtResource("3")
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="ArcherBtn" type="Button" parent="Center/Box/JobRow/ArcherBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(64, 0)
+layout_mode = 2
+toggle_mode = true
+button_group = SubResource("job_group")
+text = "궁수"
+
+[node name="MageBox" type="VBoxContainer" parent="Center/Box/JobRow"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Icon" type="TextureRect" parent="Center/Box/JobRow/MageBox"]
+custom_minimum_size = Vector2(32, 32)
+layout_mode = 2
+size_flags_horizontal = 4
+texture = ExtResource("4")
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="MageBtn" type="Button" parent="Center/Box/JobRow/MageBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(64, 0)
+layout_mode = 2
+toggle_mode = true
+button_group = SubResource("job_group")
+text = "법사"
 
 [node name="HostBtn" type="Button" parent="Center/Box"]
 unique_name_in_owner = true

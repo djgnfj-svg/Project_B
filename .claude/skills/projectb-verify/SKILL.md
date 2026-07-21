@@ -19,6 +19,9 @@ PowerShell은 자식 프로세스 stdout을 안 보여준다 — **테스트는 
 # CombatMath 단위 (사거리·쿨다운 신뢰 경계의 경계값)
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_combat_math_auto.gd
 
+# GameState 직업 리졸버 (data/jobs 스캔 allowlist + 모르는/조작 id 폴백 — 네트워크 job id 신뢰 경계)
+./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_game_state_auto.gd
+
 # 멀티 방 왕복 (릴레이+호스트+게스트 3프로세스 — 방 생성→참가→ping/pong 왕복 검증)
 CODEFILE="<임시경로>/room_code.txt"; rm -f "$CODEFILE"
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://server/relay/relay_server.gd -- --port=9081 > relay.log 2>&1 &

@@ -46,6 +46,16 @@ func setup(p_peer_id: int, p_is_local: bool, spawn_pos: Vector2) -> void:
 	_remote_target = spawn_pos
 	if not is_local:
 		_sprite.modulate = REMOTE_TINT
+	set_job(job)
+
+
+# 직업 적용 — 스프라이트까지 교체. 원격은 G_JOB 공지 수신 시 stage가 다시 부른다.
+func set_job(j: JobDef) -> void:
+	if j == null:
+		return
+	job = j
+	if j.sprite != null:
+		_sprite.texture = j.sprite
 
 
 func _physics_process(delta: float) -> void:
