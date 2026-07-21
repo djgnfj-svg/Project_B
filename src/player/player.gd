@@ -14,6 +14,7 @@ const ROLL_TIME := 0.25
 const ROLL_COOLDOWN := 0.8
 const ATTACK_FX_TIME := 0.12
 const REMOTE_MAX_SPEED_MULT := 1.5  # 원격 변위 클램프 여유 — 순간이동 스푸핑 완화 (rules §3)
+const ENEMY_BODY_MASK := 1 << 2  # 물리 레이어 3 enemy_body — rules §5 배정표가 단일 소스
 
 @export var job: JobDef
 
@@ -108,13 +109,14 @@ func _local_combat() -> void:
 		_show_attack_fx(dir)
 		Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ATK, "dx": dir.x, "dy": dir.y})
 		# 판정: 조준 방향 원형 질의 (Area 노드 대신 즉시 질의 — 프레임 지연 없음)
-		var center := global_position + dir * (job.attack_range * 0.6)
+		# 기하는 CombatMath 단일 소스 — FX 위치(_show_attack_fx)와 같은 함수라 어긋나지 않는다
+		var center := global_position + CombatMath.attack_center_offset(dir, job)
 		var shape := CircleShape2D.new()
-		shape.radius = job.attack_range * 0.5
+		shape.radius = CombatMath.attack_radius(job)
 		var params := PhysicsShapeQueryParameters2D.new()
 		params.shape = shape
 		params.transform = Transform2D(0.0, center)
-		params.collision_mask = 4  # enemy_body (레이어 3) — rules §5 배정표
+		params.collision_mask = ENEMY_BODY_MASK
 		params.collide_with_bodies = true
 		var hits := get_world_2d().direct_space_state.intersect_shape(params, 8)
 		for hit: Dictionary in hits:
@@ -130,7 +132,7 @@ func _aim_dir() -> Vector2:
 
 func _show_attack_fx(dir: Vector2) -> void:
 	_attack_fx.rotation = dir.angle()
-	_attack_fx.position = dir * (job.attack_range * 0.6)
+	_attack_fx.position = CombatMath.attack_center_offset(dir, job)
 	_attack_fx.visible = true
 	_fx_left = ATTACK_FX_TIME
 

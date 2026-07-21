@@ -14,6 +14,20 @@ static func is_hit_in_reach(attacker_pos: Vector2, enemy_pos: Vector2, job: JobD
 	return attacker_pos.distance_to(enemy_pos) <= job.attack_range * 2.0
 
 
+# 히트 기하 — 단일 소스 (§3). 실제 판정(원형 질의)과 공격 FX 위치가 같은 함수를 부른다.
+# 한쪽만 조이면 "맞는 곳"과 "보이는 곳"이 어긋난다 — 손맛 튜닝은 반드시 여기서.
+const ATTACK_CENTER_SCALE := 0.6  # 공격 중심까지의 거리 = range * 이 값
+const ATTACK_RADIUS_SCALE := 0.5  # 판정 반경 = range * 이 값
+
+
+static func attack_center_offset(dir: Vector2, job: JobDef) -> Vector2:
+	return dir * (job.attack_range * ATTACK_CENTER_SCALE)
+
+
+static func attack_radius(job: JobDef) -> float:
+	return job.attack_range * ATTACK_RADIUS_SCALE
+
+
 # 한 스윙이 여러 적을 치는 것은 허용하되(SAME_SWING_MS 안), 스윙 간격은 쿨다운(지터 여유 0.9배)을 강제.
 # 앵커(last_confirm_msec)는 새 스윙에서만 갱신해야 한다 — 매 확정마다 갱신하면 창이 미끄러져 연사 스팸이 뚫린다.
 const SAME_SWING_MS := 50

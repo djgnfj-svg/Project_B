@@ -42,7 +42,10 @@ func _spawn(peer_id: int, is_local: bool) -> void:
 		return
 	var p := PlayerScene.instantiate() as PlayerActor
 	add_child(p)
-	p.setup(peer_id, is_local, SPAWN_BASE + Vector2(SPAWN_GAP * float(peer_id - 1), 0.0))
+	# 스폰 슬롯 = 방 내 순번(현재 인원). peer_id 기반이면 재접속마다 id가 증가해
+	# (릴레이는 id 재사용 안 함) 몇 번 새로고침이면 뷰포트 밖에서 스폰된다.
+	# 클라이언트마다 순번이 달라도 무해 — 원격 위치는 첫 G_POS 수신에서 실좌표로 스냅된다.
+	p.setup(peer_id, is_local, SPAWN_BASE + Vector2(SPAWN_GAP * float(_players.size()), 0.0))
 	if is_local:
 		p.set_job(GameState.selected_job())  # 원격은 기본(전사)으로 두고 G_JOB 공지로 확정
 	_players[peer_id] = p
