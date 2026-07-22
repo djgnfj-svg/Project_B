@@ -30,3 +30,4 @@ scratch_*
 server/game-worker/public/
 .wrangler/
 **/.wrangler/
+_holdout/
