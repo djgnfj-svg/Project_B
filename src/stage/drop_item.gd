@@ -11,6 +11,8 @@ const BOB_AMPLITUDE := 2.0   # 위아래 흔들림 폭(px) — 연출값
 const BOB_PERIOD := 1.2      # 흔들림 주기(s)
 const POP_TIME := 0.26       # 등장 스케일 팝 시간(s) — 튀어오르며 등장
 const GLOW_PERIOD := 0.9     # 등급 반짝임 펄스 주기(s)
+const SETTLE_TIME := 0.45    # 등장 착지(토스 아크) 시간(s) — 이 동안 자석/bobbing 억제, 튀어오르는 게 보인다
+const TOSS_HEIGHT := 15.0    # 등장 시 튀어오르는 높이(px) — 착지 통통(bounce)
 const MAGNET_RADIUS := 36.0  # 로컬 플레이어가 이 안에 오면 끌려온다(px) — pickup 반경(6)보다 넓은 흡입
 const MAGNET_SPEED := 200.0  # 끌림 기본 속도(px/s) — 가까울수록 가속(연출값)
 # 등급별 반짝임 색조(흰↔틴트 lerp) — 0=일반(반짝임 없음)·1=희귀 청·2=핵심 금 (MaterialDef.rarity 미러)
@@ -28,6 +30,7 @@ var _texture: Texture2D = null # setup 시점(@onready 전)엔 보관만, _ready
 var _requested: bool = false   # 중복 픽업 요청 차단
 var _local_player: Node2D = null  # 끌림 대상(로컬 플레이어) 캐시
 var _t: float = 0.0
+var _age: float = 0.0          # 스폰 후 경과(s) — SETTLE_TIME 전엔 착지 중(자석/bobbing 억제)
 
 @onready var _sprite: Sprite2D = $Sprite
 
@@ -53,15 +56,25 @@ func _ready() -> void:
 	var tw := create_tween()
 	tw.tween_property(_sprite, "scale", Vector2.ONE, POP_TIME) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	# 등장 토스 아크 — 위로 튀었다 통통 착지(bounce). SETTLE_TIME 동안 _process가 position.y를 안 건드린다.
+	_sprite.position.y = -TOSS_HEIGHT
+	var tj := create_tween()
+	tj.tween_property(_sprite, "position:y", 0.0, SETTLE_TIME) \
+		.set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
 
 
-# bobbing + 등급 반짝임(스프라이트 자식) + 자석 끌림(루트 이동) — 앞 둘은 표시, 자석은 로컬 플레이어로 흡입.
+# 등장 착지(SETTLE_TIME) → bobbing + 등급 반짝임 + 자석 끌림. 착지 중엔 토스 트윈이 position.y를 쥐고,
+# 자석/bobbing은 억제해 "튀어오르며 떨어지는" 등장을 보여준 뒤 흡수한다(너무 바로 빨리지 않게).
 func _process(delta: float) -> void:
 	_t += delta
-	_sprite.position.y = sin(_t / BOB_PERIOD * TAU) * BOB_AMPLITUDE
-	if rarity > 0:  # 희귀/핵심만 은은한 색 펄스 — 색조 유지, 밝기만 왕복
+	_age += delta
+	if rarity > 0:  # 희귀/핵심만 은은한 색 펄스 — 색조 유지, 밝기만 왕복 (착지 중에도 반짝임은 OK)
 		var pulse := 0.5 + 0.5 * sin(_t / GLOW_PERIOD * TAU)
 		_sprite.modulate = Color.WHITE.lerp(RARITY_TINT.get(rarity, Color.WHITE), 0.35 + 0.4 * pulse)
+	if _age < SETTLE_TIME:
+		return  # 착지 중 — 토스 트윈이 position.y 담당, bobbing/자석 억제
+	# 착지 직후(0)부터 bobbing 시작 — _age-SETTLE 기준이라 position.y 점프 없이 이어진다
+	_sprite.position.y = sin((_age - SETTLE_TIME) / BOB_PERIOD * TAU) * BOB_AMPLITUDE
 	_magnet(delta)
 
 
