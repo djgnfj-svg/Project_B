@@ -28,6 +28,11 @@ func _ready() -> void:
 	for job_id: String in _job_btns:
 		var btn := _job_btns[job_id]
 		btn.button_pressed = job_id == GameState.selected_job_id  # 로비 재진입 시 이전 선택 복원
+		# 아이콘 = JobDef.sprite 데이터 바인딩 (rules §4) — 로비 미리보기와 인게임 그림이 갈라지지 않게
+		var icon := btn.get_parent().get_node_or_null("Icon") as TextureRect
+		var jd := GameState.job_def(job_id)
+		if icon != null and jd != null and jd.sprite != null:
+			icon.texture = jd.sprite
 		# button_down: 이미 눌린 토글(기본 전사)을 다시 클릭해도 반드시 발화 — pressed는 그룹 토글
 		# 재클릭에서 안 올 수 있어, 자동 시작 트리거가 기본 직업 선택에서 데드락 나는 것을 막는다
 		btn.button_down.connect(_on_job_pressed.bind(job_id))

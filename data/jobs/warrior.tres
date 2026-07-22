@@ -1,13 +1,15 @@
-[gd_resource type="Resource" script_class="JobDef" load_steps=3 format=3]
+[gd_resource type="Resource" script_class="JobDef" load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://src/core/job_def.gd" id="1"]
-[ext_resource type="Texture2D" path="res://assets/sprites/player/warrior_16.png" id="2"]
+[ext_resource type="Texture2D" path="res://assets/sprites/player/warrior_32.png" id="2"]
+[ext_resource type="SpriteFrames" path="res://assets/sprites/player/warrior_frames.tres" id="3"]
 
 [resource]
 script = ExtResource("1")
 id = "warrior"
 display_name = "전사"
 sprite = ExtResource("2")
+frames = ExtResource("3")
 move_speed = 100.0
 attack_damage = 10
 attack_range = 24.0
