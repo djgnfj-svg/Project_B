@@ -295,6 +295,10 @@ func craft(recipe_id: String) -> bool:
 	gold -= r.gold_cost
 	_spend_materials(r.material_costs)
 	add_equipment(r.result_equip_id)
+	# 슬롯이 비어 있으면 자동 장착 — 첫 제작이 바로 효과나게 (QoL). 재장착은 패널에서.
+	var e := equip_def(r.result_equip_id)
+	if e != null and equipped_id(e.slot()).is_empty():
+		equipped[e.slot()] = r.result_equip_id
 	_notify_inventory()
 	return true
 
@@ -360,6 +364,21 @@ func equipped_defs() -> Array:
 # 착용 장비 총 스탯 {attack, hp} — HUD·전투(calc_damage/max_hp)가 부른다 (단일 소스 CombatMath)
 func current_stats() -> Dictionary:
 	return CombatMath.total_stats(equipped_defs())
+
+
+# 데이터에서 유도한 이론상 최대 장비 스탯(각 스탯 최대 레벨) — G_STATS 수신 클램프의 현실 상한(심층 방어).
+# 정직한 최강 장비는 통과, 임의 수 주입만 막는다 (rules §2: 4인/PvP 전 본격 검증 게이트).
+func max_equip_stats() -> Dictionary:
+	var atk := 0
+	var hp := 0
+	for id: String in equipment_ids():
+		var e := equip_def(id)
+		if e == null:
+			continue
+		var s := CombatMath.equip_stat_at_level(e, e.max_level)
+		atk = maxi(atk, int(s["attack"]))
+		hp = maxi(hp, int(s["hp"]))
+	return {"attack": atk, "hp": hp}
 
 
 # --- 저장 직렬화 (SaveManager가 부른다) ---

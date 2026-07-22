@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://src/village/village.gd" id="1"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/grass_32.png" id="2"]
@@ -6,9 +6,14 @@
 [ext_resource type="Script" path="res://src/net/peer_sync.gd" id="4"]
 [ext_resource type="PackedScene" path="res://src/hud/stage_hud.tscn" id="5"]
 [ext_resource type="Script" path="res://src/net/scene_flow.gd" id="6"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/craft_station.png" id="7"]
+[ext_resource type="PackedScene" path="res://src/ui/craft_panel.tscn" id="8"]
 
 [sub_resource type="RectangleShape2D" id="shape_gate"]
 size = Vector2(40, 44)
+
+[sub_resource type="RectangleShape2D" id="shape_craft"]
+size = Vector2(40, 40)
 
 [node name="Village" type="Node2D"]
 script = ExtResource("1")
@@ -46,4 +51,24 @@ spawn_base = Vector2(200, 180)
 [node name="SceneFlow" type="Node" parent="."]
 script = ExtResource("6")
 
+[node name="CraftStation" type="Area2D" parent="."]
+position = Vector2(120, 110)
+collision_layer = 64
+collision_mask = 2
+
+[node name="Sprite" type="Sprite2D" parent="CraftStation"]
+texture = ExtResource("7")
+
+[node name="Collision" type="CollisionShape2D" parent="CraftStation"]
+shape = SubResource("shape_craft")
+
+[node name="Hint" type="Label" parent="CraftStation"]
+offset_left = -80.0
+offset_top = -40.0
+offset_right = 80.0
+offset_bottom = -22.0
+horizontal_alignment = 1
+
 [node name="HUD" parent="." instance=ExtResource("5")]
+
+[node name="CraftPanel" parent="." instance=ExtResource("8")]

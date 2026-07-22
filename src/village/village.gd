@@ -9,25 +9,37 @@ const PlayerActor := preload("res://src/player/player.gd")
 const SceneFlowNode := preload("res://src/net/scene_flow.gd")
 
 var _local_in_gate: bool = false  # 로컬 플레이어가 게이트 영역 안 — 상호작용 게이트 + 안내 표시
+var _local_in_craft: bool = false  # 로컬 플레이어가 제작대 영역 안 — F로 제작/강화 패널 오픈
 
 @onready var _gate: Area2D = $Gate
 @onready var _hint: Label = $Gate/Hint
 @onready var _scene_flow: SceneFlowNode = $SceneFlow
+@onready var _craft_station: Area2D = $CraftStation
+@onready var _craft_hint: Label = $CraftStation/Hint
+@onready var _craft_panel: CanvasLayer = $CraftPanel
 
 
 func _ready() -> void:
 	_gate.body_entered.connect(_on_gate_body_entered)
 	_gate.body_exited.connect(_on_gate_body_exited)
 	_hint.visible = false
+	_craft_station.body_entered.connect(_on_craft_body_entered)
+	_craft_station.body_exited.connect(_on_craft_body_exited)
+	_craft_hint.visible = false
 
 
 # 출발 확인은 폴링이 아니라 _unhandled_input — UI(Control)가 소비한 입력은 여기 안 온다
 func _unhandled_input(event: InputEvent) -> void:
-	if not (_local_in_gate and event.is_action_pressed("interact")):
+	if not event.is_action_pressed("interact"):
 		return
-	# 게스트의 F는 SceneFlow가 무시 — 출발 권한은 호스트만 (안내는 진입 시 이미 표시)
-	# 챕터 선택(방장 해금 기준, GDD §6)은 후속 — 지금은 기본 챕터 첫 칸으로 출발
-	_scene_flow.request_stage(GameState.DEFAULT_CHAPTER_ID, 0)
+	# 제작대 — 로컬 각자 열기(제작/강화는 로컬, 호스트 제한 없음). 패널 열고 입력 소비(같은 F가 패널 닫기에 안 걸리게).
+	if _local_in_craft:
+		_craft_panel.call("open")
+		get_viewport().set_input_as_handled()
+		return
+	# 출발 게이트 — 게스트의 F는 SceneFlow가 무시(출발 권한은 호스트만). 챕터 선택은 후속(GDD §6).
+	if _local_in_gate:
+		_scene_flow.request_stage(GameState.DEFAULT_CHAPTER_ID, 0)
 
 
 func _on_gate_body_entered(body: Node2D) -> void:
@@ -48,3 +60,20 @@ func _on_gate_body_exited(body: Node2D) -> void:
 		return
 	_local_in_gate = false
 	_hint.visible = false
+
+
+func _on_craft_body_entered(body: Node2D) -> void:
+	var p := body as PlayerActor
+	if p == null or not p.is_local:
+		return
+	_local_in_craft = true
+	_craft_hint.text = "F — 제작 / 강화"
+	_craft_hint.visible = true
+
+
+func _on_craft_body_exited(body: Node2D) -> void:
+	var p := body as PlayerActor
+	if p == null or not p.is_local:
+		return
+	_local_in_craft = false
+	_craft_hint.visible = false

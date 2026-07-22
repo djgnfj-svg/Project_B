@@ -11,6 +11,12 @@ const SAVE_VERSION := 1
 
 func _ready() -> void:
 	load_from_disk()
+	# 저장 시점(GDD §3·§11): 스테이지 클리어=commit(픽업 확정 영속), 전멸=reload(마지막 저장분 롤백).
+	# EventBus는 /root로(rules §5). 클리어/전멸은 각 클라가 자기 인벤을 커밋/롤백(개인 저장).
+	var bus := get_node_or_null("/root/EventBus")
+	if bus != null:
+		bus.stage_cleared.connect(commit)
+		bus.stage_wiped.connect(reload)
 
 
 func _gs() -> Node:
@@ -52,3 +58,8 @@ func reload() -> void:
 		return
 	gs.clear_inventory()
 	load_from_disk()
+	# 파일이 없어 from_save_dict가 안 불려도(첫 판 전멸) 인벤 변동을 알린다 — HUD·스탯 공지 드리프트 방지.
+	# 파일이 있으면 from_save_dict가 이미 emit했지만 중복은 무해(멱등 새로고침).
+	var bus := get_node_or_null("/root/EventBus")
+	if bus != null:
+		bus.inventory_changed.emit()
