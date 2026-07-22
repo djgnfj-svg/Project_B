@@ -22,6 +22,7 @@ GameState="*res://src/core/game_state.gd"
 SaveManager="*res://src/core/save_manager.gd"
 DebugBridge="*res://src/core/debug_bridge.gd"
 DamageNumbers="*res://src/feel/damage_numbers.gd"
+DropFx="*res://src/feel/drop_fx.gd"
 Audio="*res://src/core/audio.gd"
 MCPGameBridge="res://addons/godot_mcp/game_bridge/mcp_game_bridge.gd"
 

@@ -7,6 +7,10 @@ extends Area2D
 
 const BOB_AMPLITUDE := 2.0   # 위아래 흔들림 폭(px) — 연출값
 const BOB_PERIOD := 1.2      # 흔들림 주기(s)
+const POP_TIME := 0.26       # 등장 스케일 팝 시간(s) — 튀어오르며 등장
+const GLOW_PERIOD := 0.9     # 등급 반짝임 펄스 주기(s)
+# 등급별 반짝임 색조(흰↔틴트 lerp) — 0=일반(반짝임 없음)·1=희귀 청·2=핵심 금 (MaterialDef.rarity 미러)
+const RARITY_TINT := {1: Color(0.72, 0.85, 1.0), 2: Color(1.0, 0.9, 0.55)}
 
 # DropField가 setup으로 채운다 — 픽업 확정 시 DropField가 이 값들을 읽어 collect_drop한다.
 var did: String = ""
@@ -38,12 +42,21 @@ func setup(p_did: String, p_kind: String, p_item_id: String, p_qty: int,
 func _ready() -> void:
 	_sprite.texture = _texture  # null이어도 안전 — 안 보일 뿐
 	body_entered.connect(_on_body_entered)
+	# 등장 스케일 팝 — 작게 시작해 오버슛하며 튀어오른다(표시 전용). 트윈은 노드에 바인딩 →
+	# 즉시 픽업으로 queue_free돼도 자동 정리(freed 접근 없음).
+	_sprite.scale = Vector2.ONE * 0.2
+	var tw := create_tween()
+	tw.tween_property(_sprite, "scale", Vector2.ONE, POP_TIME) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
-# 표시 전용 bobbing — 스프라이트 자식만 흔들어 Area2D 판정/좌표는 건드리지 않는다
+# 표시 전용 bobbing + 등급 반짝임 — 스프라이트 자식만 건드려 Area2D 판정/좌표는 그대로.
 func _process(delta: float) -> void:
 	_t += delta
 	_sprite.position.y = sin(_t / BOB_PERIOD * TAU) * BOB_AMPLITUDE
+	if rarity > 0:  # 희귀/핵심만 은은한 색 펄스 — 색조 유지, 밝기만 왕복
+		var pulse := 0.5 + 0.5 * sin(_t / GLOW_PERIOD * TAU)
+		_sprite.modulate = Color.WHITE.lerp(RARITY_TINT.get(rarity, Color.WHITE), 0.35 + 0.4 * pulse)
 
 
 # 로컬 플레이어만 픽업 요청 — 원격 아바타/적은 무시. _requested로 중복 차단.
