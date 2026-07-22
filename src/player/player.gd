@@ -37,8 +37,10 @@ var _last_remote_msec: int = -1
 var _alive: bool = true
 var _saved_layer: int = 0
 var _saved_mask: int = 0
+var _remote_roll_left: float = 0.0  # 원격 구르기 연출 창 (G_ROLL 수신 — 표시 전용, 판정 아님)
+var _remote_moving: bool = false
 
-@onready var _sprite: Sprite2D = $Sprite
+@onready var _sprite: AnimatedSprite2D = $Sprite
 @onready var _attack_fx: Sprite2D = $AttackFx
 @onready var _health: HealthComponent = $Health
 
@@ -64,13 +66,14 @@ func setup(p_peer_id: int, p_is_local: bool, spawn_pos: Vector2, p_scene_id: Str
 	set_job(job)
 
 
-# 직업 적용 — 스프라이트까지 교체. 원격은 G_JOB 공지 수신 시 stage가 다시 부른다.
+# 직업 적용 — 애니 프레임까지 교체. 원격은 G_JOB 공지 수신 시 stage가 다시 부른다.
 func set_job(j: JobDef) -> void:
 	if j == null:
 		return
 	job = j
-	if j.sprite != null:
-		_sprite.texture = j.sprite
+	if j.frames != null:
+		_sprite.sprite_frames = j.frames
+		_sprite.play("idle")
 	if is_node_ready():
 		_health.setup(j.max_hp)
 
@@ -126,17 +129,31 @@ func _physics_process(delta: float) -> void:
 		_local_combat()
 		_send_pos(delta)
 	else:
+		_remote_moving = global_position.distance_to(_remote_target) > 1.0
 		global_position = global_position.lerp(_remote_target, minf(1.0, REMOTE_LERP_SPEED * delta))
 		_sprite.flip_h = _remote_flip
+	_update_anim()
 
 
 func _tick_timers(delta: float) -> void:
 	_attack_cd_left = maxf(0.0, _attack_cd_left - delta)
 	_roll_cd_left = maxf(0.0, _roll_cd_left - delta)
+	_remote_roll_left = maxf(0.0, _remote_roll_left - delta)
 	if _fx_left > 0.0:
 		_fx_left -= delta
 		if _fx_left <= 0.0:
 			_attack_fx.visible = false
+
+
+# 애니 상태: roll > run > idle. 로컬은 자기 상태, 원격은 수신 신호(G_POS 변위·G_ROLL 창)로 판단.
+func _update_anim() -> void:
+	var next: StringName = &"idle"
+	if _roll_time_left > 0.0 or _remote_roll_left > 0.0:
+		next = &"roll"
+	elif (is_local and velocity.length_squared() > 1.0) or (not is_local and _remote_moving):
+		next = &"run"
+	if _sprite.animation != next:
+		_sprite.play(next)
 
 
 func _local_move(delta: float) -> void:
@@ -211,6 +228,16 @@ func net_anchor() -> Vector2:
 func play_attack_fx(dir: Vector2) -> void:
 	_show_attack_fx(dir)
 	_sprite.flip_h = dir.x < 0.0
+
+
+# 원격 플레이어의 구르기 연출 (peer_sync가 G_ROLL 수신 시 호출) — 표시 전용.
+# i-frame 판정은 호스트 그랜트 창(CombatAuthority)이 별도로 한다 (§3) — 이 창은 애니만 돌린다.
+func play_roll_fx(dir: Vector2) -> void:
+	if _remote_roll_left > 0.0:
+		return  # 창 중 재수신 무시 — G_ROLL 스팸으로 애니를 영구 roll로 잠그는 그리핑 차단 (정직한 구르기는 쿨다운 0.8s > 창 0.25s라 안 걸린다)
+	_remote_roll_left = CombatMath.ROLL_TIME_S
+	if absf(dir.x) > 0.001:
+		_remote_flip = dir.x < 0.0
 
 
 func _send_pos(delta: float) -> void:
