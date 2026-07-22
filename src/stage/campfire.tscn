@@ -1,0 +1,84 @@
+[gd_scene load_steps=13 format=3]
+
+[ext_resource type="Script" path="res://src/stage/campfire.gd" id="1"]
+[ext_resource type="Resource" path="res://data/campfire/default.tres" id="2"]
+[ext_resource type="Texture2D" path="res://assets/sprites/stage/ground_32.png" id="3"]
+[ext_resource type="Texture2D" path="res://assets/sprites/stage/campfire_24.png" id="4"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/gate_48.png" id="5"]
+[ext_resource type="Script" path="res://src/net/peer_sync.gd" id="6"]
+[ext_resource type="Script" path="res://src/stage/combat_authority.gd" id="7"]
+[ext_resource type="Script" path="res://src/net/scene_flow.gd" id="8"]
+[ext_resource type="PackedScene" path="res://src/hud/stage_hud.tscn" id="9"]
+[ext_resource type="Script" path="res://src/stage/chapter_flow.gd" id="10"]
+
+[sub_resource type="CircleShape2D" id="shape_fire"]
+radius = 44.0
+
+[sub_resource type="RectangleShape2D" id="shape_gate"]
+size = Vector2(40, 44)
+
+[node name="Campfire" type="Node2D"]
+script = ExtResource("1")
+def = ExtResource("2")
+
+[node name="Ground" type="Sprite2D" parent="."]
+z_index = -10
+texture_repeat = 2
+position = Vector2(320, 180)
+texture = ExtResource("3")
+region_enabled = true
+region_rect = Rect2(0, 0, 640, 360)
+
+[node name="Fire" type="Area2D" parent="."]
+position = Vector2(320, 170)
+collision_layer = 64
+collision_mask = 2
+
+[node name="Sprite" type="Sprite2D" parent="Fire"]
+texture = ExtResource("4")
+
+[node name="Collision" type="CollisionShape2D" parent="Fire"]
+shape = SubResource("shape_fire")
+
+[node name="Hint" type="Label" parent="Fire"]
+offset_left = -100.0
+offset_top = -46.0
+offset_right = 100.0
+offset_bottom = -24.0
+horizontal_alignment = 1
+
+[node name="Gate" type="Area2D" parent="."]
+position = Vector2(588, 180)
+collision_layer = 64
+collision_mask = 2
+
+[node name="Sprite" type="Sprite2D" parent="Gate"]
+texture = ExtResource("5")
+
+[node name="Collision" type="CollisionShape2D" parent="Gate"]
+shape = SubResource("shape_gate")
+
+[node name="Hint" type="Label" parent="Gate"]
+offset_left = -170.0
+offset_top = -52.0
+offset_right = 30.0
+offset_bottom = -30.0
+horizontal_alignment = 1
+
+[node name="PeerSync" type="Node" parent="."]
+script = ExtResource("6")
+scene_id = "stage"
+spawn_base = Vector2(200, 180)
+
+[node name="CombatAuthority" type="Node" parent="."]
+script = ExtResource("7")
+peer_sync_path = NodePath("../PeerSync")
+
+[node name="SceneFlow" type="Node" parent="."]
+script = ExtResource("8")
+
+[node name="ChapterFlow" type="Node" parent="."]
+script = ExtResource("10")
+scene_flow_path = NodePath("../SceneFlow")
+
+[node name="HUD" parent="." instance=ExtResource("9")]

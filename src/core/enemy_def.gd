@@ -8,6 +8,8 @@ extends Resource
 @export var respawn_delay: float = 3.0
 @export var sprite: Texture2D             # 개체 스프라이트 — 씬 1장을 데이터로 재사용 (§4)
 
+@export var body_radius: float = 6.0      # 몸 판정 반경(px) — 플레이어 공격 원형 질의가 맞는 몸집. 스프라이트 크기와 정합 유지 (48px 브루트 등 덩치 큰 개체용)
+
 # 이동/AI (호스트 전용 구동 — 0 = 고정형). 수치는 전부 임시값 — 사용자가 플레이하며 조인다.
 @export var move_speed: float = 0.0
 @export var aggro_range: float = 120.0    # 이 안의 가장 가까운 생존 플레이어를 추격

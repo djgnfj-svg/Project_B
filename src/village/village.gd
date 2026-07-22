@@ -26,7 +26,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not (_local_in_gate and event.is_action_pressed("interact")):
 		return
 	# 게스트의 F는 SceneFlow가 무시 — 출발 권한은 호스트만 (안내는 진입 시 이미 표시)
-	_scene_flow.request(NetSchema.SCENE_STAGE)
+	# 챕터 선택(방장 해금 기준, GDD §6)은 후속 — 지금은 기본 챕터 첫 칸으로 출발
+	_scene_flow.request_stage(GameState.DEFAULT_CHAPTER_ID, 0)
 
 
 func _on_gate_body_entered(body: Node2D) -> void:
@@ -34,7 +35,10 @@ func _on_gate_body_entered(body: Node2D) -> void:
 	if p == null or not p.is_local:
 		return  # 원격 아바타의 진입은 무시 — 안내·상호작용은 각자 자기 로컬만
 	_local_in_gate = true
-	_hint.text = "F — 스테이지로 출발" if Net.is_host() else "방장이 출발할 수 있어요"
+	if Net.is_host():
+		_hint.text = "F — %s 출발" % GameState.chapter_def(GameState.DEFAULT_CHAPTER_ID).display_name
+	else:
+		_hint.text = "방장이 출발할 수 있어요"
 	_hint.visible = true
 
 
