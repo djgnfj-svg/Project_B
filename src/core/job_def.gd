@@ -6,6 +6,8 @@ extends Resource
 @export var display_name: String = ""
 @export var sprite: Texture2D            # 캐릭터 단일 컷 (UI 미리보기용 — 인게임 표시는 frames)
 @export var frames: SpriteFrames         # idle/run/roll 애니 (assets/sprites/player/<id>_frames.tres, 2방향 좌/우 플립 — GDD §5)
+@export var weapon_texture: Texture2D    # 무기 스프라이트 (우향 수평 기준) — 몸과 분리된 독립 Sprite2D로 조준 방향 회전. null = 무기 미표시. 장비 시스템 도입 시 EquipDef로 이관 예정
+@export var weapon_grip: Vector2 = Vector2(4.0, 8.0)  # 무기 텍스처 안 그립(손잡이) 픽셀 좌표 — 회전축 정렬용
 @export var max_hp: int = 100            # 임시값 — 사용자가 플레이하며 조인다
 @export var move_speed: float = 100.0
 @export var attack_damage: int = 10

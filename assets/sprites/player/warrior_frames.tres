@@ -1,4 +1,4 @@
-[gd_resource type="SpriteFrames" load_steps=16 format=3]
+[gd_resource type="SpriteFrames" load_steps=12 format=3]
 
 [ext_resource type="Texture2D" path="res://assets/sprites/player/warrior_anim.png" id="1"]
 
@@ -41,22 +41,6 @@ region = Rect2(256, 0, 32, 32)
 [sub_resource type="AtlasTexture" id="f9"]
 atlas = ExtResource("1")
 region = Rect2(288, 0, 32, 32)
-
-[sub_resource type="AtlasTexture" id="f10"]
-atlas = ExtResource("1")
-region = Rect2(320, 0, 32, 32)
-
-[sub_resource type="AtlasTexture" id="f11"]
-atlas = ExtResource("1")
-region = Rect2(352, 0, 32, 32)
-
-[sub_resource type="AtlasTexture" id="f12"]
-atlas = ExtResource("1")
-region = Rect2(384, 0, 32, 32)
-
-[sub_resource type="AtlasTexture" id="f13"]
-atlas = ExtResource("1")
-region = Rect2(416, 0, 32, 32)
 
 [resource]
 animations = [{
@@ -103,22 +87,5 @@ animations = [{
 }],
 "loop": false,
 "name": &"roll",
-"speed": 16.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": SubResource("f10")
-}, {
-"duration": 1.0,
-"texture": SubResource("f11")
-}, {
-"duration": 1.0,
-"texture": SubResource("f12")
-}, {
-"duration": 1.0,
-"texture": SubResource("f13")
-}],
-"loop": false,
-"name": &"attack",
 "speed": 16.0
 }]

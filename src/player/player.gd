@@ -14,10 +14,16 @@ const POS_SEND_RATE := 15.0
 const REMOTE_TINT := Color(1.0, 0.75, 0.75)
 const ROLL_SPEED_MULT := 2.6
 const GHOST_ALPHA := 0.4
-const ATTACK_FX_TIME := 0.12
-# ⚠ 애니 미러: *_frames.tres의 attack 애니(4프레임/speed 16 = 0.25s)와 같은 길이여야 한다.
-#   attack_cooldown(JobDef)보다 짧아야 다음 공격 전에 애니가 끝난다 (전사 0.4s > 0.25s).
-const ATTACK_ANIM_TIME := 0.25
+const ATTACK_FX_DELAY := 0.07        # 예비동작이 끝나고 스윕이 시작될 때 궤적을 표시
+const ATTACK_FX_TIME := 0.18         # 궤적 잔상 페이드 시간
+const SWOOSH_TEX_RADIUS := 46.0      # swoosh_arc.png의 호 바깥 반지름(px) — FX 스케일 기준 (텍스처와 미러)
+# ⚠ 미러(rules §3): 모든 JobDef.attack_cooldown보다 짧아야 한다 (전사 0.4s > 0.25s) —
+#   원격 창-잠금 가드(play_attack_fx)가 정당한 연속 공격의 스윙을 무시하지 않으려면.
+const ATTACK_ANIM_TIME := 0.25       # 무기 스윙 창 (공격 연출 길이)
+const SWING_HALF_ARC := 1.9          # 스윙 호 반각(라디안) — 조준각 기준 ±이만큼 쓸고 지나간다
+const WEAPON_AIM_LERP := 18.0        # 원격 조준각 보간 속도
+const HOLD_DIST := 8.0               # 몸 중심 → 그립 거리 (몸에 붙지 않게 떨어뜨려 든다)
+const LUNGE_DIST := 5.0              # 스윕 중 앞으로 내지르는 거리
 const REMOTE_MAX_SPEED_MULT := 1.5  # 원격 변위 클램프 여유 — 순간이동 스푸핑 완화 (rules §3)
 const ENEMY_BODY_MASK := 1 << 2  # 물리 레이어 3 enemy_body — rules §5 배정표가 단일 소스
 
@@ -35,18 +41,24 @@ var _roll_time_left: float = 0.0
 var _roll_cd_left: float = 0.0
 var _roll_dir: Vector2 = Vector2.RIGHT
 var _fx_left: float = 0.0
+var _fx_delay_left: float = 0.0
+var _fx_dir: Vector2 = Vector2.RIGHT
 var _attack_queued: bool = false
 var _last_remote_msec: int = -1
 var _alive: bool = true
 var _saved_layer: int = 0
 var _saved_mask: int = 0
 var _remote_roll_left: float = 0.0  # 원격 구르기 연출 창 (G_ROLL 수신 — 표시 전용, 판정 아님)
-var _attack_anim_left: float = 0.0  # 공격 애니 창 — 로컬은 공격 발동, 원격은 G_ATK 수신 시 (표시 전용)
+var _attack_anim_left: float = 0.0  # 공격 스윙 창 — 로컬은 공격 발동, 원격은 G_ATK 수신 시 (표시 전용)
+var _aim_angle: float = 0.0  # 무기 조준각 — 로컬은 마우스, 원격은 _remote_aim으로 보간
+var _remote_aim: float = 0.0  # G_POS "a" 수신 목표각 (표시 전용, 판정 아님)
 var _remote_moving: bool = false
 
 @onready var _sprite: AnimatedSprite2D = $Sprite
 @onready var _attack_fx: Sprite2D = $AttackFx
 @onready var _health: HealthComponent = $Health
+@onready var _weapon_pivot: Node2D = $WeaponPivot
+@onready var _weapon: Sprite2D = $WeaponPivot/Weapon
 
 
 func _ready() -> void:
@@ -78,6 +90,10 @@ func set_job(j: JobDef) -> void:
 	if j.frames != null:
 		_sprite.sprite_frames = j.frames
 		_sprite.play("idle")
+	# 무기 = 몸과 분리된 독립 스프라이트 (장비 교체 = 텍스처 교체). 그립을 회전축에 정렬.
+	_weapon.texture = j.weapon_texture
+	_weapon.position = -j.weapon_grip + Vector2(HOLD_DIST, 0.0)
+	_weapon_pivot.visible = j.weapon_texture != null
 	if is_node_ready():
 		_health.setup(j.max_hp)
 
@@ -119,9 +135,10 @@ func _update_life_state(p_hp: int) -> void:
 		collision_layer = 0
 		collision_mask = 0
 		_attack_fx.visible = false
+		_fx_delay_left = 0.0  # 예약된 궤적도 취소 — 시체에서 스워시가 뜨지 않게
 		_roll_time_left = 0.0
 		_remote_roll_left = 0.0
-		_attack_anim_left = 0.0  # 사망 직전 발동한 공격 애니가 고스트에 남지 않게
+		_attack_anim_left = 0.0  # 사망 직전 발동한 공격 스윙이 고스트에 남지 않게
 		if is_local:
 			_sprite.modulate.a = GHOST_ALPHA
 		else:
@@ -139,6 +156,7 @@ func _physics_process(delta: float) -> void:
 		global_position = global_position.lerp(_remote_target, minf(1.0, REMOTE_LERP_SPEED * delta))
 		_sprite.flip_h = _remote_flip
 	_update_anim()
+	_update_weapon(delta)
 
 
 func _tick_timers(delta: float) -> void:
@@ -146,8 +164,20 @@ func _tick_timers(delta: float) -> void:
 	_roll_cd_left = maxf(0.0, _roll_cd_left - delta)
 	_remote_roll_left = maxf(0.0, _remote_roll_left - delta)
 	_attack_anim_left = maxf(0.0, _attack_anim_left - delta)
+	if _fx_delay_left > 0.0:
+		_fx_delay_left -= delta
+		if _fx_delay_left <= 0.0:
+			# 궤적 표시 — 플레이어 중심 회전, 크기는 판정 기하(§3 단일 소스)에서 파생해 "맞는 곳=보이는 곳" 유지
+			var reach := CombatMath.attack_center_offset(_fx_dir, job).length() + CombatMath.attack_radius(job)
+			_attack_fx.rotation = _fx_dir.angle()
+			_attack_fx.position = Vector2.ZERO
+			_attack_fx.scale = Vector2.ONE * (reach / SWOOSH_TEX_RADIUS)
+			_attack_fx.modulate.a = 1.0
+			_attack_fx.visible = true
+			_fx_left = ATTACK_FX_TIME
 	if _fx_left > 0.0:
 		_fx_left -= delta
+		_attack_fx.modulate.a = clampf(_fx_left / ATTACK_FX_TIME, 0.0, 1.0)
 		if _fx_left <= 0.0:
 			_attack_fx.visible = false
 
@@ -165,9 +195,45 @@ func _update_anim() -> void:
 		_sprite.play(next)
 
 
-# 직업별 frames에 attack 애니가 있는지 — 전사부터 완성(GDD §5), 없는 직업은 기존 상태로 폴백
+# 현재 미사용(어느 직업도 frames에 attack 없음) — 공격 연출은 무기 스윙(_update_weapon)이 담당.
+# 몸통 attack 애니를 되살리면 애니 길이 ↔ ATTACK_ANIM_TIME 미러(rules §3)도 같이 되살릴 것.
 func _has_attack_anim() -> bool:
 	return _sprite.sprite_frames != null and _sprite.sprite_frames.has_animation(&"attack")
+
+
+# 무기 표시 — 조준 방향으로 내밀고, 공격 창 동안 호를 그리며 스윙 (전부 표시 전용, 판정은 별개).
+func _update_weapon(delta: float) -> void:
+	# 조준각은 무기 유무와 무관하게 갱신 — 무기 없는 직업도 "a"를 실제 값으로 송신해야
+	# 나중에 활/지팡이 텍스처가 붙는 순간 원격 표시가 바로 맞는다 (리뷰 Minor)
+	if is_local:
+		_aim_angle = _aim_dir().angle()
+	else:
+		_aim_angle = lerp_angle(_aim_angle, _remote_aim, minf(1.0, WEAPON_AIM_LERP * delta))
+	if _weapon.texture == null:
+		return
+	# 스윙 3박자: 예비(뒤로 젖힘) → 가속 스윕(+내지르기) → 복귀
+	var swing_off := 0.0
+	var lunge := 0.0
+	if _attack_anim_left > 0.0:
+		var t := 1.0 - _attack_anim_left / ATTACK_ANIM_TIME
+		if t < 0.28:
+			swing_off = -SWING_HALF_ARC * (t / 0.28)
+		elif t < 0.75:
+			var u := (t - 0.28) / 0.47
+			u = u * u * (3.0 - 2.0 * u)  # smoothstep — 스윕에 가속감
+			swing_off = lerpf(-SWING_HALF_ARC, SWING_HALF_ARC, u)
+			lunge = LUNGE_DIST * sin(u * PI)
+		else:
+			swing_off = SWING_HALF_ARC * (1.0 - (t - 0.75) / 0.25)
+	var ang := _aim_angle + swing_off
+	_weapon_pivot.rotation = ang
+	_weapon.position = -job.weapon_grip + Vector2(HOLD_DIST + lunge, 0.0)
+	# 좌향 조준 시 뒤집기 — 안 하면 검이 거꾸로(날이 아래) 보인다. 기준은 조준각(스윙 중 깜빡임 방지)
+	_weapon.flip_v = absf(wrapf(_aim_angle, -PI, PI)) > PI / 2.0
+	# 위쪽 조준 = 몸 뒤(0), 아래 = 몸 앞(2) — 몸(Sprite z=1) 기준 상대 배치.
+	# ⚠ 음수 z_index는 배경 타일 밑으로 꺼져 무기가 통째로 사라진다 (실기에서 확인) — 전부 0 이상 유지
+	_weapon_pivot.z_index = 0 if sin(ang) < 0.0 else 2
+	_weapon_pivot.visible = _alive and _roll_time_left <= 0.0 and _remote_roll_left <= 0.0
 
 
 func _local_move(delta: float) -> void:
@@ -226,11 +292,10 @@ func _aim_dir() -> Vector2:
 	return d.normalized() if d.length() > 0.001 else Vector2.RIGHT
 
 
+# 궤적 예약 — 스윕 타이밍(_tick_timers의 딜레이 만료)에 맞춰 표시된다
 func _show_attack_fx(dir: Vector2) -> void:
-	_attack_fx.rotation = dir.angle()
-	_attack_fx.position = CombatMath.attack_center_offset(dir, job)
-	_attack_fx.visible = true
-	_fx_left = ATTACK_FX_TIME
+	_fx_dir = dir
+	_fx_delay_left = ATTACK_FX_DELAY
 
 
 # 네트워크 검증용 좌표 — 원격은 lerp된 표시 좌표가 아니라 (클램프된) 최신 수신 좌표를 쓴다.
@@ -271,12 +336,19 @@ func _send_pos(delta: float) -> void:
 			"x": global_position.x,
 			"y": global_position.y,
 			"f": _sprite.flip_h,
+			"a": snappedf(_aim_angle, 0.01),  # 조준각 — 원격 무기 표시 전용 (판정 아님)
 		})
 
 
 # 원격 위치 반영 — 메시지 간 변위를 최대 이동 속도로 클램프한다.
 # 호스트의 사거리 검증(§3)이 이 표시 좌표를 기준으로 하므로, 클램프 없이는 순간이동 스푸핑으로 검증이 무력화된다.
-func apply_remote_pos(pos: Vector2, flip: bool) -> void:
+func apply_remote_pos(pos: Vector2, flip: bool, aim: float) -> void:
+	# Inf/NaN 주입 가드 — JSON은 1e999 같은 오버플로를 Inf로 파싱한다. lerp_angle(유한, INF)=NaN이
+	# 한 발로 _aim_angle을 영구 오염시키고, pos 쪽은 net_anchor()를 타 호스트 판정까지 닿는다 (리뷰 Important).
+	if is_finite(aim):
+		_remote_aim = wrapf(aim, -PI, PI)
+	if not (is_finite(pos.x) and is_finite(pos.y)):
+		return  # 무효 좌표는 통째로 무시 — 이전 앵커 유지
 	var now := Time.get_ticks_msec()
 	if _last_remote_msec >= 0:
 		var dt := maxf(float(now - _last_remote_msec) / 1000.0, 1.0 / POS_SEND_RATE)
