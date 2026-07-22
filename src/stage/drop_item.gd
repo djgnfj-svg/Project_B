@@ -4,11 +4,15 @@ extends Area2D
 # DropField에 픽업 요청(중복 가드) — Net을 직접 부르지 않는다, DropField 경유 (rules §0·§2).
 # 비주얼=Sprite2D + 텍스처(도형 금지 rules §0). 텍스처는 스폰 시 DropField가 리졸브해 넘긴다.
 # 살짝 위아래 bobbing = 표시 전용 연출값(스크립트 const 허용). 착지 팝·등급 반짝임은 feel(item_dropped)이 맡는다.
+# 자석 픽업: 로컬 플레이어가 끌림 반경 안에 오면 아이템(Area2D 루트)이 빨려든다 — 각 클라 자기 플레이어
+# 기준의 로컬 이동(네트워크 0), 겹치면 기존 body_entered로 선착 요청 → 호스트 확정(rules §3 그대로).
 
 const BOB_AMPLITUDE := 2.0   # 위아래 흔들림 폭(px) — 연출값
 const BOB_PERIOD := 1.2      # 흔들림 주기(s)
 const POP_TIME := 0.26       # 등장 스케일 팝 시간(s) — 튀어오르며 등장
 const GLOW_PERIOD := 0.9     # 등급 반짝임 펄스 주기(s)
+const MAGNET_RADIUS := 36.0  # 로컬 플레이어가 이 안에 오면 끌려온다(px) — pickup 반경(6)보다 넓은 흡입
+const MAGNET_SPEED := 200.0  # 끌림 기본 속도(px/s) — 가까울수록 가속(연출값)
 # 등급별 반짝임 색조(흰↔틴트 lerp) — 0=일반(반짝임 없음)·1=희귀 청·2=핵심 금 (MaterialDef.rarity 미러)
 const RARITY_TINT := {1: Color(0.72, 0.85, 1.0), 2: Color(1.0, 0.9, 0.55)}
 
@@ -22,6 +26,7 @@ var rarity: int = 0
 var _field: Node = null        # 스폰한 DropField (픽업 요청 경유) — Net 직접 호출 회피
 var _texture: Texture2D = null # setup 시점(@onready 전)엔 보관만, _ready에서 스프라이트에 물린다
 var _requested: bool = false   # 중복 픽업 요청 차단
+var _local_player: Node2D = null  # 끌림 대상(로컬 플레이어) 캐시
 var _t: float = 0.0
 
 @onready var _sprite: Sprite2D = $Sprite
@@ -50,13 +55,41 @@ func _ready() -> void:
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
-# 표시 전용 bobbing + 등급 반짝임 — 스프라이트 자식만 건드려 Area2D 판정/좌표는 그대로.
+# bobbing + 등급 반짝임(스프라이트 자식) + 자석 끌림(루트 이동) — 앞 둘은 표시, 자석은 로컬 플레이어로 흡입.
 func _process(delta: float) -> void:
 	_t += delta
 	_sprite.position.y = sin(_t / BOB_PERIOD * TAU) * BOB_AMPLITUDE
 	if rarity > 0:  # 희귀/핵심만 은은한 색 펄스 — 색조 유지, 밝기만 왕복
 		var pulse := 0.5 + 0.5 * sin(_t / GLOW_PERIOD * TAU)
 		_sprite.modulate = Color.WHITE.lerp(RARITY_TINT.get(rarity, Color.WHITE), 0.35 + 0.4 * pulse)
+	_magnet(delta)
+
+
+# 자석 끌림 — 로컬 플레이어가 끌림 반경 안에 오면 아이템을 그쪽으로 흡입(가까울수록 가속).
+# 각 클라 자기 로컬 플레이어 기준(네트워크 0). Area2D 루트를 옮겨 자연스럽게 body_entered로 픽업된다.
+func _magnet(delta: float) -> void:
+	if _requested:
+		return  # 이미 픽업 요청 — 곧 despawn, 더 끌 필요 없음
+	var p := _local_player_node()
+	if p == null:
+		return
+	var to := p.global_position - global_position
+	var dist := to.length()
+	if dist > MAGNET_RADIUS or dist < 0.01:
+		return
+	var speed := MAGNET_SPEED * (1.0 + (1.0 - dist / MAGNET_RADIUS))  # 가까울수록 빠르게
+	global_position += to.normalized() * minf(speed * delta, dist)   # 남은 거리 이상 못 감(오버슛 방지)
+
+
+# 로컬 플레이어 노드 캐시 조회 — 그룹에서 is_local 플레이어를 찾아 저장. freed되면 재탐색.
+func _local_player_node() -> Node2D:
+	if is_instance_valid(_local_player):
+		return _local_player
+	for n: Node in get_tree().get_nodes_in_group("player"):
+		if n is Node2D and n.get("is_local") == true:
+			_local_player = n as Node2D
+			return _local_player
+	return null
 
 
 # 로컬 플레이어만 픽업 요청 — 원격 아바타/적은 무시. _requested로 중복 차단.
