@@ -16,6 +16,7 @@ signal room_closed
 signal peer_joined(peer_id: int)
 signal peer_left(peer_id: int)
 signal net_msg(from_id: int, data: Dictionary)
+signal player_spawned(peer_id: int, player: Node)  # PeerSync가 스폰 완료(잡 반영 포함) 시 emit — 호스트의 이월 HP 확정(CombatAuthority) 등 스폰 후속 처리용
 
 # --- flow (마을/스테이지가 emit, src/main이 씬 스왑) ---
 signal scene_change(scene_id: String)  # 호스트 로컬 결정 또는 게스트의 G_SCENE 수신 후 emit — 스왑은 main만 한다

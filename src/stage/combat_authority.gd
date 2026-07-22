@@ -12,18 +12,14 @@ const NetSchema := preload("res://src/core/net_schema.gd")
 const PlayerActor := preload("res://src/player/player.gd")
 const HealthComponent := preload("res://src/combat/health_component.gd")
 const PeerSyncNode := preload("res://src/net/peer_sync.gd")
-const SceneFlowNode := preload("res://src/net/scene_flow.gd")
-
-const RETURN_DELAY_S := 3.0  # 클리어/전멸 배너 후 마을 귀환 지연 (연출값)
 
 @export var peer_sync_path: NodePath  # 형제 PeerSync — 공격자 조회(net_anchor·job)에 필요
-@export var scene_flow_path: NodePath  # 형제 SceneFlow — 클리어/전멸 귀환 지시 (호스트 전용 사용)
 
 var _peer_sync: PeerSyncNode = null
-var _scene_flow: SceneFlowNode = null
 var _enemies: Dictionary = {}  # eid -> {root: Node2D, health: HealthComponent, def: EnemyDef}
 var _last_hit_msec: Dictionary = {}  # peer_id -> 마지막 스윙 앵커 msec (호스트 전용 — 연사 스팸 게이트)
 var _roll_grant_msec: Dictionary = {}  # peer_id -> 마지막 구르기 그랜트 msec (호스트 전용 — i-frame 창)
+var _pending_php: Dictionary = {}  # peer_id -> hp (게스트 전용) — 스폰 전 도착한 php 보류. 씬 전환 직후 호스트의 이월 HP 확정이 원격 아바타 스폰(첫 G_POS)보다 먼저 오면 유실되던 표시 드리프트 방지 (peer_sync._peer_jobs 보류 패턴 미러)
 var _stage_over: bool = false  # 클리어↔전멸 상호 배제 + 종료 후 판정 중지
 
 
@@ -32,8 +28,8 @@ func _ready() -> void:
 	if _peer_sync == null:
 		push_error("[CombatAuthority] peer_sync_path 미배선 — 전투 확정 불능")
 		return
-	_scene_flow = get_node_or_null(scene_flow_path) as SceneFlowNode  # 없으면 귀환만 생략
 	EventBus.net_msg.connect(_on_net_msg)
+	EventBus.player_spawned.connect(_on_player_spawned)
 	EventBus.attack_hit.connect(_on_attack_hit)
 	EventBus.enemy_hp_confirmed.connect(_on_enemy_hp_confirmed)
 	EventBus.player_hp_confirmed.connect(_on_player_hp_confirmed)
@@ -42,7 +38,30 @@ func _ready() -> void:
 		_register_enemy(node)
 	EventBus.peer_left.connect(func(peer_id: int) -> void:
 		_last_hit_msec.erase(peer_id)
-		_roll_grant_msec.erase(peer_id))
+		_roll_grant_msec.erase(peer_id)
+		_pending_php.erase(peer_id)
+		GameState.drop_party_hp(peer_id))  # 챕터 내 잔류 이월 기록 정리 (재접속 id는 증가라 재사용 없음)
+
+
+# 스폰 후속 처리. 호스트: 챕터 내 스테이지 간 HP 이월(GDD §4 한 호흡 진행 — 모닥불 회복의 전제)
+# — 스폰 직후(잡 반영 뒤) 이월 HP를 권한 경로로 재확정 → php 브로드캐스트로 전원 수렴.
+# 기록이 없으면(챕터 첫 판·마을) 풀피 유지. 마을 복귀 시 GameState.leave_chapter가 기록을 지운다.
+# 게스트: 스폰 전에 도착해 보류된 php 반영 — 없으면 표시가 다음 확정까지 풀피로 드리프트한다.
+func _on_player_spawned(peer_id: int, player: Node) -> void:
+	var p := player as PlayerActor
+	if p == null:
+		return
+	if not Net.is_host():
+		if _pending_php.has(peer_id):
+			p.confirm_hp_from_net(int(_pending_php[peer_id]))
+			_pending_php.erase(peer_id)
+		return
+	var carried := GameState.carried_hp(p.peer_id)
+	if carried < 0:
+		return
+	var health := p.get_node_or_null("Health") as HealthComponent
+	if health != null and carried != health.hp:
+		health.confirm_hp(carried)
 
 
 func _register_enemy(node: Node) -> void:
@@ -154,8 +173,7 @@ func _check_clear() -> void:
 		if p != null and not p.is_alive():
 			(p.get_node("Health") as HealthComponent).confirm_hp(1)
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_STAGE_CLEAR})
-	EventBus.stage_cleared.emit()
-	_return_to_village_later()
+	EventBus.stage_cleared.emit()  # 다음 칸/마을 전환은 ChapterFlow(호스트)가 결정
 
 
 # 호스트 전용 — 전멸 판정: 생존 플레이어 0 (솔로 사망 = 전멸 동일, GDD §5)
@@ -168,18 +186,7 @@ func _check_wipe() -> void:
 			return
 	_stage_over = true
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_WIPE})
-	EventBus.stage_wiped.emit()
-	_return_to_village_later()
-
-
-# 마을 귀환은 플레이스홀더 — 챕터 흐름(모닥불→다음 스테이지)이 생기면 이 지점이 갈아끼워진다.
-# ⚠ SceneTree 타이머는 씬 해제 후에도 발화한다 — self 멤버를 람다에서 더듬으면 freed 접근이므로
-# 로컬 변수로 캡처해 is_instance_valid로 거른다 (끊김→로비 전환 등으로 3초 안에 해제되는 케이스).
-func _return_to_village_later() -> void:
-	var sf := _scene_flow
-	get_tree().create_timer(RETURN_DELAY_S).timeout.connect(func() -> void:
-		if is_instance_valid(sf):
-			sf.request(NetSchema.SCENE_VILLAGE))
+	EventBus.stage_wiped.emit()  # 마을 귀환 전환은 ChapterFlow(호스트)가 결정
 
 
 func _on_net_msg(from_id: int, data: Dictionary) -> void:
@@ -222,9 +229,12 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 		NetSchema.G_PLAYER_HP:
 			if Net.is_host() or from_id != NetSchema.HOST_ID:
 				return  # 플레이어 HP 확정은 호스트 발신만 신뢰 — 자기 HP도 이것만 믿는다 (rules §3)
-			var target := _peer_sync.player(int(data.get("pid", 0)))
+			var pid := int(data.get("pid", 0))
+			var target := _peer_sync.player(pid)
 			if target != null:
 				target.confirm_hp_from_net(int(data.get("hp", 0)))
+			else:
+				_pending_php[pid] = int(data.get("hp", 0))  # 스폰 전 도착 — player_spawned에서 반영
 		NetSchema.G_STAGE_CLEAR:
 			if not Net.is_host() and from_id == NetSchema.HOST_ID and not _stage_over:
 				_stage_over = true

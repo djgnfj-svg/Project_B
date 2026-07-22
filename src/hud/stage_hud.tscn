@@ -11,6 +11,15 @@ offset_top = 4.0
 offset_right = 300.0
 offset_bottom = 22.0
 
+[node name="Progress" type="Label" parent="."]
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -160.0
+offset_top = 4.0
+offset_right = 160.0
+offset_bottom = 22.0
+horizontal_alignment = 1
+
 [node name="InviteBtn" type="Button" parent="."]
 offset_left = 6.0
 offset_top = 26.0
