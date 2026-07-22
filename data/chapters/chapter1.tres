@@ -5,4 +5,4 @@
 [resource]
 script = ExtResource("1")
 display_name = "챕터 1"
-stage_scenes = Array[String](["res://src/stage/stage_1.tscn", "res://src/stage/campfire.tscn", "res://src/stage/stage_2.tscn", "res://src/stage/campfire.tscn", "res://src/stage/stage_boss.tscn"])
+stage_scenes = Array[String](["res://src/stage/stage_1.tscn", "res://src/stage/stage_2.tscn", "res://src/stage/campfire.tscn", "res://src/stage/stage_boss.tscn"])

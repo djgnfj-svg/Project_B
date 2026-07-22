@@ -24,7 +24,7 @@ func _initialize() -> void:
 	# --- 챕터 리졸버 (G_SCENE c/i 신뢰 경계) ---
 	_check("챕터 스캔에 chapter1 포함", "chapter1" in gs.chapter_ids())
 	var ch1: ChapterDef = gs.chapter_def("chapter1")
-	_check("챕터1 칸 수 = 5 (전투3+모닥불2)", ch1.stage_count() == 5)
+	_check("챕터1 칸 수 = 4 (전투3+보스 직전 모닥불1)", ch1.stage_count() == 4)
 	_check("모르는 챕터 → 기본 챕터 폴백", gs.chapter_def("chapter99").display_name == ch1.display_name)
 	_check("챕터 경로 조작 → 기본 챕터 폴백",
 		gs.chapter_def("../../src/core/net_schema").display_name == ch1.display_name)
@@ -35,21 +35,21 @@ func _initialize() -> void:
 
 	# --- 칸 성격 판별 (모닥불 관례) + HUD 순번 ---
 	_check("0번 칸 = 전투", not ch1.is_rest(0))
-	_check("1번 칸 = 모닥불", ch1.is_rest(1))
+	_check("2번 칸 = 모닥불 (보스 직전)", ch1.is_rest(2))
 	_check("전투 스테이지 총수 = 3", ch1.combat_total() == 3)
-	_check("2번 칸 = 2번째 전투", ch1.combat_ordinal(2) == 2)
-	_check("마지막 칸 = 3번째 전투(보스)", ch1.combat_ordinal(4) == 3)
+	_check("1번 칸 = 2번째 전투", ch1.combat_ordinal(1) == 2)
+	_check("마지막 칸 = 3번째 전투(보스)", ch1.combat_ordinal(3) == 3)
 
 	# --- 진행 좌표·토큰·이월 HP ---
-	gs.begin_stage("chapter1", 2)
+	gs.begin_stage("chapter1", 1)
 	_check("진행 중 in_chapter", gs.in_chapter())
-	_check("씬 토큰 = 칸 좌표", gs.stage_token() == "stage:chapter1:2")
-	_check("2번 칸은 마지막 아님", not gs.is_last_stage())
+	_check("씬 토큰 = 칸 좌표", gs.stage_token() == "stage:chapter1:1")
+	_check("1번 칸은 마지막 아님", not gs.is_last_stage())
 	_check("씬 경로 = stage_2", gs.stage_scene_path().get_file() == "stage_2.tscn")
 	_check("진행 표기 = 스테이지 2/3", gs.progress_label().ends_with("스테이지 2/3"))
-	gs.begin_stage("chapter1", 4)
+	gs.begin_stage("chapter1", 3)
 	_check("마지막 칸 판별", gs.is_last_stage())
-	gs.begin_stage("chapter1", 1)
+	gs.begin_stage("chapter1", 2)
 	_check("모닥불 진행 표기", gs.progress_label().ends_with("모닥불"))
 	_check("이월 기록 없음 = -1", gs.carried_hp(7) == -1)
 	gs.record_party_hp(7, 12)
