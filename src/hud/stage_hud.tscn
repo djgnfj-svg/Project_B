@@ -39,13 +39,18 @@ offset_bottom = 70.0
 focus_mode = 0
 text = "설정"
 
-[node name="InvBar" type="HBoxContainer" parent="."]
-offset_left = 6.0
-offset_top = 296.0
-offset_right = 400.0
-offset_bottom = 316.0
+[node name="GoldBar" type="HBoxContainer" parent="."]
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -140.0
+offset_top = -26.0
+offset_right = -8.0
+offset_bottom = -6.0
 mouse_filter = 2
-theme_override_constants/separation = 12
+alignment = 2
+theme_override_constants/separation = 3
 
 [node name="HpBar" type="ProgressBar" parent="."]
 offset_left = 6.0
