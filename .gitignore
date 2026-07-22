@@ -21,6 +21,10 @@ export.cfg
 Thumbs.db
 desktop.ini
 
+# 검수·테스트 잔재 (리드 작업용 임시 산출물 — 웹 익스포트 pck 오염 방지)
+scratch_*
+*.log
+
 
 .mcp.json
 server/game-worker/public/
