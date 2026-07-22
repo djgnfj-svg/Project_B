@@ -19,7 +19,7 @@ PowerShell은 자식 프로세스 stdout을 안 보여준다 — **테스트는 
 # CombatMath 단위 (사거리·쿨다운·구르기 그랜트/i-frame·잔몹 타격 반경 — 신뢰 경계의 경계값)
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_combat_math_auto.gd
 
-# GameState 직업 리졸버 (data/jobs 스캔 allowlist + 모르는/조작 id 폴백 — 네트워크 job id 신뢰 경계)
+# GameState 직업·챕터 리졸버 (data 스캔 allowlist + 조작 id/인덱스 거부 + 챕터 진행 좌표·HP 이월 — 네트워크 job/G_SCENE 신뢰 경계)
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_game_state_auto.gd
 
 # HealthComponent (HP·부활 타이머 권한/표시 경로 격리 — 게스트 자가 부활 금지)
