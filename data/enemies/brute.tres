@@ -1,7 +1,33 @@
-[gd_resource type="Resource" script_class="EnemyDef" load_steps=3 format=3]
+[gd_resource type="Resource" script_class="EnemyDef" load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://src/core/enemy_def.gd" id="1"]
 [ext_resource type="Texture2D" path="res://assets/sprites/enemies/brute_48.png" id="2"]
+[ext_resource type="Script" path="res://src/core/drop_table.gd" id="3"]
+[ext_resource type="Script" path="res://src/core/drop_entry.gd" id="4"]
+
+[sub_resource type="Resource" id="d_gold"]
+script = ExtResource("4")
+kind = "gold"
+gold_min = 20
+gold_max = 40
+
+[sub_resource type="Resource" id="d_core"]
+script = ExtResource("4")
+kind = "material"
+ref_id = "brute_core"
+chance = 1.0
+qty_min = 1
+qty_max = 1
+
+[sub_resource type="Resource" id="d_bp"]
+script = ExtResource("4")
+kind = "blueprint"
+ref_id = "iron_greatsword"
+chance = 1.0
+
+[sub_resource type="Resource" id="d_table"]
+script = ExtResource("3")
+entries = Array[DropEntry]([SubResource("d_gold"), SubResource("d_core"), SubResource("d_bp")])
 
 [resource]
 script = ExtResource("1")
@@ -17,3 +43,4 @@ strike_radius = 32.0
 attack_damage = 12
 telegraph_s = 0.9
 attack_cooldown_s = 1.8
+drop_table = SubResource("d_table")

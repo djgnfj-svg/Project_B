@@ -21,3 +21,6 @@ extends Resource
 @export var attack_damage: int = 5
 @export var telegraph_s: float = 0.6      # 예고 길이 — 구르기(0.25s)보다 충분히 길게
 @export var attack_cooldown_s: float = 1.2
+
+# 드랍 테이블 (골드·일반/핵심 재료·도면) — 없으면 드랍 없음. 호스트만 롤 (rules §1·§3). "새 적 = 파일 한 장" (§4)
+@export var drop_table: DropTable

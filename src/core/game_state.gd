@@ -15,7 +15,17 @@ var current_stage_idx: int = -1
 
 var _job_ids: Array[String] = []  # data/jobs/ 스캔 캐시
 var _chapter_ids: Array[String] = []  # data/chapters/ 스캔 캐시
+var _material_ids: Array[String] = []    # data/materials/ 스캔 캐시
+var _equipment_ids: Array[String] = []   # data/equipment/ 스캔 캐시
+var _recipe_ids: Array[String] = []      # data/recipes/ 스캔 캐시
 var _party_hp: Dictionary = {}  # peer_id -> 확정 HP — 챕터 내 스테이지 간 이월 (php 확정만 기록, player.gd 확정 경로가 쓴다)
+
+# --- 인벤토리/장비 (드랍·제작 2026-07-23) — 각 클라 자기 것만, 브라우저 로컬 저장(개인·비네트워크, GDD §3) ---
+var gold: int = 0
+var materials: Dictionary = {}            # mat_id(String) -> qty(int)
+var unlocked_blueprints: Dictionary = {}  # recipe_id(String) -> true
+var owned_equipment: Dictionary = {}      # equip_id(String) -> level(int, 0=미강화)
+var equipped: Dictionary = {}             # slot(int, EquipDef.SLOT_*) -> equip_id(String)
 
 
 # 직업 id 목록 — data/jobs/*.tres 파일명에서 유도. 하드코딩 금지: "새 직업 = 파일 한 장" (rules §4).
@@ -138,3 +148,260 @@ func carried_hp(peer_id: int) -> int:
 # 피어 이탈 시 잔류 기록 정리 (릴레이 id는 재사용되지 않지만 챕터 내 누적 방지)
 func drop_party_hp(peer_id: int) -> void:
 	_party_hp.erase(peer_id)
+
+
+# --- data 리졸버 (materials·equipment·recipes) — job/chapter와 같은 스캔 allowlist 규약 (rules §4) ---
+# 네트워크로 받은 id(드랍·픽업)도 여길 지난다(신뢰 경계) — allowlist 밖 id는 폐기(null/무시).
+
+func _scan_ids(dir: String) -> Array[String]:
+	var out: Array[String] = []
+	for f: String in DirAccess.get_files_at(dir):
+		var base := f.trim_suffix(".remap")
+		if base.get_extension() == "tres" or base.get_extension() == "res":
+			out.append(base.get_basename())
+	return out
+
+
+func material_ids() -> Array[String]:
+	if _material_ids.is_empty():
+		_material_ids = _scan_ids("res://data/materials")
+	return _material_ids
+
+
+func material_def(id: String) -> MaterialDef:
+	if id not in material_ids():
+		return null
+	return load("res://data/materials/%s.tres" % id) as MaterialDef
+
+
+func equipment_ids() -> Array[String]:
+	if _equipment_ids.is_empty():
+		_equipment_ids = _scan_ids("res://data/equipment")
+	return _equipment_ids
+
+
+func equip_def(id: String) -> EquipDef:
+	if id not in equipment_ids():
+		return null
+	return load("res://data/equipment/%s.tres" % id) as EquipDef
+
+
+func recipe_ids() -> Array[String]:
+	if _recipe_ids.is_empty():
+		_recipe_ids = _scan_ids("res://data/recipes")
+	return _recipe_ids
+
+
+func recipe_def(id: String) -> RecipeDef:
+	if id not in recipe_ids():
+		return null
+	return load("res://data/recipes/%s.tres" % id) as RecipeDef
+
+
+# --- 인벤토리 조작 (각 클라 로컬) — 변동 시 inventory_changed emit. EventBus는 /root로(rules §5 -s 함정) ---
+
+func _bus() -> EventBusHub:
+	return get_node_or_null("/root/EventBus") as EventBusHub
+
+
+func _notify_inventory() -> void:
+	var b := _bus()
+	if b != null:
+		b.inventory_changed.emit()
+
+
+func add_gold(amount: int) -> void:
+	gold = maxi(0, gold + amount)
+	_notify_inventory()
+
+
+func spend_gold(amount: int) -> bool:
+	if gold < amount:
+		return false
+	gold -= amount
+	_notify_inventory()
+	return true
+
+
+func material_count(id: String) -> int:
+	return int(materials.get(id, 0))
+
+
+func add_material(id: String, qty: int) -> void:
+	if id not in material_ids():  # allowlist — 모르는 재료 폐기 (신뢰 경계)
+		push_warning("[GameState] 모르는 재료 id '%s' 드랍 — 폐기" % id)
+		return
+	materials[id] = material_count(id) + qty
+	_notify_inventory()
+
+
+func has_materials(costs: Dictionary) -> bool:
+	for id: String in costs:
+		if material_count(id) < int(costs[id]):
+			return false
+	return true
+
+
+func _spend_materials(costs: Dictionary) -> void:
+	for id: String in costs:
+		materials[id] = maxi(0, material_count(id) - int(costs[id]))
+
+
+func has_blueprint(recipe_id: String) -> bool:
+	var r := recipe_def(recipe_id)
+	if r != null and r.unlocked_by_default:  # 튜토 제작템은 도면 없이도 제작 가능
+		return true
+	return unlocked_blueprints.has(recipe_id)
+
+
+func unlock_blueprint(recipe_id: String) -> void:
+	if recipe_id not in recipe_ids():  # allowlist
+		push_warning("[GameState] 모르는 도면 id '%s' 드랍 — 폐기" % recipe_id)
+		return
+	if not unlocked_blueprints.has(recipe_id):
+		unlocked_blueprints[recipe_id] = true
+		var b := _bus()
+		if b != null:
+			b.blueprint_unlocked.emit(recipe_id)
+	_notify_inventory()
+
+
+# 드랍 픽업 확정 라우팅 — 호스트가 선착 확정한 뒤, 주운 클라가 자기 인벤에 반영한다.
+func collect_drop(kind: String, ref_id: String, qty: int) -> void:
+	match kind:
+		"gold":
+			add_gold(qty)
+		"material":
+			add_material(ref_id, qty)
+		"blueprint":
+			unlock_blueprint(ref_id)
+		_:
+			push_warning("[GameState] 모르는 드랍 kind '%s'" % kind)
+
+
+# --- 제작·강화 (마을 로컬 — 네트워크 0개, 각 클라 자기 인벤) ---
+
+func can_craft(recipe_id: String) -> bool:
+	var r := recipe_def(recipe_id)
+	if r == null or not has_blueprint(recipe_id):
+		return false
+	return gold >= r.gold_cost and has_materials(r.material_costs)
+
+
+func craft(recipe_id: String) -> bool:
+	if not can_craft(recipe_id):
+		return false
+	var r := recipe_def(recipe_id)
+	gold -= r.gold_cost
+	_spend_materials(r.material_costs)
+	add_equipment(r.result_equip_id)
+	_notify_inventory()
+	return true
+
+
+func add_equipment(equip_id: String) -> void:
+	if equip_id not in equipment_ids():  # allowlist
+		push_warning("[GameState] 모르는 장비 id '%s'" % equip_id)
+		return
+	if not owned_equipment.has(equip_id):
+		owned_equipment[equip_id] = 0  # 레벨 0 = 미강화
+	_notify_inventory()
+
+
+func equip_level(equip_id: String) -> int:
+	return int(owned_equipment.get(equip_id, -1))  # -1 = 미보유
+
+
+func can_upgrade(equip_id: String) -> bool:
+	var lv := equip_level(equip_id)
+	if lv < 0:
+		return false
+	var e := equip_def(equip_id)
+	if e == null or lv >= e.max_level:
+		return false
+	return gold >= CombatMath.upgrade_cost(e, lv)
+
+
+func upgrade_equipment(equip_id: String) -> bool:
+	if not can_upgrade(equip_id):
+		return false
+	var e := equip_def(equip_id)
+	gold -= CombatMath.upgrade_cost(e, equip_level(equip_id))
+	owned_equipment[equip_id] += 1
+	_notify_inventory()
+	return true
+
+
+func equip(equip_id: String) -> void:
+	if equip_level(equip_id) < 0:
+		return
+	var e := equip_def(equip_id)
+	if e == null:
+		return
+	equipped[e.slot()] = equip_id
+	_notify_inventory()
+
+
+func equipped_id(slot: int) -> String:
+	return str(equipped.get(slot, ""))
+
+
+# 착용 장비 → [[EquipDef, level], …] (CombatMath.total_stats 입력)
+func equipped_defs() -> Array:
+	var out: Array = []
+	for slot: int in equipped:
+		var eid: String = equipped[slot]
+		var e := equip_def(eid)
+		if e != null:
+			out.append([e, equip_level(eid)])
+	return out
+
+
+# 착용 장비 총 스탯 {attack, hp} — HUD·전투(calc_damage/max_hp)가 부른다 (단일 소스 CombatMath)
+func current_stats() -> Dictionary:
+	return CombatMath.total_stats(equipped_defs())
+
+
+# --- 저장 직렬화 (SaveManager가 부른다) ---
+
+func clear_inventory() -> void:
+	gold = 0
+	materials.clear()
+	unlocked_blueprints.clear()
+	owned_equipment.clear()
+	equipped.clear()
+
+
+func to_save_dict() -> Dictionary:
+	return {
+		"gold": gold,
+		"materials": materials.duplicate(),
+		"blueprints": unlocked_blueprints.keys(),
+		"equipment": owned_equipment.duplicate(),
+		"equipped": {"0": equipped_id(EquipDef.SLOT_WEAPON), "1": equipped_id(EquipDef.SLOT_ARMOR)},
+	}
+
+
+# 로드 — 모든 id를 allowlist로 재검증(손상·조작 세이브의 모르는 id는 폐기). JSON은 수를 float로 만드므로 int 캐스트.
+func from_save_dict(d: Dictionary) -> void:
+	clear_inventory()
+	gold = maxi(0, int(d.get("gold", 0)))
+	var mats: Dictionary = d.get("materials", {})
+	for mid: String in mats:
+		if mid in material_ids():
+			materials[mid] = maxi(0, int(mats[mid]))
+	for rid: Variant in d.get("blueprints", []):
+		if str(rid) in recipe_ids():
+			unlocked_blueprints[str(rid)] = true
+	var eqp: Dictionary = d.get("equipment", {})
+	for eid: String in eqp:
+		if eid in equipment_ids():
+			owned_equipment[eid] = maxi(0, int(eqp[eid]))
+	var worn: Dictionary = d.get("equipped", {})
+	var w := str(worn.get("0", ""))
+	var a := str(worn.get("1", ""))
+	if w in owned_equipment:
+		equipped[EquipDef.SLOT_WEAPON] = w
+	if a in owned_equipment:
+		equipped[EquipDef.SLOT_ARMOR] = a
+	_notify_inventory()
