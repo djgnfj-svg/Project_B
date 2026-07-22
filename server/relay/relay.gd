@@ -98,8 +98,8 @@ func _handle(ws: WebSocketPeer, msg: Dictionary) -> void:
 			var peers: Dictionary = _rooms[code]["peers"]
 			var out := {NetSchema.KEY_TYPE: NetSchema.S_MSG, "from": int(info["id"]), "data": data_v}
 			var kind := str((data_v as Dictionary).get(NetSchema.KEY_KIND, ""))
-			if kind != NetSchema.G_POS:
-				# pos는 초당 15회라 제외 — 저빈도 게임 이벤트만 기록 (운영 진단용)
+			if kind != NetSchema.G_POS and kind != NetSchema.G_MOB_POS:
+				# pos(15Hz)·mpos(10Hz)는 고빈도라 제외 — 저빈도 게임 이벤트만 기록 (운영 진단용)
 				print("[relay] %s: %d -> room %s: %s" % [kind, int(info["id"]), code, NetSchema.encode(data_v)])
 			for pid: Variant in peers:
 				if int(pid) != int(info["id"]):

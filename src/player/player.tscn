@@ -1,9 +1,10 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://src/player/player.gd" id="1"]
 [ext_resource type="Texture2D" path="res://assets/sprites/player/placeholder.png" id="2"]
 [ext_resource type="Resource" path="res://data/jobs/warrior.tres" id="3"]
 [ext_resource type="Texture2D" path="res://assets/sprites/fx/slash.png" id="4"]
+[ext_resource type="Script" path="res://src/combat/health_component.gd" id="5"]
 
 [sub_resource type="RectangleShape2D" id="shape_body"]
 size = Vector2(12, 12)
@@ -23,3 +24,6 @@ texture = ExtResource("4")
 
 [node name="Collision" type="CollisionShape2D" parent="."]
 shape = SubResource("shape_body")
+
+[node name="Health" type="Node" parent="."]
+script = ExtResource("5")

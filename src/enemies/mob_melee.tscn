@@ -1,0 +1,28 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://src/enemies/mob_melee.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/enemies/chaser.png" id="2"]
+[ext_resource type="Texture2D" path="res://assets/sprites/fx/telegraph.png" id="3"]
+[ext_resource type="Script" path="res://src/combat/health_component.gd" id="4"]
+
+[sub_resource type="CircleShape2D" id="shape_body"]
+radius = 6.0
+
+[node name="MobMelee" type="CharacterBody2D"]
+collision_layer = 4
+collision_mask = 1
+script = ExtResource("1")
+
+[node name="Sprite" type="Sprite2D" parent="."]
+texture = ExtResource("2")
+
+[node name="Telegraph" type="Sprite2D" parent="."]
+visible = false
+z_index = -1
+texture = ExtResource("3")
+
+[node name="Collision" type="CollisionShape2D" parent="."]
+shape = SubResource("shape_body")
+
+[node name="Health" type="Node" parent="."]
+script = ExtResource("4")

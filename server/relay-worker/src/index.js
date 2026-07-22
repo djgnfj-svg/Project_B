@@ -21,6 +21,7 @@ const FAIL_FULL = "full";
 const FAIL_SERVER_FULL = "server_full"; // 서버 전체 상한 — Worker 전용 (net_schema.gd에도 등재)
 const KEY_KIND = "k";
 const G_POS = "pos";
+const G_MOB_POS = "mpos"; // 잔몹 위치 배치 (호스트 10Hz) — pos처럼 로그 제외 (net_schema.gd 미러)
 const ROOM_CODE_LEN = 4;
 const ROOM_CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // 혼동 문자(I/L/O/0/1) 제외
 const MAX_ROOM_PEERS = 2; // GDD §3: 해커톤 = 2인 협동
@@ -128,8 +129,8 @@ export class RelayHub {
 				if (typeof data !== "object" || data === null || Array.isArray(data)) return;
 				const out = JSON.stringify({ [KEY_TYPE]: S_MSG, from: info.id, data });
 				const kind = String(data[KEY_KIND] ?? "");
-				if (kind !== G_POS) {
-					// pos는 초당 15회라 제외 — 저빈도 게임 이벤트만 기록 (운영 진단용)
+				if (kind !== G_POS && kind !== G_MOB_POS) {
+					// pos(15Hz)·mpos(10Hz)는 고빈도라 제외 — 저빈도 게임 이벤트만 기록 (운영 진단용)
 					console.log(`[relay] ${kind}: ${info.id} -> room ${info.room}: ${JSON.stringify(data)}`);
 				}
 				for (const [pid, peer] of room.peers) {

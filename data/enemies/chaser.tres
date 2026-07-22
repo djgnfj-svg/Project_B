@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="EnemyDef" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://src/core/enemy_def.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/enemies/chaser.png" id="2"]
+
+[resource]
+script = ExtResource("1")
+display_name = "추격자"
+max_hp = 15
+respawns = false
+sprite = ExtResource("2")
+move_speed = 70.0
+aggro_range = 140.0
+attack_range = 26.0
+strike_radius = 20.0
+attack_damage = 8
+telegraph_s = 0.6
+attack_cooldown_s = 1.4

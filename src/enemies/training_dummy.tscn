@@ -1,8 +1,9 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://src/enemies/enemy.gd" id="1"]
 [ext_resource type="Texture2D" path="res://assets/sprites/enemies/dummy.png" id="2"]
 [ext_resource type="Resource" path="res://data/enemies/dummy.tres" id="3"]
+[ext_resource type="Script" path="res://src/combat/health_component.gd" id="4"]
 
 [sub_resource type="RectangleShape2D" id="shape_body"]
 size = Vector2(14, 14)
@@ -18,3 +19,6 @@ texture = ExtResource("2")
 
 [node name="Collision" type="CollisionShape2D" parent="."]
 shape = SubResource("shape_body")
+
+[node name="Health" type="Node" parent="."]
+script = ExtResource("4")

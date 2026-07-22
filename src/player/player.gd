@@ -4,14 +4,16 @@ extends CharacterBody2D
 # 조작(GDD §5 v1.5): WASD 이동, 마우스 조준(2방향 플립), 좌클릭 공격, Shift 구르기.
 
 const NetSchema := preload("res://src/core/net_schema.gd")
+const HealthComponent := preload("res://src/combat/health_component.gd")
 
 # 연출값 (rules §0 예외 — 사용자가 플레이하며 조인다)
+# ⚠ 구르기 시간·쿨다운은 여기 없다 — CombatMath.ROLL_TIME_S/ROLL_COOLDOWN_S(§3 단일 소스,
+#   호스트 i-frame 검증과 같은 값). 사본을 만들면 무적 창과 이동이 갈라진다.
 const REMOTE_LERP_SPEED := 12.0
 const POS_SEND_RATE := 15.0
 const REMOTE_TINT := Color(1.0, 0.75, 0.75)
 const ROLL_SPEED_MULT := 2.6
-const ROLL_TIME := 0.25
-const ROLL_COOLDOWN := 0.8
+const GHOST_ALPHA := 0.4
 const ATTACK_FX_TIME := 0.12
 const REMOTE_MAX_SPEED_MULT := 1.5  # 원격 변위 클램프 여유 — 순간이동 스푸핑 완화 (rules §3)
 const ENEMY_BODY_MASK := 1 << 2  # 물리 레이어 3 enemy_body — rules §5 배정표가 단일 소스
@@ -32,13 +34,23 @@ var _roll_dir: Vector2 = Vector2.RIGHT
 var _fx_left: float = 0.0
 var _attack_queued: bool = false
 var _last_remote_msec: int = -1
+var _alive: bool = true
+var _saved_layer: int = 0
+var _saved_mask: int = 0
 
 @onready var _sprite: Sprite2D = $Sprite
 @onready var _attack_fx: Sprite2D = $AttackFx
+@onready var _health: HealthComponent = $Health
 
 
 func _ready() -> void:
 	add_to_group("player")
+	_saved_layer = collision_layer
+	_saved_mask = collision_mask
+	# 권한 경로(호스트의 apply_damage/confirm_hp)에서만 발화 — 게스트 표시 경로는 confirm_hp_from_net이 별도 emit
+	_health.hp_confirmed.connect(_on_hp_confirmed)
+	if job != null:
+		_health.setup(job.max_hp)
 
 
 func setup(p_peer_id: int, p_is_local: bool, spawn_pos: Vector2, p_scene_id: String) -> void:
@@ -59,6 +71,52 @@ func set_job(j: JobDef) -> void:
 	job = j
 	if j.sprite != null:
 		_sprite.texture = j.sprite
+	if is_node_ready():
+		_health.setup(j.max_hp)
+
+
+func is_alive() -> bool:
+	return _alive
+
+
+# 호스트가 자기 로컬 플레이어의 i-frame을 직접 조회 (원격 피어는 G_ROLL 그랜트 창으로 판정)
+func is_rolling() -> bool:
+	return _roll_time_left > 0.0
+
+
+# 게스트 수신 경로 — php 브로드캐스트 반영. 타이머 없는 표시 전용 (§3: 자기 HP도 이것만 믿는다)
+func confirm_hp_from_net(p_hp: int) -> void:
+	_health.set_hp_display(p_hp)
+	EventBus.player_hp_confirmed.emit(peer_id, p_hp)
+	_update_life_state(p_hp)
+
+
+func _on_hp_confirmed(p_hp: int) -> void:
+	EventBus.player_hp_confirmed.emit(peer_id, p_hp)
+	_update_life_state(p_hp)
+
+
+# 사망 = 관전 고스트 (GDD §5): 공격·구르기 차단, 이동은 자유(충돌 off), G_POS는 계속 송신
+# (송신을 멈추면 부활 순간 원격 변위 클램프가 순간이동을 기어가는 걸로 만든다 — 앵커 연속성 유지)
+func _update_life_state(p_hp: int) -> void:
+	var now_alive := p_hp > 0
+	if now_alive == _alive:
+		return
+	_alive = now_alive
+	if _alive:
+		collision_layer = _saved_layer
+		collision_mask = _saved_mask
+		_sprite.visible = true
+		_sprite.modulate.a = 1.0
+	else:
+		collision_layer = 0
+		collision_mask = 0
+		_attack_fx.visible = false
+		_roll_time_left = 0.0
+		if is_local:
+			_sprite.modulate.a = GHOST_ALPHA
+		else:
+			_sprite.visible = false
 
 
 func _physics_process(delta: float) -> void:
@@ -88,10 +146,12 @@ func _local_move(delta: float) -> void:
 		velocity = _roll_dir * job.move_speed * ROLL_SPEED_MULT
 	else:
 		velocity = dir * job.move_speed
-		if Input.is_action_just_pressed("roll") and _roll_cd_left <= 0.0:
+		if _alive and Input.is_action_just_pressed("roll") and _roll_cd_left <= 0.0:
 			_roll_dir = dir if dir != Vector2.ZERO else _aim_dir()
-			_roll_time_left = ROLL_TIME
-			_roll_cd_left = ROLL_COOLDOWN
+			_roll_time_left = CombatMath.ROLL_TIME_S
+			_roll_cd_left = CombatMath.ROLL_COOLDOWN_S
+			# 구르기 선언 — 호스트가 쿨다운 검증 후 i-frame 창 부여 (방향은 연출용)
+			Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ROLL, "dx": _roll_dir.x, "dy": _roll_dir.y})
 	move_and_slide()
 	_sprite.flip_h = get_global_mouse_position().x < global_position.x
 
@@ -105,6 +165,8 @@ func _unhandled_input(event: InputEvent) -> void:
 func _local_combat() -> void:
 	var want := _attack_queued
 	_attack_queued = false
+	if not _alive:
+		return
 	if want and _attack_cd_left <= 0.0 and _roll_time_left <= 0.0:
 		_attack_cd_left = job.attack_cooldown
 		var dir := _aim_dir()
