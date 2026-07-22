@@ -1,24 +1,475 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=58 format=3]
 
 [ext_resource type="Script" path="res://src/village/village.gd" id="1"]
-[ext_resource type="Texture2D" path="res://assets/sprites/village/grass_32.png" id="2"]
-[ext_resource type="Texture2D" path="res://assets/sprites/village/gate_48.png" id="3"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/ground/baked.png" id="2"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/buildings/gate_48.png" id="3"]
 [ext_resource type="Script" path="res://src/net/peer_sync.gd" id="4"]
 [ext_resource type="PackedScene" path="res://src/hud/stage_hud.tscn" id="5"]
 [ext_resource type="Script" path="res://src/net/scene_flow.gd" id="6"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/buildings/forge_house.png" id="7"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/buildings/forge_shed.png" id="8"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/anvil.png" id="9"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/ember_barrel.png" id="10"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/weapon_rack.png" id="11"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/postbox.png" id="12"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/buildings/enhance_house.png" id="13"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/buildings/enhance_machine.png" id="14"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/buildings/sign_wip.png" id="15"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/chest_big.png" id="16"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/crate_a.png" id="17"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/crate_b.png" id="18"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/crate_c.png" id="19"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/garden.png" id="20"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/stairs.png" id="21"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/ruin_a.png" id="22"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/ruin_b.png" id="23"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/ruin_c.png" id="24"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/bridge.png" id="25"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/dock.png" id="26"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/barrel.png" id="27"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/props/bucket.png" id="28"]
+[ext_resource type="Texture2D" path="res://assets/sprites/stage/campfire_24.png" id="29"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/nature/tree_a.png" id="30"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/nature/tree_b.png" id="31"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/nature/tree_c.png" id="32"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/nature/pine_a.png" id="33"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/nature/pine_b.png" id="34"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/nature/blossom_a.png" id="35"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/nature/blossom_b.png" id="36"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/nature/bush_a.png" id="37"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/nature/bush_b.png" id="38"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/nature/pebble_a.png" id="39"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/nature/pebble_b.png" id="40"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/nature/petal.png" id="41"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/npc/elder.png" id="42"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/npc/smith.png" id="43"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/npc/enchanter.png" id="44"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/npc/keeper.png" id="45"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/npc/fisher.png" id="46"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/npc/bobber.png" id="47"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/npc/guard.png" id="48"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/npc/rabbit.png" id="49"]
 
 [sub_resource type="RectangleShape2D" id="shape_gate"]
 size = Vector2(40, 44)
+
+[sub_resource type="RectangleShape2D" id="shape_wall_h"]
+size = Vector2(680, 12)
+
+[sub_resource type="RectangleShape2D" id="shape_wall_v"]
+size = Vector2(12, 400)
+
+[sub_resource type="RectangleShape2D" id="shape_river_l"]
+size = Vector2(268, 56)
+
+[sub_resource type="RectangleShape2D" id="shape_river_r"]
+size = Vector2(316, 56)
+
+[sub_resource type="RectangleShape2D" id="shape_forge"]
+size = Vector2(144, 88)
+
+[sub_resource type="RectangleShape2D" id="shape_enhance"]
+size = Vector2(178, 104)
+
+[sub_resource type="RectangleShape2D" id="shape_chest"]
+size = Vector2(102, 48)
+
+[sub_resource type="RectangleShape2D" id="shape_garden"]
+size = Vector2(64, 44)
+
+[sub_resource type="RectangleShape2D" id="shape_campfire"]
+size = Vector2(24, 16)
 
 [node name="Village" type="Node2D"]
 script = ExtResource("1")
 
 [node name="Ground" type="Sprite2D" parent="."]
-texture_repeat = 2
-position = Vector2(320, 180)
+z_index = -10
 texture = ExtResource("2")
-region_enabled = true
-region_rect = Rect2(0, 0, 640, 360)
+centered = false
+
+[node name="Decals" type="Node2D" parent="."]
+
+[node name="Petal1" type="Sprite2D" parent="Decals"]
+position = Vector2(392, 222)
+texture = ExtResource("41")
+centered = false
+
+[node name="Petal2" type="Sprite2D" parent="Decals"]
+position = Vector2(152, 254)
+texture = ExtResource("41")
+centered = false
+flip_h = true
+
+[node name="PebbleA1" type="Sprite2D" parent="Decals"]
+position = Vector2(302, 146)
+texture = ExtResource("39")
+centered = false
+
+[node name="PebbleB1" type="Sprite2D" parent="Decals"]
+position = Vector2(516, 246)
+texture = ExtResource("40")
+centered = false
+
+[node name="PebbleB2" type="Sprite2D" parent="Decals"]
+position = Vector2(94, 158)
+texture = ExtResource("40")
+centered = false
+flip_h = true
+
+[node name="PebbleA2" type="Sprite2D" parent="Decals"]
+position = Vector2(352, 250)
+texture = ExtResource("39")
+centered = false
+flip_h = true
+
+[node name="Bridge" type="Sprite2D" parent="."]
+position = Vector2(272, 290)
+texture = ExtResource("25")
+centered = false
+
+[node name="Dock" type="Sprite2D" parent="."]
+position = Vector2(468, 300)
+texture = ExtResource("26")
+centered = false
+
+[node name="Trees" type="Node2D" parent="."]
+
+[node name="TreeA1" type="Sprite2D" parent="Trees"]
+position = Vector2(-6, -18)
+texture = ExtResource("30")
+centered = false
+
+[node name="PineA1" type="Sprite2D" parent="Trees"]
+position = Vector2(46, -26)
+texture = ExtResource("33")
+centered = false
+
+[node name="TreeB1" type="Sprite2D" parent="Trees"]
+position = Vector2(104, -16)
+texture = ExtResource("31")
+centered = false
+flip_h = true
+
+[node name="TreeC1" type="Sprite2D" parent="Trees"]
+position = Vector2(228, -14)
+texture = ExtResource("32")
+centered = false
+
+[node name="TreeA2" type="Sprite2D" parent="Trees"]
+position = Vector2(296, -22)
+scale = Vector2(0.9, 0.9)
+texture = ExtResource("30")
+centered = false
+flip_h = true
+
+[node name="PineA2" type="Sprite2D" parent="Trees"]
+position = Vector2(362, -16)
+texture = ExtResource("33")
+centered = false
+flip_h = true
+
+[node name="PineB1" type="Sprite2D" parent="Trees"]
+position = Vector2(492, -14)
+texture = ExtResource("34")
+centered = false
+flip_h = true
+
+[node name="TreeC2" type="Sprite2D" parent="Trees"]
+position = Vector2(552, -22)
+texture = ExtResource("32")
+centered = false
+flip_h = true
+
+[node name="TreeA3" type="Sprite2D" parent="Trees"]
+position = Vector2(608, -16)
+scale = Vector2(0.85, 0.85)
+texture = ExtResource("30")
+centered = false
+
+[node name="TreeB2" type="Sprite2D" parent="Trees"]
+position = Vector2(-12, 50)
+texture = ExtResource("31")
+centered = false
+
+[node name="PineA3" type="Sprite2D" parent="Trees"]
+position = Vector2(-14, 210)
+texture = ExtResource("33")
+centered = false
+
+[node name="TreeC3" type="Sprite2D" parent="Trees"]
+position = Vector2(606, 44)
+texture = ExtResource("32")
+centered = false
+flip_h = true
+
+[node name="PineB2" type="Sprite2D" parent="Trees"]
+position = Vector2(610, 222)
+texture = ExtResource("34")
+centered = false
+
+[node name="PineA4" type="Sprite2D" parent="Trees"]
+position = Vector2(36, 112)
+scale = Vector2(0.85, 0.85)
+texture = ExtResource("33")
+centered = false
+
+[node name="TreeA4" type="Sprite2D" parent="Trees"]
+position = Vector2(540, 228)
+scale = Vector2(0.75, 0.75)
+texture = ExtResource("30")
+centered = false
+flip_h = true
+
+[node name="TreeA5" type="Sprite2D" parent="Trees"]
+position = Vector2(66, 328)
+scale = Vector2(0.8, 0.8)
+texture = ExtResource("30")
+centered = false
+
+[node name="PineB3" type="Sprite2D" parent="Trees"]
+position = Vector2(168, 330)
+scale = Vector2(0.8, 0.8)
+texture = ExtResource("34")
+centered = false
+flip_h = true
+
+[node name="TreeB3" type="Sprite2D" parent="Trees"]
+position = Vector2(516, 328)
+scale = Vector2(0.8, 0.8)
+texture = ExtResource("31")
+centered = false
+
+[node name="PineA5" type="Sprite2D" parent="Trees"]
+position = Vector2(598, 330)
+scale = Vector2(0.8, 0.8)
+texture = ExtResource("33")
+centered = false
+
+[node name="Bushes" type="Node2D" parent="."]
+
+[node name="BushA1" type="Sprite2D" parent="Bushes"]
+position = Vector2(204, 126)
+texture = ExtResource("37")
+centered = false
+
+[node name="BushB1" type="Sprite2D" parent="Bushes"]
+position = Vector2(424, 198)
+texture = ExtResource("38")
+centered = false
+
+[node name="BushA2" type="Sprite2D" parent="Bushes"]
+position = Vector2(54, 234)
+texture = ExtResource("37")
+centered = false
+flip_h = true
+
+[node name="Blossom1" type="Sprite2D" parent="."]
+position = Vector2(376, 170)
+texture = ExtResource("35")
+centered = false
+
+[node name="Blossom2" type="Sprite2D" parent="."]
+position = Vector2(140, 206)
+scale = Vector2(0.85, 0.85)
+texture = ExtResource("36")
+centered = false
+flip_h = true
+
+[node name="ForgeHouse" type="Sprite2D" parent="."]
+position = Vector2(62, 16)
+texture = ExtResource("7")
+centered = false
+
+[node name="ForgeShed" type="Sprite2D" parent="."]
+position = Vector2(158, 40)
+texture = ExtResource("8")
+centered = false
+
+[node name="Anvil" type="Sprite2D" parent="."]
+position = Vector2(80, 98)
+texture = ExtResource("9")
+centered = false
+
+[node name="EmberBarrel" type="Sprite2D" parent="."]
+position = Vector2(114, 102)
+texture = ExtResource("10")
+centered = false
+
+[node name="WeaponRack" type="Sprite2D" parent="."]
+position = Vector2(210, 80)
+texture = ExtResource("11")
+centered = false
+
+[node name="Postbox" type="Sprite2D" parent="."]
+position = Vector2(48, 88)
+texture = ExtResource("12")
+centered = false
+
+[node name="EnhanceHouse" type="Sprite2D" parent="."]
+position = Vector2(270, 4)
+texture = ExtResource("13")
+centered = false
+
+[node name="EnhanceMachine" type="Sprite2D" parent="."]
+position = Vector2(384, 44)
+texture = ExtResource("14")
+centered = false
+
+[node name="SignWip" type="Sprite2D" parent="."]
+position = Vector2(388, 108)
+texture = ExtResource("15")
+centered = false
+
+[node name="ChestBig" type="Sprite2D" parent="."]
+position = Vector2(470, 60)
+texture = ExtResource("16")
+centered = false
+
+[node name="CrateA" type="Sprite2D" parent="."]
+position = Vector2(538, 92)
+texture = ExtResource("17")
+centered = false
+
+[node name="CrateB" type="Sprite2D" parent="."]
+position = Vector2(538, 74)
+texture = ExtResource("18")
+centered = false
+
+[node name="CrateC" type="Sprite2D" parent="."]
+position = Vector2(556, 92)
+texture = ExtResource("19")
+centered = false
+
+[node name="Garden" type="Sprite2D" parent="."]
+position = Vector2(560, 204)
+texture = ExtResource("20")
+centered = false
+
+[node name="Stairs" type="Sprite2D" parent="."]
+position = Vector2(544, 148)
+texture = ExtResource("21")
+centered = false
+
+[node name="RuinC" type="Sprite2D" parent="."]
+position = Vector2(500, 120)
+texture = ExtResource("24")
+centered = false
+
+[node name="RuinA" type="Sprite2D" parent="."]
+position = Vector2(516, 116)
+texture = ExtResource("22")
+centered = false
+
+[node name="RuinB" type="Sprite2D" parent="."]
+position = Vector2(532, 112)
+texture = ExtResource("23")
+centered = false
+
+[node name="Campfire" type="Sprite2D" parent="."]
+position = Vector2(238, 182)
+texture = ExtResource("29")
+centered = false
+
+[node name="DockBarrel" type="Sprite2D" parent="."]
+position = Vector2(470, 284)
+texture = ExtResource("27")
+centered = false
+
+[node name="DockBucket" type="Sprite2D" parent="."]
+position = Vector2(488, 292)
+texture = ExtResource("28")
+centered = false
+
+[node name="Npcs" type="Node2D" parent="."]
+
+[node name="Smith" type="Sprite2D" parent="Npcs"]
+position = Vector2(120, 104)
+texture = ExtResource("43")
+centered = false
+
+[node name="Enchanter" type="Sprite2D" parent="Npcs"]
+position = Vector2(340, 96)
+texture = ExtResource("44")
+centered = false
+
+[node name="Keeper" type="Sprite2D" parent="Npcs"]
+position = Vector2(486, 100)
+texture = ExtResource("45")
+centered = false
+
+[node name="Elder" type="Sprite2D" parent="Npcs"]
+position = Vector2(206, 186)
+texture = ExtResource("42")
+centered = false
+
+[node name="Guard" type="Sprite2D" parent="Npcs"]
+position = Vector2(544, 250)
+texture = ExtResource("48")
+centered = false
+
+[node name="Fisher" type="Sprite2D" parent="Npcs"]
+position = Vector2(468, 296)
+texture = ExtResource("46")
+centered = false
+
+[node name="Bobber" type="Sprite2D" parent="Npcs"]
+position = Vector2(506, 320)
+texture = ExtResource("47")
+centered = false
+
+[node name="Rabbit" type="Sprite2D" parent="Npcs"]
+position = Vector2(400, 224)
+texture = ExtResource("49")
+centered = false
+
+[node name="World" type="StaticBody2D" parent="."]
+collision_layer = 1
+collision_mask = 0
+
+[node name="WallTop" type="CollisionShape2D" parent="World"]
+position = Vector2(320, 0)
+shape = SubResource("shape_wall_h")
+
+[node name="WallBottom" type="CollisionShape2D" parent="World"]
+position = Vector2(320, 358)
+shape = SubResource("shape_wall_h")
+
+[node name="WallLeft" type="CollisionShape2D" parent="World"]
+position = Vector2(-6, 192)
+shape = SubResource("shape_wall_v")
+
+[node name="WallRight" type="CollisionShape2D" parent="World"]
+position = Vector2(646, 192)
+shape = SubResource("shape_wall_v")
+
+[node name="RiverLeft" type="CollisionShape2D" parent="World"]
+position = Vector2(134, 328)
+shape = SubResource("shape_river_l")
+
+[node name="RiverRight" type="CollisionShape2D" parent="World"]
+position = Vector2(482, 328)
+shape = SubResource("shape_river_r")
+
+[node name="ForgeBlock" type="CollisionShape2D" parent="World"]
+position = Vector2(134, 60)
+shape = SubResource("shape_forge")
+
+[node name="EnhanceBlock" type="CollisionShape2D" parent="World"]
+position = Vector2(359, 56)
+shape = SubResource("shape_enhance")
+
+[node name="ChestBlock" type="CollisionShape2D" parent="World"]
+position = Vector2(521, 84)
+shape = SubResource("shape_chest")
+
+[node name="GardenBlock" type="CollisionShape2D" parent="World"]
+position = Vector2(592, 226)
+shape = SubResource("shape_garden")
+
+[node name="CampfireBlock" type="CollisionShape2D" parent="World"]
+position = Vector2(250, 196)
+shape = SubResource("shape_campfire")
 
 [node name="Gate" type="Area2D" parent="."]
 position = Vector2(588, 180)
@@ -41,7 +492,7 @@ horizontal_alignment = 1
 [node name="PeerSync" type="Node" parent="."]
 script = ExtResource("4")
 scene_id = "village"
-spawn_base = Vector2(200, 180)
+spawn_base = Vector2(80, 190)
 
 [node name="SceneFlow" type="Node" parent="."]
 script = ExtResource("6")
