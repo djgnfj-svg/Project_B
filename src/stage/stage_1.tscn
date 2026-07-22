@@ -1,0 +1,54 @@
+[gd_scene load_steps=11 format=3]
+
+[ext_resource type="Script" path="res://src/stage/stage.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/stage/ground_32.png" id="2"]
+[ext_resource type="PackedScene" path="res://src/enemies/mob_melee.tscn" id="3"]
+[ext_resource type="Resource" path="res://data/enemies/chaser.tres" id="4"]
+[ext_resource type="Script" path="res://src/net/peer_sync.gd" id="5"]
+[ext_resource type="Script" path="res://src/stage/combat_authority.gd" id="6"]
+[ext_resource type="Script" path="res://src/stage/mob_sync.gd" id="7"]
+[ext_resource type="Script" path="res://src/net/scene_flow.gd" id="8"]
+[ext_resource type="Script" path="res://src/stage/chapter_flow.gd" id="9"]
+[ext_resource type="PackedScene" path="res://src/hud/stage_hud.tscn" id="10"]
+
+[node name="Stage" type="Node2D"]
+script = ExtResource("1")
+
+[node name="Ground" type="Sprite2D" parent="."]
+z_index = -10
+texture_repeat = 2
+position = Vector2(320, 180)
+texture = ExtResource("2")
+region_enabled = true
+region_rect = Rect2(0, 0, 640, 360)
+
+[node name="Chaser1" parent="." instance=ExtResource("3")]
+position = Vector2(480, 120)
+eid = "chaser1"
+def = ExtResource("4")
+
+[node name="Chaser2" parent="." instance=ExtResource("3")]
+position = Vector2(510, 250)
+eid = "chaser2"
+def = ExtResource("4")
+
+[node name="PeerSync" type="Node" parent="."]
+script = ExtResource("5")
+scene_id = "stage"
+spawn_base = Vector2(140, 180)
+
+[node name="CombatAuthority" type="Node" parent="."]
+script = ExtResource("6")
+peer_sync_path = NodePath("../PeerSync")
+
+[node name="MobSync" type="Node" parent="."]
+script = ExtResource("7")
+
+[node name="SceneFlow" type="Node" parent="."]
+script = ExtResource("8")
+
+[node name="ChapterFlow" type="Node" parent="."]
+script = ExtResource("9")
+scene_flow_path = NodePath("../SceneFlow")
+
+[node name="HUD" parent="." instance=ExtResource("10")]

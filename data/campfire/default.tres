@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="CampfireDef" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/core/campfire_def.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+heal_amount = 1
+heal_interval_s = 0.8
+sit_radius = 44.0

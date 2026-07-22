@@ -59,6 +59,8 @@ func _spawn(peer_id: int, is_local: bool) -> void:
 		if not jid.is_empty():
 			p.set_job(GameState.job_def(jid))
 	_players[peer_id] = p
+	# 스폰 완료 공지 — 호스트가 챕터 이월 HP를 재확정하는 입구 (CombatAuthority). 잡 반영 뒤에 emit.
+	EventBus.player_spawned.emit(peer_id, p)
 
 
 # 직업 공지 — 내 직업 id를 방 전원에 브로드캐스트.

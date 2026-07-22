@@ -28,6 +28,20 @@ func is_dead() -> bool:
 	return hp <= 0
 
 
+# 최대치만 변경 — setup과 달리 현재 HP를 리셋하지 않는다 (챕터 스테이지 간 HP 이월 보존).
+# 늦게 도착한 직업 공지가 setup으로 이월 HP를 조용히 풀피로 되돌리는 경합 방지 (player.set_job 경로).
+# 최초 셋업(max 0)은 setup으로 위임 = 풀피 시작. 새 최대치 초과분은 클램프만 하고 확정 방송은
+# 다음 확정에 맡긴다 (직업은 첫 공지에 잠기므로 실전에서 초과 클램프는 사실상 없다).
+func set_max_hp(p_max: int) -> void:
+	if max_hp == 0:
+		setup(p_max)
+		return
+	max_hp = p_max
+	if hp > max_hp:
+		hp = max_hp
+		hp_changed.emit(hp, true)
+
+
 # 호스트 권한 경로 전용 — 데미지 확정. 사망 + respawns면 부활 타이머 arm.
 # 음수 dmg 방어: 힐 경로가 아니다 — 회복은 confirm_hp로 (공용 컴포넌트 방어선)
 func apply_damage(dmg: int) -> void:

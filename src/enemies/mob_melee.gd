@@ -10,6 +10,10 @@ const PlayerActor := preload("res://src/player/player.gd")
 # 연출값 (rules §0 예외)
 const REMOTE_LERP_SPEED := 12.0
 const TELEGRAPH_TEX_SIZE := 32.0  # telegraph.png 지름(px) — strike_radius 스케일 기준
+# 추격 이탈 거리 = aggro_range × 이 배수. ⚠ 씬 스왑 프레임엔 이전 씬 플레이어가 "player" 그룹에
+# 아직 남아 있어(queue_free는 프레임 끝) 게이트 앞 좌표로 유령 어그로가 잡힌다 — CHASE에 이탈
+# 조건이 없으면 그 한 프레임이 영구 추격으로 굳는다 (챕터1 실기에서 발견, 간헐 레이스)
+const LEASH_MULT := 1.5
 
 enum State { IDLE, CHASE, WINDUP, RECOVER }
 
@@ -37,6 +41,12 @@ func _ready() -> void:
 	if def != null:
 		if def.sprite != null:
 			_sprite.texture = def.sprite
+		# 몸 판정 반경 = def.body_radius — ⚠ shape 리소스는 씬 인스턴스 간 공유라 직접 만지면
+		# 같은 tscn의 다른 개체까지 바뀐다 → 복제 후 적용 (조용히 깨지는 함정)
+		var shape := _collision.shape.duplicate() as CircleShape2D
+		if shape != null:
+			shape.radius = def.body_radius
+			_collision.shape = shape
 		_health.setup(def.max_hp, def.respawns, def.respawn_delay)
 		# 텔레그래프 표시 반경 = 판정 반경(def.strike_radius) — "맞는 곳=보이는 곳" (rules §3)
 		_telegraph.scale = Vector2.ONE * (def.strike_radius * 2.0 / TELEGRAPH_TEX_SIZE)
@@ -84,6 +94,10 @@ func _host_ai(delta: float) -> void:
 				_state = State.IDLE
 				return
 			var anchor := t.net_anchor()
+			if global_position.distance_to(anchor) > def.aggro_range * LEASH_MULT:
+				velocity = Vector2.ZERO
+				_state = State.IDLE  # 리시 초과 — 유령 어그로·무한 카이팅 추격 해제
+				return
 			if global_position.distance_to(anchor) <= def.attack_range:
 				# 타격점 고정 — 예고를 보고 빠져나갈 수 있어야 한다 (GDD §5 기믹 원칙)
 				_strike_center = anchor
