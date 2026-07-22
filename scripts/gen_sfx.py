@@ -139,10 +139,71 @@ def player_death():
         out.append(tone * e * 0.9)
     return lowpass(out, 0.55)
 
+# 7. drop — 아이템 착지 "틱"(짧은 클릭 + 낮은 하강 톤, 조용하게)
+def drop():
+    total = n(0.08)
+    out = []
+    ph = 0.0
+    for i in range(total):
+        e = env_ad(i, total, 0.001, 0.06)
+        t = i / SR
+        f = 420 - 160*(t/(total/SR))
+        ph += 2*math.pi*f/SR
+        tone = 0.4 * square(ph)
+        click = 0.5 * (random.random()*2-1) * math.exp(-t*120)  # 초반 딱
+        out.append((tone*0.5 + click) * e * 0.4)
+    return lowpass(out, 0.5)
+
+# 8. pickup_item — 일반 픽업(상승 블립, 밝게)
+def pickup_item():
+    total = n(0.12)
+    out = []
+    ph = 0.0
+    for i in range(total):
+        e = env_ad(i, total, 0.004, 0.08)
+        t = i/(total/SR)
+        f = 520 + 420*t  # 상승
+        ph += 2*math.pi*f/SR
+        out.append(0.45 * square(ph) * e * 0.55)
+    return lowpass(out, 0.6)
+
+# 9. pickup_gold — 코인 두 톤(밝은 사인 짤랑)
+def pickup_gold():
+    total = n(0.18)
+    out = []
+    ph = 0.0
+    for i in range(total):
+        e = env_ad(i, total, 0.002, 0.12)
+        t = i/(total/SR)
+        f = 880 if t < 0.4 else 1320  # 두 단계 짤랑
+        ph += 2*math.pi*f/SR
+        out.append((0.4*math.sin(ph) + 0.18*math.sin(2*ph)) * e * 0.5)
+    return out
+
+# 10. blueprint — 도면 획득 팡파레(상승 아르페지오 C-E-G-C)
+def blueprint():
+    total = n(0.42)
+    out = []
+    ph = 0.0
+    notes = [523, 659, 784, 1047]
+    seg = max(1, total // len(notes))
+    for i in range(total):
+        e = env_ad(i, total, 0.004, 0.16)
+        idx = min(len(notes)-1, i // seg)
+        ph += 2*math.pi*notes[idx]/SR
+        local = (i % seg) / seg
+        ne = 1.0 if local > 0.05 else local/0.05  # 각 음 시작 어택
+        out.append((0.35*math.sin(ph) + 0.14*square(ph)) * e * ne * 0.5)
+    return out
+
 write_wav("swing", swing())
 write_wav("hit", hit())
 write_wav("hurt", hurt())
 write_wav("roll", roll())
 write_wav("enemy_death", enemy_death())
 write_wav("player_death", player_death())
+write_wav("drop", drop())
+write_wav("pickup_item", pickup_item())
+write_wav("pickup_gold", pickup_gold())
+write_wav("blueprint", blueprint())
 print("done")

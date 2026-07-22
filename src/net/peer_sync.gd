@@ -15,12 +15,14 @@ const PlayerActor := preload("res://src/player/player.gd")
 var _players: Dictionary = {}  # peer_id -> PlayerActor
 var _peer_jobs: Dictionary = {}  # peer_id -> 잠긴 직업 id — "시작 시 선택·이후 고정"(GDD §5) 강제
 var _pos_seen: Dictionary = {}  # peer_id -> true — 첫 G_POS 수신 시 재공지 트리거 (공지 유실 경합 복구)
+var _peer_stats: Dictionary = {}  # peer_id -> {atk, hp} — 장비 스탯 공지(G_STATS). 스폰 전 도착 시 버퍼링(_peer_jobs 미러)
 
 
 func _ready() -> void:
 	EventBus.peer_joined.connect(_on_peer_joined)
 	EventBus.peer_left.connect(_on_peer_left)
 	EventBus.net_msg.connect(_on_net_msg)
+	EventBus.inventory_changed.connect(_on_inventory_changed)  # 로컬 장비 변동 → 스탯 재공지+반영
 	# ⚠ _ready 시점 부모는 아직 자식 셋업 중 — 여기서 get_parent().add_child 하면
 	# "busy setting up children"으로 스폰이 조용히 실패한다 (웹 실기에서 확인) → 한 프레임 미룬다.
 	_initial_spawn.call_deferred()
@@ -31,6 +33,7 @@ func _ready() -> void:
 func _initial_spawn() -> void:
 	_spawn(Net.my_id, true)
 	_announce_job()
+	_apply_local_stats()  # 로컬 장비 스탯 반영(max_hp) + 공지
 
 
 # CombatAuthority 등 형제 컴포넌트용 조회 (없으면 null)
@@ -58,6 +61,10 @@ func _spawn(peer_id: int, is_local: bool) -> void:
 		var jid := str(_peer_jobs.get(peer_id, ""))
 		if not jid.is_empty():
 			p.set_job(GameState.job_def(jid))
+	# 스폰 전 도착한 스탯 공지 반영 (job 버퍼링 미러). 로컬은 _apply_local_stats가 따로 반영.
+	if _peer_stats.has(peer_id):
+		var st := _peer_stats[peer_id] as Dictionary
+		p.set_equip_stats(int(st.get("atk", 0)), int(st.get("hp", 0)))
 	_players[peer_id] = p
 	# 스폰 완료 공지 — 호스트가 챕터 이월 HP를 재확정하는 입구 (CombatAuthority). 잡 반영 뒤에 emit.
 	EventBus.player_spawned.emit(peer_id, p)
@@ -69,8 +76,29 @@ func _announce_job() -> void:
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_JOB, "job": GameState.selected_job_id})
 
 
+# 장비 총 스탯 공지 — 내 착용 장비 {attack, hp}를 방 전원에. 호스트가 데미지/HP 확정에 쓴다.
+func _announce_stats() -> void:
+	var s := GameState.current_stats()
+	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_STATS,
+		"atk": int(s["attack"]), "hp": int(s["hp"])})
+
+
+# 로컬 장비 스탯을 내 플레이어에 반영(max_hp) + 공지. 스폰·인벤 변동 시.
+func _apply_local_stats() -> void:
+	var s := GameState.current_stats()
+	var lp := player(Net.my_id)
+	if lp != null:
+		lp.set_equip_stats(int(s["attack"]), int(s["hp"]))
+	_announce_stats()
+
+
+func _on_inventory_changed() -> void:
+	_apply_local_stats()  # 픽업/제작/강화로 장비가 바뀌면 즉시 반영+재공지
+
+
 func _on_peer_joined(_peer_id: int) -> void:
 	_announce_job()  # 스폰은 안 한다 — 상대의 첫 G_POS(씬 일치)가 스폰 트리거
+	_announce_stats()  # 늦게 온 피어도 내 장비 스탯을 알게 (G_JOB 재공지와 짝)
 
 
 func _on_peer_left(peer_id: int) -> void:
@@ -79,6 +107,7 @@ func _on_peer_left(peer_id: int) -> void:
 		_players.erase(peer_id)
 	_peer_jobs.erase(peer_id)  # 같은 id로 새 피어가 들어와도 이전 잠금이 남지 않게
 	_pos_seen.erase(peer_id)
+	_peer_stats.erase(peer_id)
 
 
 func _on_net_msg(from_id: int, data: Dictionary) -> void:
@@ -98,6 +127,7 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 				# 첫 G_POS = 상대가 같은 씬에서 듣고 있다는 증명 — 씬 전환 중 드랍된 공지를 재전송
 				_pos_seen[from_id] = true
 				_announce_job()
+				_announce_stats()
 		NetSchema.G_JOB:
 			if _peer_jobs.has(from_id):
 				return  # 첫 공지에서 잠금 — 판 도중 직업 변경(스탯 취사선택 이득)은 무시 (GDD §5)
@@ -107,6 +137,15 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			_peer_jobs[from_id] = str(data.get("job", ""))
 			if _players.has(from_id):
 				_players[from_id].set_job(GameState.job_def(str(data.get("job", ""))))
+		NetSchema.G_STATS:
+			# 장비 스탯 공지 — 발신자 트러스트(G_JOB과 동일 co-op 모델). 클램프 = 데이터 유도 현실 상한
+			# (정직한 최강 장비는 통과, 임의 수 주입 차단 — 부풀린 hp가 모닥불 회복 천장으로 새는 것 방지).
+			var cap := GameState.max_equip_stats()
+			var atk := clampi(int(data.get("atk", 0)), 0, int(cap["attack"]))
+			var hp := clampi(int(data.get("hp", 0)), 0, int(cap["hp"]))
+			_peer_stats[from_id] = {"atk": atk, "hp": hp}
+			if _players.has(from_id):
+				_players[from_id].set_equip_stats(atk, hp)
 		NetSchema.G_ATK:
 			if _players.has(from_id):
 				var dir := Vector2(float(data.get("dx", 1.0)), float(data.get("dy", 0.0)))

@@ -36,6 +36,8 @@ var peer_id: int = 0
 var is_local: bool = false
 var scene_id: String = ""  # 소속 씬 (net_schema SCENE_*) — G_POS에 실어 다른 씬 피어의 유령 스폰 방지
 var seated: bool = false  # 모닥불 앉기 (campfire 씬이 켠다) — 이동·구르기·공격 입력이 들어오면 스스로 풀린다. 공지(G_SIT)는 campfire가 상태 변화를 보고 송신
+var equip_atk_bonus: int = 0  # 착용 장비 공격 보너스 (G_STATS 공지/수신) — 호스트가 calc_damage에 더한다
+var equip_hp_bonus: int = 0   # 착용 장비 체력 보너스 — max_hp = job.max_hp + 이 값 (set_max_hp로 이월 HP 보존)
 
 var _remote_target: Vector2 = Vector2.ZERO
 var _remote_flip: bool = false
@@ -109,7 +111,19 @@ func set_job(j: JobDef) -> void:
 	_weapon_pivot.visible = j.weapon_texture != null
 	if is_node_ready():
 		# setup이 아니라 set_max_hp — 직업 재공지가 챕터 이월 HP(호스트 확정)를 풀피로 되돌리지 않게
-		_health.set_max_hp(j.max_hp)
+		_health.set_max_hp(j.max_hp + equip_hp_bonus)  # 장비 체력 보너스 유지
+
+
+# 장비 총 스탯 반영 — 로컬은 GameState.current_stats(), 원격은 G_STATS 수신(peer_sync가 부른다). max_hp 재계산.
+func set_equip_stats(atk: int, hp: int) -> void:
+	equip_atk_bonus = maxi(0, atk)
+	equip_hp_bonus = maxi(0, hp)
+	_apply_max_hp()
+
+
+func _apply_max_hp() -> void:
+	if job != null and is_node_ready():
+		_health.set_max_hp(job.max_hp + equip_hp_bonus)
 
 
 func is_alive() -> bool:

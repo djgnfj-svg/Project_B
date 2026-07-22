@@ -19,6 +19,10 @@ const SFX := {
 	"roll": "roll",
 	"enemy_death": "enemy_death",
 	"player_death": "player_death",
+	"drop": "drop",              # 드랍 등장(item_dropped)
+	"pickup_item": "pickup_item",  # 재료/도면 픽업(item_picked)
+	"pickup_gold": "pickup_gold",  # 골드 픽업(item_picked kind=gold)
+	"blueprint": "blueprint",    # 도면 신규 언락 팡파레(blueprint_unlocked)
 }
 
 var _players: Array[AudioStreamPlayer] = []
@@ -42,6 +46,10 @@ func _ready() -> void:
 	EventBus.player_roll.connect(func(_pos: Vector2) -> void: play("roll"))
 	EventBus.entity_died.connect(func(kind: String, _pos: Vector2) -> void:
 		play("enemy_death" if kind == "enemy" else "player_death"))
+	# 드랍 손맛 SFX (표시 전용 훅, 네트워크 0 — 각 클라 로컬 재생). 도면은 팡파레가 픽업음을 대신한다.
+	EventBus.item_dropped.connect(func(_kind: String, _rarity: int, _pos: Vector2) -> void: play("drop"))
+	EventBus.item_picked.connect(_on_item_picked)
+	EventBus.blueprint_unlocked.connect(func(_rid: String) -> void: play("blueprint"))
 
 
 func _load_streams() -> void:
@@ -64,6 +72,17 @@ func play(id: String) -> void:
 
 func _on_impact(kind: String, _pos: Vector2, _amount: int) -> void:
 	play("hit" if kind == "enemy" else "hurt")
+
+
+# 픽업 SFX — 골드는 코인, 도면은 blueprint_unlocked 팡파레가 담당(무음), 그 외 일반 픽업
+func _on_item_picked(kind: String, _rarity: int, _pos: Vector2) -> void:
+	match kind:
+		"gold":
+			play("pickup_gold")
+		"blueprint":
+			pass  # 도면 신규 언락은 blueprint_unlocked 팡파레(중복 재생 방지). 이미 보유분은 무음
+		_:
+			play("pickup_item")
 
 
 # --- 볼륨 API (설정 UI가 호출) ---

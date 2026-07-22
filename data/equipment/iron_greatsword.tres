@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="EquipDef" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://src/core/equip_def.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/weapons/greatsword.png" id="2"]
+
+[resource]
+script = ExtResource("1")
+id = "iron_greatsword"
+display_name = "철 대검"
+slot_name = "weapon"
+base_attack = 5
+base_hp = 0
+atk_per_level = 3
+hp_per_level = 0
+max_level = 5
+upgrade_gold_base = 15
+weapon_texture = ExtResource("2")
+weapon_grip = Vector2(4, 8)
