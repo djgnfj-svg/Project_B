@@ -26,3 +26,4 @@ desktop.ini
 server/game-worker/public/
 .wrangler/
 **/.wrangler/
+_holdout/
