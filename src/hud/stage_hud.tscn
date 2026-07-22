@@ -73,3 +73,14 @@ offset_bottom = 180.0
 horizontal_alignment = 1
 vertical_alignment = 1
 theme_override_font_sizes/font_size = 24
+
+[node name="Toast" type="Label" parent="."]
+visible = false
+anchor_right = 1.0
+offset_top = 100.0
+offset_bottom = 128.0
+mouse_filter = 2
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_colors/font_color = Color(1, 0.85, 0.3, 1)
+theme_override_font_sizes/font_size = 20

@@ -8,6 +8,13 @@ extends Node
 const SAVE_PATH := "user://save.json"
 const SAVE_VERSION := 1
 
+# 저장 경로 — 오토로드는 기본값(user://save.json)을 쓴다. 헤드리스 테스트만 임시 경로로 교체해
+# 실제 세이브를 안 건드리게 격리한다 (projectb-verify §1 세이브 테스트 경고). _ready 전에 설정할 것.
+var save_path: String = SAVE_PATH
+# GameState 주입 — 오토로드 환경은 null(→ /root/GameState). -s 헤드리스 테스트만 인스턴스를 넣어
+# 트리 밖에서 검증한다 (절대경로 get_node가 -s에선 "active scene tree 밖"으로 실패, rules §5).
+var game_state_override: Node = null
+
 
 func _ready() -> void:
 	load_from_disk()
@@ -20,6 +27,8 @@ func _ready() -> void:
 
 
 func _gs() -> Node:
+	if game_state_override != null:
+		return game_state_override
 	return get_node_or_null("/root/GameState")
 
 
@@ -29,9 +38,9 @@ func commit() -> void:
 	if gs == null:
 		return
 	var data := {"v": SAVE_VERSION, "inv": gs.to_save_dict()}
-	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	var f := FileAccess.open(save_path, FileAccess.WRITE)
 	if f == null:
-		push_error("[SaveManager] 저장 파일 열기 실패: %s" % SAVE_PATH)
+		push_error("[SaveManager] 저장 파일 열기 실패: %s" % save_path)
 		return
 	f.store_string(JSON.stringify(data))
 	f.close()
@@ -39,9 +48,9 @@ func commit() -> void:
 
 func load_from_disk() -> void:
 	var gs := _gs()
-	if gs == null or not FileAccess.file_exists(SAVE_PATH):
+	if gs == null or not FileAccess.file_exists(save_path):
 		return
-	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	var f := FileAccess.open(save_path, FileAccess.READ)
 	if f == null:
 		return
 	var text := f.get_as_text()
@@ -60,6 +69,7 @@ func reload() -> void:
 	load_from_disk()
 	# 파일이 없어 from_save_dict가 안 불려도(첫 판 전멸) 인벤 변동을 알린다 — HUD·스탯 공지 드리프트 방지.
 	# 파일이 있으면 from_save_dict가 이미 emit했지만 중복은 무해(멱등 새로고침).
-	var bus := get_node_or_null("/root/EventBus")
-	if bus != null:
-		bus.inventory_changed.emit()
+	if is_inside_tree():  # -s 테스트(트리 밖)는 /root 조회가 에러 — 오토로드는 항상 트리 안 (rules §5)
+		var bus := get_node_or_null("/root/EventBus")
+		if bus != null:
+			bus.inventory_changed.emit()

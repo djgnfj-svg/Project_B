@@ -201,6 +201,8 @@ func recipe_def(id: String) -> RecipeDef:
 # --- 인벤토리 조작 (각 클라 로컬) — 변동 시 inventory_changed emit. EventBus는 /root로(rules §5 -s 함정) ---
 
 func _bus() -> EventBusHub:
+	if not is_inside_tree():
+		return null  # -s 테스트(트리 밖)는 /root 절대경로 조회가 에러 — 오토로드는 항상 트리 안 (rules §5)
 	return get_node_or_null("/root/EventBus") as EventBusHub
 
 
