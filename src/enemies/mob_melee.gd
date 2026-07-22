@@ -41,6 +41,9 @@ func _ready() -> void:
 		# 텔레그래프 표시 반경 = 판정 반경(def.strike_radius) — "맞는 곳=보이는 곳" (rules §3)
 		_telegraph.scale = Vector2.ONE * (def.strike_radius * 2.0 / TELEGRAPH_TEX_SIZE)
 	_health.hp_changed.connect(_on_hp_changed)
+	# 권한 경로(호스트 apply_damage)에서만 발화 — CombatAuthority가 ehp 브로드캐스트 + 클리어 판정.
+	# 이 연결이 없으면 게스트 화면에 시체가 남고 클리어가 영영 안 뜬다 (enemy.gd 글루와 동일 규약).
+	_health.hp_confirmed.connect(func(hp: int) -> void: EventBus.enemy_hp_confirmed.emit(eid, hp))
 
 
 func _on_hp_changed(hp: int, _dropped: bool) -> void:
