@@ -25,6 +25,10 @@ PowerShell은 자식 프로세스 stdout을 안 보여준다 — **테스트는 
 # HealthComponent (HP·부활 타이머 권한/표시 경로 격리 — 게스트 자가 부활 금지)
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_health_component_auto.gd
 
+# SaveManager 커밋/롤백 (스테이지 클리어=commit·전멸=reload 롤백 → 클리어분 생존·전멸분 소실·무파일 첫 판 전멸 — GDD §11 저장 계약)
+#   ⚠ save_path를 임시 경로로 격리해 실제 user://save.json을 안 건드린다. GameState는 game_state_override로 주입(트리 밖 -s, rules §5)
+./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_save_manager_auto.gd
+
 # 멀티 방 왕복 (릴레이+호스트+게스트 3프로세스 — 방 생성→참가→ping/pong 왕복 검증)
 CODEFILE="<임시경로>/room_code.txt"; rm -f "$CODEFILE"
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://server/relay/relay_server.gd -- --port=9081 > relay.log 2>&1 &
