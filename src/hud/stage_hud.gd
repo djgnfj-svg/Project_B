@@ -3,12 +3,15 @@ extends CanvasLayer
 # 마을·스테이지가 인스턴스로 문다 (rules §2 src/hud). HP는 php 확정만 반영 (§3 — 로컬 선적용 금지).
 
 const INVITE_FX_TIME := 1.5  # 복사 피드백 표시 시간 (연출값)
+# UI 오버레이 조합 — HUD가 설정 패널을 무는 것은 조합(rules §0 예외). class_name 대신 preload(§0).
+const SettingsPanelScene := preload("res://src/ui/settings_panel.tscn")
 
 var _invite_fx_seq: int = 0  # 복사 연타 시 이전 타이머가 새 피드백을 지우지 않게
 
 @onready var _room_label: Label = $RoomCode
 @onready var _progress: Label = $Progress
 @onready var _invite_btn: Button = $InviteBtn
+@onready var _settings_btn: Button = $SettingsBtn
 @onready var _hp_bar: ProgressBar = $HpBar
 @onready var _hp_label: Label = $HpBar/HpLabel
 @onready var _partner_label: Label = $PartnerHp
@@ -20,6 +23,9 @@ func _ready() -> void:
 		Net.room_code, "호스트" if Net.is_host() else "게스트"]
 	_progress.text = GameState.progress_label()  # 마을(비챕터)은 빈 문자열 = 표시 없음
 	_invite_btn.pressed.connect(_on_invite_pressed)
+	var settings := SettingsPanelScene.instantiate()
+	add_child(settings)  # HUD(CanvasLayer) 아래 CanvasLayer(layer 10) — HUD 위 오버레이
+	_settings_btn.pressed.connect(settings.open)
 	var max_hp := GameState.selected_job().max_hp
 	_hp_bar.max_value = float(max_hp)
 	_set_own_hp(max_hp)
