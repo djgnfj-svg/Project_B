@@ -15,6 +15,9 @@ const REMOTE_TINT := Color(1.0, 0.75, 0.75)
 const ROLL_SPEED_MULT := 2.6
 const GHOST_ALPHA := 0.4
 const ATTACK_FX_TIME := 0.12
+# ⚠ 애니 미러: *_frames.tres의 attack 애니(4프레임/speed 16 = 0.25s)와 같은 길이여야 한다.
+#   attack_cooldown(JobDef)보다 짧아야 다음 공격 전에 애니가 끝난다 (전사 0.4s > 0.25s).
+const ATTACK_ANIM_TIME := 0.25
 const REMOTE_MAX_SPEED_MULT := 1.5  # 원격 변위 클램프 여유 — 순간이동 스푸핑 완화 (rules §3)
 const ENEMY_BODY_MASK := 1 << 2  # 물리 레이어 3 enemy_body — rules §5 배정표가 단일 소스
 
@@ -38,6 +41,7 @@ var _alive: bool = true
 var _saved_layer: int = 0
 var _saved_mask: int = 0
 var _remote_roll_left: float = 0.0  # 원격 구르기 연출 창 (G_ROLL 수신 — 표시 전용, 판정 아님)
+var _attack_anim_left: float = 0.0  # 공격 애니 창 — 로컬은 공격 발동, 원격은 G_ATK 수신 시 (표시 전용)
 var _remote_moving: bool = false
 
 @onready var _sprite: AnimatedSprite2D = $Sprite
@@ -116,6 +120,8 @@ func _update_life_state(p_hp: int) -> void:
 		collision_mask = 0
 		_attack_fx.visible = false
 		_roll_time_left = 0.0
+		_remote_roll_left = 0.0
+		_attack_anim_left = 0.0  # 사망 직전 발동한 공격 애니가 고스트에 남지 않게
 		if is_local:
 			_sprite.modulate.a = GHOST_ALPHA
 		else:
@@ -139,21 +145,29 @@ func _tick_timers(delta: float) -> void:
 	_attack_cd_left = maxf(0.0, _attack_cd_left - delta)
 	_roll_cd_left = maxf(0.0, _roll_cd_left - delta)
 	_remote_roll_left = maxf(0.0, _remote_roll_left - delta)
+	_attack_anim_left = maxf(0.0, _attack_anim_left - delta)
 	if _fx_left > 0.0:
 		_fx_left -= delta
 		if _fx_left <= 0.0:
 			_attack_fx.visible = false
 
 
-# 애니 상태: roll > run > idle. 로컬은 자기 상태, 원격은 수신 신호(G_POS 변위·G_ROLL 창)로 판단.
+# 애니 상태: roll > attack > run > idle. 로컬은 자기 상태, 원격은 수신 신호(G_POS 변위·G_ROLL/G_ATK 창)로 판단.
 func _update_anim() -> void:
 	var next: StringName = &"idle"
 	if _roll_time_left > 0.0 or _remote_roll_left > 0.0:
 		next = &"roll"
+	elif _attack_anim_left > 0.0 and _has_attack_anim():
+		next = &"attack"
 	elif (is_local and velocity.length_squared() > 1.0) or (not is_local and _remote_moving):
 		next = &"run"
 	if _sprite.animation != next:
 		_sprite.play(next)
+
+
+# 직업별 frames에 attack 애니가 있는지 — 전사부터 완성(GDD §5), 없는 직업은 기존 상태로 폴백
+func _has_attack_anim() -> bool:
+	return _sprite.sprite_frames != null and _sprite.sprite_frames.has_animation(&"attack")
 
 
 func _local_move(delta: float) -> void:
@@ -186,6 +200,7 @@ func _local_combat() -> void:
 		return
 	if want and _attack_cd_left <= 0.0 and _roll_time_left <= 0.0:
 		_attack_cd_left = job.attack_cooldown
+		_attack_anim_left = ATTACK_ANIM_TIME
 		var dir := _aim_dir()
 		_show_attack_fx(dir)
 		Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ATK, "dx": dir.x, "dy": dir.y})
@@ -224,10 +239,16 @@ func net_anchor() -> Vector2:
 	return global_position if is_local else _remote_target
 
 
-# 원격 플레이어의 공격 연출 (stage가 G_ATK 수신 시 호출)
+# 원격 플레이어의 공격 연출 (stage가 G_ATK 수신 시 호출) — 표시 전용, 판정 아님
 func play_attack_fx(dir: Vector2) -> void:
+	if not _alive:
+		return  # 사망자(조작 클라)의 G_ATK로 시체 위치에 FX가 뜨는 그리핑 차단
 	_show_attack_fx(dir)
 	_sprite.flip_h = dir.x < 0.0
+	if _attack_anim_left <= 0.0:
+		# 애니 창만 재수신 무시(FX·플립은 매번 적용) — G_ATK 스팸으로 애니를 영구 attack으로
+		# 잠그는 그리핑 차단 (정직한 공격은 쿨다운 0.4s > 창 0.25s라 안 걸린다)
+		_attack_anim_left = ATTACK_ANIM_TIME
 
 
 # 원격 플레이어의 구르기 연출 (peer_sync가 G_ROLL 수신 시 호출) — 표시 전용.
