@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://uxllxhbewb0a"
-path="res://.godot/imported/warrior_16.png-0d0120f9944cadbf4faf73dccef99d5a.ctex"
+uid="uid://u74ghdpf0j3f"
+path="res://.godot/imported/warrior_anim.png-0e97c37ad203e029557bfc3f3ec79a90.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/sprites/player/warrior_16.png"
-dest_files=["res://.godot/imported/warrior_16.png-0d0120f9944cadbf4faf73dccef99d5a.ctex"]
+source_file="res://assets/sprites/player/warrior_anim.png"
+dest_files=["res://.godot/imported/warrior_anim.png-0e97c37ad203e029557bfc3f3ec79a90.ctex"]
 
 [params]
 

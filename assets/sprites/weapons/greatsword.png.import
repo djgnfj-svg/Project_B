@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c58o1unx0bqpk"
-path="res://.godot/imported/slash.png-2246eddc76f47e712ab2f251f47ee7a1.ctex"
+uid="uid://bm4m4j6ajtra1"
+path="res://.godot/imported/greatsword.png-d58489b8a41db7830f9a610a2500c77c.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/sprites/fx/slash.png"
-dest_files=["res://.godot/imported/slash.png-2246eddc76f47e712ab2f251f47ee7a1.ctex"]
+source_file="res://assets/sprites/weapons/greatsword.png"
+dest_files=["res://.godot/imported/greatsword.png-d58489b8a41db7830f9a610a2500c77c.ctex"]
 
 [params]
 

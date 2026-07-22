@@ -90,7 +90,8 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 					return  # 스폰 거부(peer_id 0 등) — 인덱싱 에러 방지
 			_players[from_id].apply_remote_pos(
 				Vector2(float(data.get("x", 0.0)), float(data.get("y", 0.0))),
-				bool(data.get("f", false)))
+				bool(data.get("f", false)),
+				float(data.get("a", 0.0)))
 			if not _pos_seen.has(from_id):
 				# 첫 G_POS = 상대가 같은 씬에서 듣고 있다는 증명 — 씬 전환 중 드랍된 공지를 재전송
 				_pos_seen[from_id] = true
@@ -108,3 +109,8 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			if _players.has(from_id):
 				var dir := Vector2(float(data.get("dx", 1.0)), float(data.get("dy", 0.0)))
 				_players[from_id].play_attack_fx(dir.normalized() if dir.length() > 0.001 else Vector2.RIGHT)
+		NetSchema.G_ROLL:
+			# 구르기 연출 중계 — 표시 전용. i-frame 판정은 CombatAuthority(호스트 그랜트)가 별도로 한다.
+			if _players.has(from_id):
+				_players[from_id].play_roll_fx(
+					Vector2(float(data.get("dx", 0.0)), float(data.get("dy", 0.0))))
