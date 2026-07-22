@@ -108,6 +108,14 @@ func _confirm_damage(health: HealthComponent, job: JobDef, attacker_id: int) -> 
 func _on_enemy_hp_confirmed(eid: String, hp: int) -> void:
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ENEMY_HP, "eid": eid, "hp": hp})
 	if hp <= 0:
+		# 드랍 롤 트리거 (호스트 전용 경로) — 죽는 순간 좌표에서 떨어지도록 clear 판정 전에 쏜다.
+		# 실제 롤·산개·브로드캐스트는 DropAuthority가 받는다 (rules §2 책임 분리, §1 호스트 권한).
+		var entry_v: Variant = _enemies.get(eid)
+		if entry_v != null:
+			var entry := entry_v as Dictionary
+			var root := entry["root"] as Node2D
+			if root != null:
+				EventBus.enemy_killed.emit(eid, entry["def"] as EnemyDef, root.global_position)
 		_check_clear()
 
 

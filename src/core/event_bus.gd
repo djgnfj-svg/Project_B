@@ -46,6 +46,7 @@ signal entity_died(kind: String, world_pos: Vector2)  # kind = "enemy"|"player" 
 # --- 드랍/인벤 (드랍·제작 2026-07-23) ---
 signal enemy_killed(eid: String, def: EnemyDef, world_pos: Vector2)  # 호스트 전용 emit(CombatAuthority, hp<=0 확정) — DropAuthority가 드랍 롤 트리거
 signal drop_spawn_local(drops: Array)  # DropAuthority(호스트) → DropField 로컬 스폰 (호스트는 자기 G_DROP를 못 받으므로)
+signal drop_pick_local(did: String, pid: int)  # DropAuthority(호스트) → DropField 로컬 픽업 반영 (호스트는 자기 G_PICK_OK를 릴레이로 못 받음 — drop_spawn_local과 대칭)
 signal inventory_changed  # 골드/재료/장비/도면 변동 (각 클라 로컬) — HUD·제작/강화 패널 갱신
 signal blueprint_unlocked(recipe_id: String)  # 도면 획득 확정 — "설계도 획득!" 배너 연출·제작 가용 갱신
 # feel (표시 전용 — 네트워크 아님, rules §2)
