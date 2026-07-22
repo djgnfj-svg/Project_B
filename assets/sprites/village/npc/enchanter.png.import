@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bjg7lkvns332n"
-path="res://.godot/imported/grass_32.png-81a814797ff2882ec799c6d591a36698.ctex"
+uid="uid://cfwilsyb48jk4"
+path="res://.godot/imported/enchanter.png-ce80c515a56c1f321016c31e0667de38.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/sprites/village/grass_32.png"
-dest_files=["res://.godot/imported/grass_32.png-81a814797ff2882ec799c6d591a36698.ctex"]
+source_file="res://assets/sprites/village/npc/enchanter.png"
+dest_files=["res://.godot/imported/enchanter.png-ce80c515a56c1f321016c31e0667de38.ctex"]
 
 [params]
 

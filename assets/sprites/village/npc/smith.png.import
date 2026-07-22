@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dqnxm4f7udtnd"
-path="res://.godot/imported/gate_48.png-abff59cc8be60b2708f4ee79145c3b0a.ctex"
+uid="uid://dq3xmnxjqdigc"
+path="res://.godot/imported/smith.png-5a1ce12a08964ec128d9e581f694923f.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/sprites/village/gate_48.png"
-dest_files=["res://.godot/imported/gate_48.png-abff59cc8be60b2708f4ee79145c3b0a.ctex"]
+source_file="res://assets/sprites/village/npc/smith.png"
+dest_files=["res://.godot/imported/smith.png-5a1ce12a08964ec128d9e581f694923f.ctex"]
 
 [params]
 
