@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Project_B 마을 목업 — 클래식 JRPG 판타지</title>
+<style>
+  body { background:#221f26; color:#e8e2d0; font-family:monospace; display:flex; flex-direction:column; align-items:center; gap:12px; padding:20px; }
+  h1 { font-size:16px; margin:0; }
+  canvas { image-rendering:pixelated; width:1280px; height:768px; border:4px solid #14100f; }
+  .legend { font-size:13px; line-height:1.7; max-width:1280px; }
+  .legend b { color:#f0c04a; }
+</style>
+</head>
+<body>
+<h1>Project_B 마을 배치 목업 (640x384 · 32px 타일 · 클래식 JRPG 판타지)</h1>
+<canvas id="c" width="640" height="384"></canvas>
+<div class="legend">
+  <b>배치 의도:</b> 왼쪽 스폰 → 중앙 광장(우물) → 오른쪽 출발 게이트로 흐르는 한 줄 동선.
+  북쪽에 기능 건물 3채(제작소·강화소·창고 — GDD §3 마을 거점), 남쪽은 나무·울타리로 아늑하게 닫음.
+  게이트 위치는 현재 village.tscn과 동일하게 오른쪽 끝. 팔레트는 절제된 채도(캐릭터 톤 정합).
+</div>
+<script>
+const T = 32, ctx = document.getElementById('c').getContext('2d');
+const COLS = 20, ROWS = 12;
+// 팔레트 — 절제된 채도, 진한 외곽선
+const C = {
+  grass:'#47703c', grassD:'#3a5e31', grassL:'#558449',
+  path:'#9c7f52', pathD:'#7d6540',
+  plaza:'#8f8f86', plazaL:'#a3a39a', plazaD:'#75756d',
+  wall:'#d8c9a8', wallD:'#b5a67f', timber:'#6b4f35',
+  roofA:'#7d4a3a', roofAD:'#5e352a', // 제작소 — 테라코타
+  roofB:'#5b6b8f', roofBD:'#42506e', // 강화소 — 슬레이트
+  roofC:'#6b7d4a', roofCD:'#4f5e36', // 창고 — 올리브
+  trunk:'#6b4a2f', leaf:'#35502e', leafL:'#47703c',
+  stone:'#8a8a82', stoneD:'#6e6e66',
+  outline:'#1a1220', water:'#3e5e7a', fire:'#e08c34'
+};
+function seed(x,y){ let n=(x*73856093)^(y*19349663); n=(n<<13)^n; return ((n*(n*n*15731+789221)+1376312589)&0x7fffffff)/0x7fffffff; }
+function px(x,y,w,h,col){ ctx.fillStyle=col; ctx.fillRect(x,y,w,h); }
+
+// ── 1. 잔디 바닥 + 변주
+for(let ty=0;ty<ROWS;ty++) for(let tx=0;tx<COLS;tx++){
+  px(tx*T,ty*T,T,T,C.grass);
+  const r=seed(tx,ty);
+  if(r<0.3){ px(tx*T+6,ty*T+8,3,2,C.grassD); px(tx*T+20,ty*T+22,3,2,C.grassD); }
+  if(r>0.72){ px(tx*T+14,ty*T+5,2,3,C.grassL); px(tx*T+24,ty*T+16,2,3,C.grassL); }
+  if(r>0.94){ px(tx*T+10,ty*T+18,2,2,'#c9a44a'); } // 들꽃
+}
+
+// ── 2. 길 (흙길) — 메인 가로 동선 + 건물 앞 세로 스텁
+function pathTile(tx,ty){
+  px(tx*T,ty*T,T,T,C.path);
+  const r=seed(tx*3,ty*7);
+  if(r<0.4) px(tx*T+8,ty*T+10,4,3,C.pathD);
+  if(r>0.6) px(tx*T+20,ty*T+20,5,3,C.pathD);
+}
+for(let tx=1;tx<20;tx++){ pathTile(tx,6); pathTile(tx,7); }        // 메인 길 (rows 6-7)
+[[3,4],[3,5],[9,4],[9,5],[15,4],[15,5]].forEach(([x,y])=>pathTile(x,y)); // 건물 앞 스텁
+
+// ── 3. 중앙 광장 (돌바닥) + 우물
+for(let ty=5;ty<=8;ty++) for(let tx=8;tx<=12;tx++){
+  if((tx===8||tx===12)&&(ty===5||ty===8)) continue; // 모서리 라운딩
+  px(tx*T,ty*T,T,T,C.plaza);
+  if(seed(tx*5,ty*3)<0.5) px(tx*T+4,ty*T+4,10,8,C.plazaL);
+  else px(tx*T+16,ty*T+18,10,8,C.plazaD);
+}
+// 우물 (광장 중앙 10,6~7)
+(function(){ const x=10*T-8, y=6*T+8;
+  px(x-2,y-2,52,36,C.outline); px(x,y,48,32,C.stone);
+  px(x+6,y+6,36,20,C.outline); px(x+8,y+8,32,16,C.water);
+  px(x+12,y+10,10,3,'#6a8ba8'); // 물 반짝임
+  px(x+4,y-14,4,16,C.timber); px(x+40,y-14,4,16,C.timber);
+  px(x-2,y-20,52,8,C.outline); px(x,y-18,48,4,C.roofA); // 우물 지붕
+})();
+
+// ── 4. 집 3채 — (tx,ty,폭타일,지붕색,어두운지붕,이름)
+function house(tx,ty,wt,roof,roofD,label){
+  const x=tx*T, y=ty*T, w=wt*T;
+  px(x-2,y+T-2,w+4,T+4,C.outline);            // 벽 외곽선
+  px(x,y+T,w,T,C.wall);                        // 벽
+  px(x,y+T+20,w,12,C.wallD);                   // 벽 하단 그림자
+  for(let i=0;i<wt;i++) px(x+i*T+2,y+T,3,T,C.timber); // 목재 기둥
+  px(x-6,y-T+4,w+12,2*T,C.outline);            // 지붕 외곽선
+  px(x-4,y-T+6,w+8,T,roofD);                   // 지붕 위단
+  px(x-4,y+6,w+8,T-8,roof);                    // 지붕 아래단
+  px(x-4,y+T-6,w+8,4,C.outline);               // 처마
+  // 문 (중앙) + 창
+  const dx=x+w/2-8; px(dx-2,y+T+8,20,26,C.outline); px(dx,y+T+10,16,22,C.timber);
+  px(x+10,y+T+8,12,10,C.outline); px(x+12,y+T+10,8,6,'#e8d9a0');
+  px(x+w-22,y+T+8,12,10,C.outline); px(x+w-20,y+T+10,8,6,'#e8d9a0');
+  // 간판
+  ctx.fillStyle='#f0e6c8'; ctx.font='bold 11px monospace'; ctx.textAlign='center';
+  ctx.fillStyle=C.outline; ctx.fillRect(x+w/2-24,y-T-8,48,14);
+  ctx.fillStyle='#f0e6c8'; ctx.fillText(label,x+w/2,y-T+3);
+}
+house(2,2,3,C.roofA,C.roofAD,'제작소');
+house(8,2,3,C.roofB,C.roofBD,'강화소');
+house(14,2,3,C.roofC,C.roofCD,'창고');
+// 창고 옆 나무상자·통
+px(17*T+6,3*T+34,2,0,C.outline);
+[[17.4,3.9],[17.9,3.9]].forEach(([bx,by])=>{ px(bx*T-1,by*T-1,16,16,C.outline); px(bx*T,by*T,14,14,'#a8814f'); px(bx*T+2,by*T+2,10,3,'#c9a46a'); });
+
+// ── 5. 출발 게이트 (오른쪽 끝, 돌 아치 — village.tscn 위치 동일)
+(function(){ const gx=18.6*T;
+  [[gx,4.4*T],[gx,8*T]].forEach(([x,y])=>{ px(x-2,y-2,20,52,C.outline); px(x,y,16,48,C.stone); px(x+3,y+4,5,40,C.stoneD); });
+  px(gx-6,4*T-6,34,16,C.outline); px(gx-4,4*T-4,30,12,C.stone); // 아치 상단
+  ctx.fillStyle=C.outline; ctx.fillRect(gx-30,9.6*T,80,14);
+  ctx.fillStyle='#f0e6c8'; ctx.font='bold 11px monospace'; ctx.fillText('출발 게이트 (F)',gx+10,9.6*T+11);
+})();
+
+// ── 6. 나무·울타리 — 남쪽·가장자리 닫기
+function tree(tx,ty){ const x=tx*T+4,y=ty*T;
+  px(x+9,y+16,6,12,C.trunk);
+  px(x-1,y-9,26,26,C.outline);
+  px(x+1,y-7,22,22,C.leaf); px(x+4,y-4,10,8,C.leafL);
+}
+[[0.2,2.2],[0.2,9.6],[2.5,9.8],[5,10.1],[7.5,9.7],[12.5,9.9],[15,10.1],[17.5,9.7],[6.4,4.2],[12.6,3.2],[0.2,4.8]].forEach(([x,y])=>tree(x,y));
+function fence(tx,ty,n){ for(let i=0;i<n;i++){ const x=(tx+i)*T, y=ty*T;
+  px(x+4,y+8,4,18,C.outline); px(x+5,y+9,2,15,C.timber);
+  px(x+24,y+8,4,18,C.outline); px(x+25,y+9,2,15,C.timber);
+  px(x,y+12,T,3,C.outline); px(x,y+13,T,1,'#8a6a48'); px(x,y+20,T,3,C.outline); px(x,y+21,T,1,'#8a6a48'); } }
+fence(1,0,6); fence(13,0,6); fence(1,10.6,3); fence(9,10.6,2);
+
+// ── 7. 스폰 지점 표시 (왼쪽 길 입구)
+(function(){ const x=1.4*T, y=6.4*T;
+  ctx.fillStyle=C.outline; ctx.fillRect(x-26,y+26,72,14);
+  ctx.fillStyle='#f0e6c8'; ctx.font='bold 11px monospace'; ctx.fillText('스폰',x+10,y+37);
+  px(x+2,y-2,20,20,C.outline); px(x+4,y,16,16,'#597dce'); px(x+7,y-6,10,8,C.outline); px(x+8,y-5,8,6,'#d2aa99'); // 캐릭터 자리 표시
+})();
+</script>
+</body>
+</html>

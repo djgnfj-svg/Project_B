@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Project_B 마을 목업 E안 — 강가 마을 (ref_river 80% + 카툰 20%)</title>
+<style>
+  body { background:#221f26; color:#e8e2d0; font-family:monospace; display:flex; flex-direction:column; align-items:center; gap:10px; padding:20px; }
+  h1 { font-size:16px; margin:8px 0 0; }
+  canvas { image-rendering:pixelated; width:1280px; height:768px; border:4px solid #14100f; }
+  .legend { font-size:13px; line-height:1.7; max-width:1280px; }
+  .legend b { color:#f0c04a; }
+</style>
+</head>
+<body>
+<h1>E안 — 강가 마을 · 낚시 분위기 (ref_river 80% + 돌계단·유적 20%)</h1>
+<canvas id="e" width="640" height="384"></canvas>
+<div class="legend">
+  <b>의도:</b> 남쪽에 <b>바위 기슭의 강</b>이 흐르고(낚시 가능해 보이는 나무 데크 + 통·양동이 소품 — 실제 낚시 기능은 없음),
+  나무다리가 강 건너 쉼터로 이어진다. <b>집은 외관만 — 내부 없음, 문 앞에 NPC가 서 있고 말을 걸면 패널이 열리는 구조.</b>
+  연둣빛 풀 얼룩·텃밭·우체통 등 아기자기한 소품(레퍼런스 80%), 게이트 앞 돌계단·유적 담장 조각(D안 20%).
+</div>
+<script>
+const ctx = document.getElementById('e').getContext('2d');
+const PAL = {
+  grass:'#9cc36d', grassP:'#b8d488', grassD:'#88ab5a', tuft:'#6f9648',
+  dirt:'#cbb178', dirtD:'#b3985e',
+  water:'#4aa8d8', waterL:'#7cc8e8', waterD:'#3a8cba', foam:'#d8eef8',
+  bank:'#4a5560', bankL:'#78899a', bankM:'#5c6a76',
+  wall:'#d9c091', wallD:'#b89e6e', gable:'#7c92a8', gableD:'#5f7488', timber:'#6b4f35',
+  roofA:'#d85c48', roofAD:'#b03c30', roofB:'#5b7bb0', roofBD:'#425f92', roofC:'#d89440', roofCD:'#b3742a',
+  trunk:'#7a5535', leafD:'#4e7c52', leaf:'#639664', leafL:'#7cae74',
+  br:'#6fa055', brL:'#8abc6a',
+  rock:'#aeb6b8', rockL:'#cfd6d6', rockD:'#7e8688',
+  wood:'#a87c4f', woodL:'#c99b62', woodD:'#8a5f3a',
+  red:'#c93a30', outline:'#33372f', win:'#f5d878', fire:'#e8863c'
+};
+function seed(x,y){ let n=(Math.floor(x)*73856093)^(Math.floor(y)*19349663); n=(n<<13)^n; return ((n*(n*n*15731+789221)+1376312589)&0x7fffffff)/0x7fffffff; }
+const px=(x,y,w,h,c)=>{ ctx.fillStyle=c; ctx.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h)); };
+
+// ── 1. 잔디 + 연둣빛 풀 얼룩 (ref 스타일)
+for(let ty=0;ty<12;ty++) for(let tx=0;tx<20;tx++){
+  px(tx*32,ty*32,32,32,PAL.grass);
+  const r=seed(tx,ty);
+  if(r<0.3){ px(tx*32+7,ty*32+9,4,2,PAL.grassD); px(tx*32+22,ty*32+22,4,2,PAL.grassD); }
+  if(r>0.82){ px(tx*32+9,ty*32+17,2,5,PAL.tuft); px(tx*32+11,ty*32+16,2,6,PAL.tuft); px(tx*32+13,ty*32+17,2,5,PAL.tuft); }
+  if(r>0.5&&r<0.56){ px(tx*32+18,ty*32+8,4,3,'#f0f0e0'); px(tx*32+19,ty*32+9,2,1,'#e0c85e'); } // 들꽃 흰
+}
+// 밝은 풀 얼룩 (불규칙 블롭)
+function grassPatch(cx,cy,rw,rh){ for(let y=-rh;y<=rh;y+=2){ const w=Math.floor(rw*Math.sqrt(Math.max(0,1-(y/rh)*(y/rh)))*(0.85+seed(cx,y)*0.3));
+  px(cx-w,cy+y,w*2,2,PAL.grassP); } }
+grassPatch(250,190,55,26); grassPatch(420,150,40,20); grassPatch(140,230,34,16); grassPatch(520,220,30,14);
+
+// ── 2. 흙길 (좁고 담백하게 — ref은 길이 절제됨)
+function path(pts,w0){ for(let s=0;s<pts.length-1;s++){ const [x0,y0]=pts[s],[x1,y1]=pts[s+1];
+  const steps=Math.ceil(Math.hypot(x1-x0,y1-y0)/3);
+  for(let i=0;i<=steps;i++){ const t=i/steps,x=x0+(x1-x0)*t,y=y0+(y1-y0)*t;
+    px(x-w0/2,y-w0/2,w0,w0,PAL.dirt); if(seed(x,y)>0.75) px(x-2,y-1,4,2,PAL.dirtD); } } }
+path([[40,200],[120,195],[200,190],[290,185],[380,182],[470,180],[560,178],[615,176]],14); // 메인
+path([[120,120],[122,160],[124,195]],10); path([[330,105],[332,150],[334,183]],10); path([[500,120],[502,150],[504,178]],10);
+path([[290,185],[292,240],[294,285]],11); // 다리로
+
+// ── 3. 강 (남쪽 — 바위 기슭 + 물결 하이라이트 + 흰 물가 포말)
+(function(){
+  for(let x=0;x<640;x+=2){
+    const yC=330+Math.sin(x*0.010)*10+Math.sin(x*0.027)*5;
+    const w=44+Math.sin(x*0.017)*6;
+    px(x,yC-w/2,2,w,PAL.water);
+    px(x,yC-w/2,2,3,PAL.foam);                       // 북쪽 물가 포말
+    px(x,yC+w/2-2,2,2,PAL.waterD);
+    if(seed(x,1)>0.62) px(x,yC-w/2+8+seed(x,2)*20,2,2,PAL.waterL);
+    if(seed(x,5)>0.9) px(x,yC+seed(x,6)*8-4,3,2,PAL.foam); // 잔물결
+  }
+  // 바위 기슭 (양쪽 — 굵은 돌 블롭)
+  for(let x=-6;x<646;x+=15){
+    const yC=330+Math.sin(x*0.010)*10+Math.sin(x*0.027)*5, w=44+Math.sin(x*0.017)*6;
+    [[x,yC-w/2-5],[x+7,yC+w/2+3]].forEach(([bx,by],side)=>{
+      const rw=13+seed(bx,by)*7, rh=10+seed(by,bx)*4;
+      px(bx-rw/2-1,by-rh/2-1,rw+2,rh+2,PAL.outline);
+      px(bx-rw/2,by-rh/2,rw,rh,PAL.bankM);
+      px(bx-rw/2+2,by-rh/2+1,rw*0.4,rh*0.4,PAL.bankL);
+      px(bx-rw/2+1,by+rh/2-3,rw-2,2,PAL.bank);
+    });
+  }
+})();
+
+// ── 4. 나무다리 (ref식 — 세로 판자 + 양쪽 난간 울타리)
+(function(){ const bx=272, by=292;
+  px(bx-4,by-8,52,92,PAL.outline);
+  for(let i=0;i<11;i++) px(bx-2,by-6+i*8,48,6,i%2?PAL.wood:PAL.woodL);
+  for(let i=0;i<6;i++){ px(bx-6,by-8+i*15,5,11,PAL.outline); px(bx-5,by-7+i*15,3,9,PAL.woodD);
+    px(bx+45,by-8+i*15,5,11,PAL.outline); px(bx+46,by-7+i*15,3,9,PAL.woodD); }
+})();
+
+// ── 5. 낚시 데크 (강 위로 튀어나온 나무 잔교 — "낚시 가능해 보이는" 소품)
+(function(){ const dx=470, dy=306;
+  px(dx-3,dy-3,30,52,PAL.outline);
+  for(let i=0;i<6;i++) px(dx,dy+i*8,24,6,i%2?PAL.woodL:PAL.wood);
+  px(dx-3,dy+44,6,10,PAL.outline); px(dx+21,dy+44,6,10,PAL.outline); // 말뚝
+  // 통·양동이
+  px(dx+2,dy-14,13,13,PAL.outline); px(dx+3,dy-13,11,11,PAL.wood); px(dx+4,dy-11,9,3,PAL.woodL);
+  px(dx+18,dy-10,9,9,PAL.outline); px(dx+19,dy-9,7,7,'#8a9aa8'); px(dx+20,dy-8,5,3,'#b8c8d8');
+})();
+
+// ── 6. 집 (외관만 — ref식 큰 지붕 + 박공 + 빨간 문 + 우체통)
+function house(x,y,wpx,roof,roofD){
+  px(x-2,y+22,wpx+4,32,PAL.outline); px(x,y+24,wpx,28,PAL.wall); px(x,y+44,wpx,8,PAL.wallD);
+  const rows=[[12,0],[7,5],[3,11],[1,17]];
+  px(x-10,y-16,wpx+20,42,PAL.outline);
+  rows.forEach(([inset,dy],i)=>{ px(x-10+inset,y-14+dy,wpx+20-inset*2,i<3?9:24,i<2?roofD:roof); });
+  px(x-10,y+22,wpx+20,4,PAL.outline);
+  px(x+wpx/2-11,y-2,22,16,PAL.gable); px(x+wpx/2-11,y+10,22,4,PAL.gableD); // 박공
+  px(x+wpx/2-5,y+1,10,8,PAL.outline); px(x+wpx/2-3,y+3,6,4,PAL.win);      // 박공 창
+  px(x+wpx-16,y-24,12,16,PAL.outline); px(x+wpx-14,y-22,8,12,PAL.rock);   // 굴뚝
+  const dx=x+wpx/2-9; px(dx-2,y+30,22,24,PAL.outline); px(dx,y+32,18,22,PAL.red); px(dx+3,y+35,12,3,'#e06a58'); // 빨간 문
+  px(x+7,y+30,13,11,PAL.outline); px(x+9,y+32,9,7,PAL.win);
+  px(x+wpx-20,y+30,13,11,PAL.outline); px(x+wpx-18,y+32,9,7,PAL.win);
+  px(x-14,y+40,10,14,PAL.outline); px(x-12,y+42,6,7,PAL.red); px(x-12,y+49,2,4,PAL.timber); // 우체통
+}
+// ── 6-1. 제작소 (ref_craft_house — 슬레이트 지붕 + 돌 굴뚝 연기 + 드러난 화덕 + 앞마당 모루·무기대·잉걸불 통)
+function forge(x,y){
+  const SLATE='#5a6270', SLATED='#434a56', SLATEL='#707a88';
+  // 본채 (폭 64)
+  px(x-2,y+22,68,32,PAL.outline); px(x,y+24,64,28,PAL.wall); px(x,y+44,64,8,PAL.wallD);
+  const rows=[[12,0],[7,5],[3,11],[1,17]];
+  px(x-10,y-16,84,42,PAL.outline);
+  rows.forEach(([inset,dy],i)=>{ px(x-10+inset,y-14+dy,84-inset*2,i<3?9:24,i<2?SLATED:SLATE); });
+  px(x-10,y+22,84,4,PAL.outline); px(x-6,y-12,76,3,SLATEL);
+  // 큰 돌 굴뚝 + 연기
+  px(x+40,y-30,18,22,PAL.outline); px(x+42,y-28,14,18,PAL.rock); px(x+44,y-26,5,4,PAL.rockL);
+  px(x+44,y-28,10,3,'#2a2e32');
+  ctx.fillStyle='rgba(225,225,218,0.85)'; [[46,-38,7],[52,-48,9],[60,-58,11]].forEach(([ox,oy,r])=>{
+    ctx.beginPath(); ctx.arc(x+ox,y+oy,r,0,7); ctx.fill(); });
+  // 창 + 문
+  px(x+6,y+30,13,11,PAL.outline); px(x+8,y+32,9,7,'#ffb045');
+  px(x+24,y+30,18,22,PAL.outline); px(x+26,y+32,14,20,PAL.timber);
+  // 부속 화덕동 (오른쪽 — 앞이 트인 셰드 + 발광 화덕)
+  px(x+66,y+6,44,14,PAL.outline); px(x+68,y+8,40,10,SLATED); px(x+68,y+8,40,3,SLATEL); // 셰드 지붕
+  px(x+66,y+18,5,34,PAL.outline); px(x+105,y+18,5,34,PAL.outline);                       // 기둥
+  px(x+70,y+20,34,30,PAL.outline); px(x+72,y+22,30,26,PAL.rock);                          // 화덕 몸통(돌)
+  px(x+76,y+28,22,18,PAL.outline); px(x+78,y+30,18,14,'#f08030'); px(x+81,y+33,12,7,'#ffc860'); // 아치 화구
+  (function(){ const g=ctx.createRadialGradient(x+87,y+38,2,x+87,y+38,30);
+    g.addColorStop(0,'rgba(255,150,60,0.4)'); g.addColorStop(1,'rgba(255,150,60,0)');
+    ctx.fillStyle=g; ctx.fillRect(x+57,y+8,60,60); })();
+  // 앞마당: 모루(돌 받침) · 잉걸불 통 · 무기 진열대
+  px(x+18,y+62,20,8,PAL.rockD); px(x+16,y+60,24,6,PAL.rock);                              // 받침
+  px(x+18,y+52,20,10,PAL.outline); px(x+20,y+54,16,6,'#3a3f45'); px(x+22,y+52,5,4,'#3a3f45'); px(x+31,y+52,4,4,'#3a3f45');
+  px(x+48,y+58,13,13,PAL.outline); px(x+49,y+59,11,11,PAL.wood); px(x+50,y+60,9,3,'#f08030'); px(x+52,y+59,4,2,'#ffc860'); // 잉걸불 통
+  px(x+88,y+56,26,5,PAL.outline); px(x+89,y+57,24,3,PAL.woodD);                            // 무기대 프레임
+  [[92,44],[99,42],[106,45]].forEach(([ox,oy])=>{ px(x+ox,y+oy,3,14,PAL.outline); px(x+ox+1,y+oy+1,1,10,'#c8ccd4'); });
+}
+// ── 6-2. 강화소 (ref_enhance_house — 흰 벽+파란 지붕 + 발광 강화 실린더 기계 + 검은 보일러, "준비중")
+function enhancer(x,y){
+  const WHITE='#f2eee2', WHITED='#d5cdbc', BLUE='#3f6fb5', BLUED='#2d5490', BLUEL='#5b8fd0';
+  px(x-2,y+22,96,32,PAL.outline); px(x,y+24,92,28,WHITE); px(x,y+44,92,8,WHITED);
+  const rows=[[12,0],[7,5],[3,11],[1,17]];
+  px(x-10,y-16,112,42,PAL.outline);
+  rows.forEach(([inset,dy],i)=>{ px(x-10+inset,y-14+dy,112-inset*2,i<3?9:24,i<2?BLUED:BLUE); });
+  px(x-10,y+22,112,4,PAL.outline); px(x-6,y-12,104,3,BLUEL);
+  px(x+34,y-2,24,16,WHITE); px(x+34,y+10,24,4,WHITED);                                    // 박공(흰)
+  px(x+41,y+1,10,8,PAL.outline); px(x+43,y+3,6,4,BLUEL);
+  const dx=x+26; px(dx-2,y+30,22,24,PAL.outline); px(dx,y+32,18,22,BLUED); px(dx+3,y+35,12,3,BLUEL); // 파란 문
+  px(x+6,y+30,13,11,PAL.outline); px(x+8,y+32,9,7,PAL.win);
+  px(x+66,y+30,13,11,PAL.outline); px(x+68,y+32,9,7,PAL.win);
+  // 강화 실린더 기계 (건물 오른쪽 앞)
+  const mx=x+100, my=y+34;
+  px(mx-3,my+22,26,8,PAL.outline); px(mx-1,my+23,22,6,'#c9973f');                          // 브라스 받침
+  px(mx-1,my-8,22,32,PAL.outline);
+  px(mx+1,my-6,18,28,'#bfe4f5');                                                           // 유리
+  px(mx+2,my+4,16,17,'#4aa8e8'); px(mx+4,my+7,3,3,'#a8e0ff'); px(mx+11,my+12,3,3,'#a8e0ff'); px(mx+7,my+16,2,2,'#a8e0ff'); // 액체+기포
+  px(mx-2,my-13,24,7,PAL.outline); px(mx,my-12,20,5,'#c9973f'); px(mx+7,my-18,6,6,PAL.outline); px(mx+8,my-17,4,4,'#8a6a2f'); // 브라스 캡
+  px(mx+19,my+8,10,4,PAL.outline); px(mx+20,my+9,8,2,'#3a3f45');                           // 파이프
+  px(mx+27,my-2,20,22,PAL.outline); px(mx+29,my,16,18,'#3a3f45'); px(mx+31,my+2,5,3,'#5a6068'); px(mx+40,my+12,3,3,'#5a6068'); // 보일러
+  px(mx+33,my-8,6,8,PAL.outline); px(mx+34,my-7,4,6,'#5a6068');
+  (function(){ const g=ctx.createRadialGradient(mx+10,my+8,2,mx+10,my+8,28);
+    g.addColorStop(0,'rgba(90,180,255,0.4)'); g.addColorStop(1,'rgba(90,180,255,0)');
+    ctx.fillStyle=g; ctx.fillRect(mx-18,my-20,56,56); })();
+  // "준비중" 팻말 (기계에 기대어)
+  ctx.fillStyle=PAL.outline; ctx.fillRect(mx-6,my+32,44,14);
+  ctx.fillStyle='#d9c091'; ctx.fillRect(mx-4,my+34,40,10);
+  ctx.fillStyle='#5a4a30'; ctx.font='bold 10px monospace'; ctx.textAlign='center'; ctx.fillText('준비중',mx+16,my+42);
+  px(mx+12,my+28,4,6,PAL.timber);
+}
+// ── 6-3. 창고 = 대형 궤짝(보관함) + 상자 더미 — 건물 없이 궤짝이 곧 창고. 상자 퍼리 창고지기에게 말 걸면(F) 보관함 패널
+function storage(x,y){
+  px(x-3,y-3,62,46,PAL.outline);
+  px(x,y,56,40,'#a8814f'); px(x,y,56,14,'#c99b62'); px(x,y+13,56,4,'#8a5f3a'); // 몸통·뚜껑
+  px(x+8,y,5,40,'#5a6068'); px(x+43,y,5,40,'#5a6068');                          // 철 밴드
+  px(x+24,y+16,8,11,PAL.outline); px(x+25,y+17,6,9,'#c9973f'); px(x+27,y+20,2,3,'#8a6a2f'); // 자물쇠
+  px(x+3,y+2,12,3,'#e0c090');
+  [[x+62,y+22,16],[x+62,y+4,16],[x+80,y+22,16]].forEach(([bx,by,s2])=>{         // 옆 상자 더미
+    px(bx-1,by-1,s2+2,s2+2,PAL.outline); px(bx,by,s2,s2,'#a8814f'); px(bx+2,by+2,s2-4,3,'#c99b62');
+    px(bx+s2/2-1,by,2,s2,'#8a5f3a'); });
+}
+// 상자 형태 퍼리 창고지기 — 살아있는 궤짝: 귀·볼터치·짧은 발
+function boxFurry(x,y){
+  px(x+1,y-9,7,9,PAL.outline); px(x+2,y-8,5,7,'#a8814f'); px(x+3,y-6,3,4,'#e0aa98'); // 왼귀(안쪽 핑크)
+  px(x+14,y-9,7,9,PAL.outline); px(x+15,y-8,5,7,'#a8814f'); px(x+16,y-6,3,4,'#e0aa98');
+  px(x-2,y-2,26,24,PAL.outline); px(x,y,22,20,'#c99b62');                        // 상자 몸통
+  px(x,y+12,22,3,'#8a5f3a'); px(x+2,y+2,8,2,'#e0c090');                          // 뚜껑 라인·하이라이트
+  px(x+5,y+5,3,4,PAL.outline); px(x+14,y+5,3,4,PAL.outline);                     // 눈
+  px(x+6,y+5,1,1,'#fff'); px(x+15,y+5,1,1,'#fff');
+  px(x+9,y+10,4,2,PAL.outline);                                                  // 입
+  px(x+2,y+8,3,2,'#e08a7a'); px(x+17,y+8,3,2,'#e08a7a');                         // 볼터치
+  px(x+3,y+20,7,4,PAL.outline); px(x+13,y+20,7,4,PAL.outline);                   // 발
+  ctx.fillStyle='#2a2e28'; ctx.fillRect(x-30,y+27,84,13);
+  ctx.fillStyle='#f0e6c8'; ctx.font='bold 10px monospace'; ctx.textAlign='center';
+  ctx.fillText('창고지기 (F—보관함)',x+11,y+37);
+}
+// 벚꽃나무 — 마을 중앙 포인트 (톤·크기·플립 랜덤은 tree()와 같은 방식)
+function blossom(x,y,s){
+  const r1=seed(x*3,y*7), r2=seed(y*5,x*11);
+  const f=r1>0.5?1:-1; s=s*(0.9+r2*0.35);
+  const w=(26+r1*8)*s, h=(23+r2*6)*s, yy=y-(9+r1*4)*s;
+  px(x+w/2-3.5*s,y+13*s,7*s,15*s,PAL.trunk); px(x+w/2-1*s,y+18*s,3*s,6*s,'#8a6a48');
+  const st=[[0.26,0],[0.09,0.2],[0,0.45],[0.09,0.8]];
+  st.forEach(([ix,iy],i)=>{ const hh=(st[i+1]?(st[i+1][1]-iy):0.2)*h+2;
+    px(x+w*ix-2,yy+h*iy-2,w*(1-ix*2)+4,hh+4,PAL.outline); });
+  st.forEach(([ix,iy],i)=>{ const hh=(st[i+1]?(st[i+1][1]-iy):0.2)*h+2;
+    px(x+w*ix,yy+h*iy,w*(1-ix*2),hh,'#c9829e'); });
+  px(x+w*(f>0?0.22:0.14),yy+h*0.24,w*0.52,h*0.4,'#e8a8c0');
+  px(x+w*(f>0?0.3:0.2),yy+h*0.3,w*0.26,h*0.2,'#f5cddd');
+  for(let i=0;i<7;i++) px(x+seed(x+i,y)*w, y+16*s+seed(x,y+i)*16, 2,2, '#e8a8c0'); // 떨어진 꽃잎
+}
+forge(70,50);
+enhancer(280,36);
+storage(474,66);
+boxFurry(492,118);
+blossom(388,196,1.15);   // 마을 중앙 벚꽃 (광장 옆)
+blossom(150,235,0.85);   // 서쪽 작은 벚꽃
+
+// ── 7. NPC (집 앞 — 내부 없음, 말 걸면 패널: 제작/강화/창고)
+function npc(x,y,body,label){
+  px(x-1,y-9,12,20,PAL.outline);
+  px(x+1,y,8,9,body);                       // 몸
+  px(x,y-8,10,9,PAL.outline); px(x+1,y-7,8,7,'#f2c793'); // 얼굴
+  px(x+2,y-5,2,2,PAL.outline); px(x+6,y-5,2,2,PAL.outline);
+  px(x,y+9,4,3,PAL.outline); px(x+6,y+9,4,3,PAL.outline); // 발
+  ctx.fillStyle='#2a2e28'; ctx.fillRect(x-21,y+14,52,13);
+  ctx.fillStyle='#f0e6c8'; ctx.font='bold 10px monospace'; ctx.textAlign='center'; ctx.fillText(label,x+5,y+24);
+}
+npc(140,116,'#8a4a2f','제작 NPC');   // 대장장이 갈색
+npc(350,102,'#425f92','강화 NPC');   // 파랑 (기계는 "준비중")
+// ── 잡 NPC (분위기 — 전부 표시 전용)
+npc(215,205,'#7d6540','촌장');       // 광장 모닥불 옆 — 길라잡이
+(function(){ const x=215,y=196; px(x+10,y-6,2,10,'#d9c091'); px(x+9,y-8,4,3,'#c9973f'); })(); // 촌장 지팡이
+npc(552,268,'#5c6a76','문지기');     // 게이트 옆 — 출발 힌트
+(function(){ const x=552,y=259; px(x+12,y-14,2,20,PAL.outline); px(x+11,y-18,4,6,'#c8ccd4'); })(); // 문지기 창
+// 낚시꾼 — 데크에 앉아 낚싯대 (강 컨셉의 화룡점정)
+(function(){ const x=486,y=300;
+  px(x-1,y-9,12,16,PAL.outline);
+  px(x+1,y-1,8,7,'#6b8f4a');                           // 몸 (앉음)
+  px(x,y-8,10,9,PAL.outline); px(x+1,y-7,8,7,'#f2c793'); // 얼굴
+  px(x,y-11,10,4,PAL.outline); px(x+1,y-10,8,3,'#c9973f'); // 밀짚모자
+  px(x+2,y-5,2,2,PAL.outline); px(x+6,y-5,2,2,PAL.outline);
+  px(x+1,y+5,10,3,PAL.outline);                        // 접은 다리
+  for(let i=0;i<14;i++) px(x+10+i*2,y-6-i,2,2,'#8a5f3a'); // 낚싯대 (대각선)
+  px(x+38,y-20,1,14,'#c8ccd4');                        // 낚싯줄
+  px(x+36,y-6,4,4,PAL.outline); px(x+37,y-5,2,2,'#c93a30'); // 찌
+  ctx.fillStyle='#2a2e28'; ctx.fillRect(x-22,y+10,52,13);
+  ctx.fillStyle='#f0e6c8'; ctx.font='bold 10px monospace'; ctx.textAlign='center'; ctx.fillText('낚시꾼',x+4,y+20);
+})();
+// 토끼 — 벚꽃나무 아래
+(function(){ const x=404,y=232;
+  px(x+1,y-6,3,7,PAL.outline); px(x+2,y-5,1,5,'#f0ece0');   // 귀
+  px(x+6,y-6,3,7,PAL.outline); px(x+7,y-5,1,5,'#f0ece0');
+  px(x-1,y-1,12,9,PAL.outline); px(x,y,10,7,'#f0ece0');     // 몸
+  px(x+2,y+2,1,1,PAL.outline); px(x+6,y+2,1,1,PAL.outline); // 눈
+  px(x+9,y+4,3,3,'#f0ece0');                                 // 꼬리
+})();
+
+// ── 8. 텃밭 (창고 옆 — ref의 관목 줄) + 덤불
+(function(){ const gx=560,gy=180;
+  px(gx-4,gy-4,64,44,PAL.dirtD); px(gx-2,gy-2,60,40,PAL.dirt);
+  for(let r=0;r<2;r++) for(let c=0;c<3;c++){ const bx=gx+4+c*19, by=gy+4+r*19;
+    px(bx-1,by-1,15,14,PAL.outline); px(bx,by,13,12,PAL.br); px(bx+2,by+2,8,5,PAL.brL); }
+})();
+function bush(x,y){ px(x-1,y-1,20,13,PAL.outline); px(x,y,18,11,PAL.br); px(x+3,y+2,9,4,PAL.brL); }
+bush(210,140); bush(430,210); bush(60,250);
+
+// ── 9. 숲 테두리 (침엽수 빽빽 + 활엽수 — 남쪽은 강이 경계)
+// 나무 랜덤성: 시드 기반 플립·크기·기울기·덩어리 배치·톤 변주 — 같은 나무가 없다
+const TONES=[
+  ['#4e7c52','#639664','#7cae74'],  // 기본
+  ['#456f49','#578a5c','#6fa468'],  // 짙은 톤
+  ['#55804a','#6f9e59','#8cba68'],  // 노란기 톤
+];
+function pine(x,y,s){
+  const r1=seed(x*3,y*7), r2=seed(y*5,x*11), r3=seed(x+13,y+17);
+  s=s*(0.9+r2*0.45);
+  const lean=(r1-0.5)*5;                                     // 기울기
+  const [cD,cM,cL]=TONES[Math.floor(r3*3)%3];
+  px(x+9*s,y+26*s,6*s,8*s,PAL.trunk);
+  [[0,18,24,10],[3,10,18,10],[6,2,12,10],[9,-5,6,9]].forEach(([ox,oy,w,h],i)=>{
+    const jw=w*(0.85+seed(x+i,y-i)*0.35), jx=x+ox*s+lean*(3-i)*0.4*s+(w-jw)*0.5*s;
+    px(jx-2,y+oy*s-2,jw*s+4,h*s+4,PAL.outline);
+    px(jx,y+oy*s,jw*s,h*s,cD);
+    px(jx+2,y+oy*s+1,jw*s*0.5,h*s*0.5,cM);
+    px(jx+3,y+oy*s+1,jw*s*0.25,h*s*0.35,cL);
+  });
+}
+function tree(x,y,s){
+  const r1=seed(x*3,y*7), r2=seed(y*5,x*11), r3=seed(x+13,y+17);
+  const f=r1>0.5?1:-1;                                       // 좌우 플립 (하이라이트 방향)
+  s=s*(0.85+r2*0.45);                                        // 크기 랜덤
+  const [cD,cM,cL]=TONES[Math.floor(r3*3)%3];
+  const w=(24+r1*9)*s, h=(22+r3*7)*s, yy=y-(8+r3*4)*s;       // 폭·높이·앵커 랜덤
+  const lean=(r2-0.5)*5*s;                                   // 비대칭 기울기
+  px(x+w/2-3.5*s,y+14*s,7*s,14*s,PAL.trunk);
+  const st=[[0.26,0],[0.09,0.2],[0,0.45],[0.09,0.8]];
+  st.forEach(([ix,iy],i)=>{ const hh=(st[i+1]?(st[i+1][1]-iy):0.2)*h+2;  // 외곽선 패스
+    px(x+w*ix-2+lean*(1.5-i*0.5),yy+h*iy-2,w*(1-ix*2)+4,hh+4,PAL.outline); });
+  st.forEach(([ix,iy],i)=>{ const hh=(st[i+1]?(st[i+1][1]-iy):0.2)*h+2;  // 채움 패스
+    px(x+w*ix+lean*(1.5-i*0.5),yy+h*iy,w*(1-ix*2),hh,cD); });
+  px(x+w*(f>0?0.24:0.14)+lean,yy+h*0.26,w*0.52,h*0.38,cM);
+  px(x+w*(f>0?0.32:0.2)+lean,yy+h*0.32,w*0.26,h*0.18,cL);
+}
+// 숲은 "저 멀리 있는" 느낌으로 — 위쪽 한 겹만 성기게, 옆은 몇 그루 조각 (갇힌 느낌 제거)
+const openings=[{x0:0,y0:150,x1:70,y1:240},{x0:575,y0:130,x1:640,y1:225},{x0:150,y0:0,x1:250,y1:40},{x0:390,y0:0,x1:470,y1:40}];
+const spots=[];
+for(let x=-10;x<650;x+=58){ spots.push([x+seed(x,1)*22,2+seed(x,2)*14, seed(x,9)>0.45?'p':'t']); } // 위 한 겹 (성김)
+[[-12,70],[-14,190],[-10,255],[604,60],[608,250]].forEach(([bx,by])=>spots.push([bx,by, seed(bx,by)>0.5?'p':'t'])); // 옆 조각
+spots.forEach(([bx,by,k])=>{
+  if(openings.some(o=>bx+13>o.x0&&bx+13<o.x1&&by+13>o.y0&&by+13<o.y1)) return;
+  k==='p'?pine(bx,by,1.1):tree(bx,by,1.15);
+});
+pine(50,150,0.8); tree(560,250,0.8); // 마을 안 낱그루 소수만
+// 강 건너 남쪽 둔치 나무 (아래 가장자리)
+tree(80,352,0.8); pine(180,350,0.8); tree(520,354,0.75); pine(600,348,0.8);
+
+// ── 10. 돌계단 + 유적 담장 조각 (D안 요소 20%) + 게이트
+(function(){ const x=556, y=152;
+  px(x-4,y-4,50,52,PAL.outline);
+  for(let i=0;i<5;i++){ px(x,y+i*9,42,7,i%2?PAL.rock:PAL.rockL); px(x,y+i*9+6,42,2,PAL.rockD); }
+})();
+(function(){ // 유적 담장 조각 (게이트 좌우)
+  [[520,120],[534,116],[548,112]].forEach(([bx,by])=>{ const w=13+seed(bx,by)*5;
+    px(bx-1,by-1,w+2,11,PAL.outline); px(bx,by,w,9,PAL.rock); px(bx+2,by+1,w*0.4,3,PAL.rockL); });
+})();
+(function(){ const gx=602,gy=168;
+  [[gx,gy-46],[gx,gy+18]].forEach(([x,y])=>{ px(x-2,y-2,20,50,PAL.outline); px(x,y,16,46,PAL.rock); px(x+3,y+4,5,38,PAL.rockD); });
+  px(gx-6,gy-56,34,14,PAL.outline); px(gx-4,gy-54,30,10,PAL.rock);
+  ctx.fillStyle='#2a2e28'; ctx.fillRect(gx-96,gy+68,108,14);
+  ctx.fillStyle='#f0e6c8'; ctx.font='bold 11px monospace'; ctx.textAlign='center'; ctx.fillText('출발 게이트 (F)',gx-42,gy+79);
+})();
+
+// ── 11. 모닥불(광장 소품) + 스폰 + 간판
+(function(){ const cx=250,cy=195;
+  for(let a=0;a<8;a++){ const x=cx+Math.cos(a/8*6.283)*17, y=cy+Math.sin(a/8*6.283)*11;
+    px(x-3,y-3,8,6,PAL.outline); px(x-2,y-2,6,4,PAL.rock); }
+  px(cx-7,cy-2,14,5,PAL.trunk);
+  px(cx-4,cy-9,9,9,PAL.outline); px(cx-3,cy-8,7,7,PAL.fire); px(cx-1,cy-12,3,5,'#f5c95e');
+  const g=ctx.createRadialGradient(cx,cy-5,2,cx,cy-5,34);
+  g.addColorStop(0,'rgba(255,180,94,0.30)'); g.addColorStop(1,'rgba(255,180,94,0)');
+  ctx.fillStyle=g; ctx.fillRect(cx-34,cy-39,68,68);
+})();
+function tag(x,y,label){ ctx.fillStyle='#2a2e28'; ctx.fillRect(x-26,y,52,14);
+  ctx.fillStyle='#f0e6c8'; ctx.font='bold 11px monospace'; ctx.textAlign='center'; ctx.fillText(label,x,y+11); }
+tag(116,16,'제작소'); tag(326,2,'강화소'); tag(502,48,'창고');
+(function(){ const x=36,y=186; tag(x+8,y+26,'스폰');
+  px(x,y-2,18,18,PAL.outline); px(x+2,y,14,14,'#597dce'); px(x+5,y-7,9,8,PAL.outline); px(x+6,y-6,7,6,'#d2aa99'); })();
+</script>
+</body>
+</html>
