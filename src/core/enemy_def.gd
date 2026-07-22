@@ -7,6 +7,7 @@ extends Resource
 @export var respawns: bool = false        # 허수아비 등 훈련용 — 사망 후 자동 재생성
 @export var respawn_delay: float = 3.0
 @export var sprite: Texture2D             # 개체 스프라이트 — 씬 1장을 데이터로 재사용 (§4)
+@export var frames: SpriteFrames          # 애니 시트(idle/walk/attack/death) — 있으면 sprite보다 우선. 없으면 sprite 1장을 idle로 감싼다
 
 # 이동/AI (호스트 전용 구동 — 0 = 고정형). 수치는 전부 임시값 — 사용자가 플레이하며 조인다.
 @export var move_speed: float = 0.0
