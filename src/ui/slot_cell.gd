@@ -122,7 +122,7 @@ func set_empty(slot_name: String = "", placeholder: Texture2D = null) -> void:
 	_badge_lbl.visible = false
 	if placeholder != null:
 		_icon.texture = placeholder
-		_icon.modulate = Color(1, 1, 1, 0.28)  # 흐린 고스트 — "여기 무기를 장착" 힌트
+		_icon.modulate = Color(1, 1, 1, 0.55)  # 반투명 픽토그램 — "여기 무기를 장착" 힌트
 		_slot_lbl.visible = false
 	else:
 		_icon.texture = null

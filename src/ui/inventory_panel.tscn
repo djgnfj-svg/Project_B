@@ -81,11 +81,21 @@ unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="Stats" type="Label" parent="Center/Dialog/Margin/VBox/EquipTop"]
-unique_name_in_owner = true
+[node name="StatsBox" type="PanelContainer" parent="Center/Dialog/Margin/VBox/EquipTop"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
+
+[node name="StatsMargin" type="MarginContainer" parent="Center/Dialog/Margin/VBox/EquipTop/StatsBox"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 5
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 5
+
+[node name="Stats" type="Label" parent="Center/Dialog/Margin/VBox/EquipTop/StatsBox/StatsMargin"]
+unique_name_in_owner = true
+layout_mode = 2
 theme_override_font_sizes/font_size = 10
 text = "총 스탯"
 

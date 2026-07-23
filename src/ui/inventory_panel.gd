@@ -11,7 +11,7 @@ extends CanvasLayer
 const UiTheme := preload("res://src/ui/ui_theme.gd")
 const ItemUi := preload("res://src/ui/item_ui.gd")
 const SlotCell := preload("res://src/ui/slot_cell.gd")
-const WEAPON_PLACEHOLDER := preload("res://assets/sprites/weapons/greatsword.png")  # 빈 무기 슬롯 고스트(검 실루엣)
+const WEAPON_PLACEHOLDER := preload("res://assets/sprites/ui/icon_weapon.png")  # 빈 무기 슬롯 = 범용 검 픽토그램(표지판 아이콘)
 
 const BAG_MIN_CELLS := 24  # 가방 최소 칸(빈 슬롯 패딩) — 4행×6열 그리드 형태 유지
 
