@@ -22,7 +22,7 @@ texture_repeat = 2
 position = Vector2(320, 180)
 texture = ExtResource("2")
 region_enabled = true
-region_rect = Rect2(0, 0, 640, 360)
+region_rect = Rect2(0, 0, 2560, 1440)
 
 [node name="Goblin1" parent="." instance=ExtResource("3")]
 position = Vector2(460, 100)

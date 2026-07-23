@@ -9,5 +9,6 @@ const PeerSyncNode := preload("res://src/net/peer_sync.gd")
 
 func _ready() -> void:
 	($PeerSync as PeerSyncNode).scene_id = GameState.stage_token()
-	# 카메라 맵 클램프 (camera_rig가 읽음) — 스테이지 바닥 = 640×360 (stage_*.tscn Ground 미러)
-	set_meta("map_rect", Rect2(0, 0, 640, 360))
+	# 카메라 = 순수 추적 (맵 클램프 없음) → 던전에서 카메라가 플레이어를 따라온다.
+	# void 방지 = 각 stage_*.tscn의 Ground region을 화면보다 크게 타일로 깔았다(어디로 가도 바닥이 화면을 채움).
+	# 단일 화면 고정으로 되돌리려면 여기서 set_meta("map_rect", Rect2(...))를 부활 (camera_rig가 읽음).

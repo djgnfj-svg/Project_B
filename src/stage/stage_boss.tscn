@@ -24,7 +24,7 @@ texture_repeat = 2
 position = Vector2(576, 324)
 texture = ExtResource("2")
 region_enabled = true
-region_rect = Rect2(0, 0, 1152, 648)
+region_rect = Rect2(0, 0, 2560, 1440)
 
 [node name="BossArena" type="Sprite2D" parent="."]
 z_index = -10
