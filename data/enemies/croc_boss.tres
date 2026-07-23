@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="BossDef" load_steps=15 format=3]
+[gd_resource type="Resource" script_class="BossDef" load_steps=16 format=3]
 
 [ext_resource type="Script" path="res://src/core/boss_def.gd" id="1"]
 [ext_resource type="Script" path="res://src/core/boss_pattern_def.gd" id="2"]
@@ -17,7 +17,7 @@ telegraph_s = 1.0
 damage = 15
 range = 90.0
 half_angle = 0.6
-cooldown_s = 2.5
+cooldown_s = 1.8
 use_min_dist = 0.0
 use_max_dist = 110.0
 min_phase = 1
@@ -33,12 +33,29 @@ telegraph_s = 1.0
 damage = 25
 range = 48.0
 half_angle = 0.6
-cooldown_s = 5.0
+cooldown_s = 4.0
 use_min_dist = 0.0
 use_max_dist = 200.0
 min_phase = 1
 creates_swamp = true
 burst_count = 1
+telegraph_tex = ExtResource("8")
+
+[sub_resource type="Resource" id="p_spray"]
+script = ExtResource("2")
+id = "spray"
+shape = "circle"
+telegraph_s = 1.0
+damage = 12
+range = 28.0
+half_angle = 0.6
+cooldown_s = 6.0
+use_min_dist = 60.0
+use_max_dist = 320.0
+min_phase = 1
+creates_swamp = false
+burst_count = 5
+burst_spread = 90.0
 telegraph_tex = ExtResource("8")
 
 [sub_resource type="Resource" id="d_gold"]
@@ -73,10 +90,10 @@ respawns = false
 sprite = ExtResource("3")
 frames = ExtResource("7")
 body_radius = 44.0
-move_speed = 35.0
-aggro_range = 400.0
+move_speed = 60.0
+aggro_range = 520.0
 drop_table = SubResource("d_table")
-patterns = Array[BossPatternDef]([SubResource("p_swing"), SubResource("p_slam")])
+patterns = Array[BossPatternDef]([SubResource("p_swing"), SubResource("p_slam"), SubResource("p_spray")])
 phase2_hp_ratio = 0.5
 swamp_radius = 40.0
 swamp_slow_factor = 0.5

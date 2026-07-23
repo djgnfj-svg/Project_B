@@ -21,6 +21,7 @@ var _last_hit_msec: Dictionary = {}  # peer_id -> 마지막 스윙 앵커 msec (
 var _roll_grant_msec: Dictionary = {}  # peer_id -> 마지막 구르기 그랜트 msec (호스트 전용 — i-frame 창)
 var _pending_php: Dictionary = {}  # peer_id -> hp (게스트 전용) — 스폰 전 도착한 php 보류. 씬 전환 직후 호스트의 이월 HP 확정이 원격 아바타 스폰(첫 G_POS)보다 먼저 오면 유실되던 표시 드리프트 방지 (peer_sync._peer_jobs 보류 패턴 미러)
 var _stage_over: bool = false  # 클리어↔전멸 상호 배제 + 종료 후 판정 중지
+var _boss_strike_frame: Dictionary = {}  # peer_id -> 보스 STRIKE 피격 물리 프레임 — 물뿌리기 원 겹침 시 같은 프레임 중복 확정 방지(per-cast dedup, 보스는 한 프레임에 한 패턴만 발화)
 
 
 func _ready() -> void:
@@ -41,6 +42,7 @@ func _ready() -> void:
 		_last_hit_msec.erase(peer_id)
 		_roll_grant_msec.erase(peer_id)
 		_pending_php.erase(peer_id)
+		_boss_strike_frame.erase(peer_id)  # 보스 STRIKE dedup 기록도 대칭 정리 (유한하나 정리 일관성)
 		GameState.drop_party_hp(peer_id))  # 챕터 내 잔류 이월 기록 정리 (재접속 id는 증가라 재사용 없음)
 
 
@@ -160,10 +162,13 @@ func _on_mob_strike(eid: String, center: Vector2) -> void:
 func _on_boss_strike(center: Vector2, angle: float, pattern: BossPatternDef) -> void:
 	if not Net.is_host() or _stage_over or pattern == null:
 		return
+	var frame := Engine.get_physics_frames()  # 물뿌리기 N개 원이 같은 프레임에 emit → 플레이어당 1회로 dedup
 	for node: Node in get_tree().get_nodes_in_group("player"):
 		var p := node as PlayerActor
 		if p == null or not p.is_alive():
 			continue
+		if int(_boss_strike_frame.get(p.peer_id, -1)) == frame:
+			continue  # 이번 STRIKE(프레임)에서 이미 이 플레이어 피격 — 착탄 원 겹침 중복 데미지 차단
 		var anchor := p.net_anchor()
 		var hit := false
 		if pattern.shape == "cone":
@@ -175,6 +180,7 @@ func _on_boss_strike(center: Vector2, angle: float, pattern: BossPatternDef) -> 
 		if _is_iframe_active(p):
 			continue  # 구르기 무적 (GDD §11 — 잔몹/보스 공용 예고 회피)
 		(p.get_node("Health") as HealthComponent).apply_damage(pattern.damage)
+		_boss_strike_frame[p.peer_id] = frame
 
 
 # i-frame 조회 — 호스트 자신은 로컬 구르기 상태 직접, 원격은 G_ROLL 그랜트 창 (CombatMath 단일 소스)

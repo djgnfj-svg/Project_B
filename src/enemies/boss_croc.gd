@@ -35,6 +35,9 @@ var _strike_center: Vector2 = Vector2.ZERO
 var _strike_angle: float = 0.0
 var _pattern_last_msec: Dictionary = {}  # pattern.id -> 마지막 발동 msec (호스트 전용 쿨다운 게이트)
 var _swamp_seq: int = 0                # 늪 생성 로컬 id 시퀀스
+var _strike_centers: Array = []        # 물뿌리기 착탄점(Vector2) — 비었으면 단일 패턴(_strike_center)
+var _max_hp: int = 0                   # party_scale 적용된 max_hp (페이즈2 임계·초기 hp 단일 소스)
+var _p2_swamp_accum: float = 0.0       # 페이즈2 자동 늪 생성 카운트다운(호스트 전용)
 var _remote_target: Vector2 = Vector2.ZERO
 var _remote_flip: bool = false
 var _telegraph_left: float = 0.0       # 표시용 자동 숨김 타이머(각 클라 로컬 리졸브)
@@ -64,11 +67,16 @@ func _ready() -> void:
 		if shape != null:
 			shape.radius = def.body_radius
 			_collision.shape = shape
-		_health.setup(def.max_hp, def.respawns, def.respawn_delay)
-		_prev_hp = def.max_hp
+		# 솔로 약화 — 인원 스케일(§3 party_scale). 호스트/게스트 같은 피어 수 → 동일 계산(표시 일치),
+		# 정본 hp는 ehp라 무해. 페이즈2 임계도 이 스케일 max를 기준으로 삼는다.
+		_max_hp = int(CombatMath.party_scale(float(def.max_hp), _party_size()))
+		_health.setup(_max_hp, def.respawns, def.respawn_delay)
+		_prev_hp = _max_hp
 	_health.hp_changed.connect(_on_hp_changed)
 	# 권한 경로(호스트 apply_damage)에서만 발화 — CombatAuthority가 ehp 브로드캐스트 + 클리어 판정.
 	_health.hp_confirmed.connect(func(hp: int) -> void: EventBus.enemy_hp_confirmed.emit(eid, hp))
+	# 물뿌리기 N개 원 텔레그래프 + 애니 = 이 구독이 그린다 (호스트/게스트 공용 단일 경로).
+	EventBus.boss_spray.connect(_on_boss_spray)
 	_play(&"idle")
 
 
@@ -88,10 +96,12 @@ func _on_hp_changed(hp: int, dropped: bool) -> void:
 			Flinch.play(_sprite, global_position - opp)  # 플레이어 반대로 흠칫
 	else:
 		_prev_hp = hp
-	# 페이즈 전이 — 호스트만 확정(로컬 페이즈). G_BOSS_PHASE 브로드캐스트는 슬라이스 4.
+	# 페이즈 전이 — 호스트만 확정(로컬 페이즈). 임계는 party_scale 적용된 _max_hp 기준(솔로 정합).
 	if Net.is_host() and _phase < 2 and not dead and def != null \
-			and hp <= int(def.max_hp * def.phase2_hp_ratio):
+			and hp <= int(_max_hp * def.phase2_hp_ratio):
 		_phase = 2
+		_p2_swamp_accum = _auto_swamp_interval()  # 즉시 늪 방지 — 첫 자동 늪은 한 간격 뒤
+		EventBus.boss_phase_changed.emit(2)  # MobSync가 G_BOSS_PHASE 중계·HUD가 배너 (표시 큐)
 	if dead:
 		_telegraph.visible = false
 		_telegraph_left = 0.0
@@ -128,6 +138,12 @@ func _physics_process(delta: float) -> void:
 
 func _host_ai(delta: float) -> void:
 	_state_left -= delta
+	# 페이즈2 = 안 때려도 바닥 잠식. 상태 무관하게 주기적으로 늪 생성(솔로면 간격↑, _auto_swamp_interval).
+	if _phase == 2:
+		_p2_swamp_accum -= delta
+		if _p2_swamp_accum <= 0.0:
+			_p2_swamp_accum = _auto_swamp_interval()
+			_spawn_auto_swamp()
 	match _state:
 		State.IDLE:
 			var t := _nearest_alive_player()
@@ -188,14 +204,25 @@ func _begin_windup(pat: BossPatternDef, anchor: Vector2) -> void:
 	_state_left = pat.telegraph_s
 	velocity = Vector2.ZERO
 	_strike_angle = (anchor - global_position).angle()  # 대상 방향
+	_strike_centers = []
+	_sprite.flip_h = cos(_strike_angle) < 0.0
+	if pat.burst_count > 1:
+		# 물뿌리기 — N개 원 착탄. 호스트가 착탄점 확정 → boss_spray로 게스트 표시 중계(G_BOSS_SPRAY).
+		# 개수는 솔로면 party_scale로 감소. 애니·N개 원 텔레그래프는 _on_boss_spray가 그린다(호스트/게스트 공용).
+		var count := maxi(1, int(CombatMath.party_scale(float(pat.burst_count), _party_size())))
+		_strike_centers = _scatter_centers(anchor, pat.burst_spread, count)
+		_telegraph.visible = false  # 단일 텔레그래프 숨김 — 렌더러가 N개 원을 대신 그린다
+		_telegraph_left = 0.0
+		if Net.is_host():
+			EventBus.boss_spray.emit(eid, pat.id, _strike_centers, _strike_angle)
+		return
 	if pat.shape == "cone":
 		_strike_center = global_position  # apex = 보스 위치
 	else:
 		# 원: 대상 net_anchor 고정 — 예고를 보고 빠져나갈 수 있게 (GDD §5 기믹 원칙)
 		_strike_center = anchor
-	_sprite.flip_h = cos(_strike_angle) < 0.0
 	_show_telegraph_visual(pat, _strike_center, _strike_angle)
-	_play(StringName(pat.id))  # 공격 애니(swing/slam/spray)
+	_play(StringName(pat.id))  # 공격 애니(swing/slam)
 	if Net.is_host():
 		# MobSync가 G_BOSS_ATK로 브로드캐스트 → 게스트 표시. 판정은 절대 여기서 안 한다.
 		EventBus.boss_telegraph.emit(eid, pat.id, _strike_center, _strike_angle)
@@ -206,7 +233,13 @@ func _fire_strike() -> void:
 	if not Net.is_host() or _cur_pattern == null:
 		return
 	_pattern_last_msec[_cur_pattern.id] = Time.get_ticks_msec()  # 쿨다운 게이트(호스트 전용)
-	EventBus.boss_strike.emit(_strike_center, _strike_angle, _cur_pattern)
+	if not _strike_centers.is_empty():
+		# 물뿌리기 — 착탄점마다 원 판정(기존 boss_strike 재사용, is_strike_hit N회). 겹침 중복 데미지는
+		# CombatAuthority가 같은 STRIKE(물리 프레임)에서 플레이어당 1회로 dedup (rules §3 판정은 호스트).
+		for c: Variant in _strike_centers:
+			EventBus.boss_strike.emit(c as Vector2, 0.0, _cur_pattern)
+	else:
+		EventBus.boss_strike.emit(_strike_center, _strike_angle, _cur_pattern)
 	if _cur_pattern.creates_swamp:
 		_swamp_seq += 1
 		var sid := "%s:swamp:%d" % [eid, _swamp_seq]
@@ -215,6 +248,42 @@ func _fire_strike() -> void:
 		EventBus.swamp_spawn_local.emit(
 			[[sid, _strike_center.x, _strike_center.y,
 			def.swamp_radius, def.swamp_ttl, def.swamp_slow_factor]])
+
+
+# 나 포함 파티 인원 — 호스트/게스트 동일 계산(peer_ids는 자기 제외라 +1). party_scale 표시 일치의 근거.
+func _party_size() -> int:
+	return Net.peer_ids.size() + 1
+
+
+# 페이즈2 자동 늪 간격 — 솔로면 덜 자주(간격↑). party_scale(1,solo)=solo_factor<1 → 나눠서 간격을 늘린다.
+func _auto_swamp_interval() -> float:
+	return def.swamp_auto_interval_p2 / CombatMath.party_scale(1.0, _party_size())
+
+
+# 페이즈2 자동 늪(호스트 전용) — 안 때려도 바닥 잠식. 위치 = 랜덤 생존 플레이어 근처(없으면 보스 주변).
+# swamp_spawn_local = 슬램과 동일 경로(SwampField 로컬 스폰 + G_SWAMP 브로드캐스트, sid 시퀀스 재사용).
+func _spawn_auto_swamp() -> void:
+	var target := _nearest_alive_player()
+	var center := target.net_anchor() if target != null else global_position
+	center += Vector2(randf_range(-24.0, 24.0), randf_range(-24.0, 24.0))
+	_swamp_seq += 1
+	var sid := "%s:swamp:%d" % [eid, _swamp_seq]
+	EventBus.swamp_spawn_local.emit(
+		[[sid, center.x, center.y, def.swamp_radius, def.swamp_ttl, def.swamp_slow_factor]])
+
+
+# 물뿌리기 착탄점 산개(호스트 확정) — 대상 주변 spread 반경 원판 안 N개. 첫 발은 대상 위(확실한 압박),
+# 나머지는 균일 랜덤 분포. 씬 전용 글루라 randf 무관(-s 아님) — 호스트가 계산해 boss_spray로 그대로 중계.
+func _scatter_centers(anchor: Vector2, spread: float, count: int) -> Array:
+	var centers: Array = []
+	for i in count:
+		if i == 0:
+			centers.append(anchor)
+			continue
+		var ang := randf() * TAU
+		var dist := sqrt(randf()) * spread  # sqrt = 균일 원판 분포 (중심 몰림 방지)
+		centers.append(anchor + Vector2(cos(ang), sin(ang)) * dist)
+	return centers
 
 
 # 추격/조준 좌표는 표시 좌표가 아니라 net_anchor — 호스트 판정 기준과 일치 (rules §3)
@@ -251,6 +320,39 @@ func show_boss_telegraph(pattern_id: String, center: Vector2, angle: float) -> v
 		return  # 모르는 패턴 id = 무시
 	_show_telegraph_visual(pat, center, angle)
 	_play(StringName(pat.id))  # 공격 애니 재생
+
+
+# 물뿌리기 N개 원 텔레그래프 + 애니 (표시 전용, 판정 절대 없음 — 그건 CombatAuthority). 호스트/게스트 공용:
+# 호스트=_begin_windup의 boss_spray emit, 게스트=MobSync가 G_BOSS_SPRAY 수신 후 emit. 각자 로컬 렌더.
+func _on_boss_spray(spray_eid: String, pattern_id: String, centers: Array, _angle: float) -> void:
+	if spray_eid != eid:
+		return  # 다른 보스(다중 보스 확장 대비) — 무시
+	var pat := _resolve_pattern(pattern_id)
+	if pat == null:
+		return  # 모르는 패턴 id
+	_play(StringName(pattern_id))  # 물뿌리기 애니
+	if pat.telegraph_tex == null:
+		return  # 아트 대기 — 애니만, 원 표시 생략 (판정 타이밍은 정상 진행)
+	for c: Variant in centers:
+		_spawn_spray_circle(pat, c as Vector2)
+
+
+# 착탄점 하나에 원형 텔레그래프 스프라이트 스폰 후 telegraph_s 뒤 자동 free. 단일 Telegraph 노드로는
+# N개를 못 그리므로 착탄점마다 별도 스프라이트 (판정 반경 = range → 스케일, "맞는 곳=보이는 곳" §3).
+func _spawn_spray_circle(pat: BossPatternDef, center: Vector2) -> void:
+	var spr := Sprite2D.new()
+	spr.texture = pat.telegraph_tex
+	spr.centered = true
+	spr.z_index = -1  # 바닥(-10) 위, 몸/무기(0+) 아래 — 가려지지 않게 (rules §5)
+	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	var tex_w := maxf(float(pat.telegraph_tex.get_width()), 1.0)
+	spr.scale = Vector2.ONE * (pat.range * 2.0 / tex_w)  # 원: 지름 = range*2 (텔레그래프 반경=판정 반경)
+	get_parent().add_child(spr)  # 스테이지 Node2D 자식 (런타임 add_child — _ready 함정 무관, rules §5)
+	spr.global_position = center
+	get_tree().create_timer(pat.telegraph_s).timeout.connect(
+		func() -> void:
+			if is_instance_valid(spr):
+				spr.queue_free())
 
 
 func _resolve_pattern(pattern_id: String) -> BossPatternDef:
