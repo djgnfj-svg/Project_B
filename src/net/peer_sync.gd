@@ -65,6 +65,8 @@ func _spawn(peer_id: int, is_local: bool) -> void:
 	if _peer_stats.has(peer_id):
 		var st := _peer_stats[peer_id] as Dictionary
 		p.set_equip_stats(int(st.get("atk", 0)), int(st.get("hp", 0)))
+		# 무기 겉모습(표시용) — id는 allowlist 리졸브(모르면 null→직업 기본 무기 폴백)
+		p.set_weapon_visual(GameState.equip_def(str(st.get("weapon", ""))))
 	_players[peer_id] = p
 	# 스폰 완료 공지 — 호스트가 챕터 이월 HP를 재확정하는 입구 (CombatAuthority). 잡 반영 뒤에 emit.
 	EventBus.player_spawned.emit(peer_id, p)
@@ -80,7 +82,8 @@ func _announce_job() -> void:
 func _announce_stats() -> void:
 	var s := GameState.current_stats()
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_STATS,
-		"atk": int(s["attack"]), "hp": int(s["hp"])})
+		"atk": int(s["attack"]), "hp": int(s["hp"]),
+		"weapon": GameState.equipped_id(EquipDef.SLOT_WEAPON)})  # 착용 무기 id (표시용, 원격 겉모습)
 
 
 # 로컬 장비 스탯을 내 플레이어에 반영(max_hp) + 공지. 스폰·인벤 변동 시.
@@ -89,6 +92,8 @@ func _apply_local_stats() -> void:
 	var lp := player(Net.my_id)
 	if lp != null:
 		lp.set_equip_stats(int(s["attack"]), int(s["hp"]))
+		# 로컬 무기 겉모습 = 내가 착용한 무기 (미착용이면 null → 직업 기본)
+		lp.set_weapon_visual(GameState.equip_def(GameState.equipped_id(EquipDef.SLOT_WEAPON)))
 	_announce_stats()
 
 
@@ -143,9 +148,12 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			var cap := GameState.max_equip_stats()
 			var atk := clampi(int(data.get("atk", 0)), 0, int(cap["attack"]))
 			var hp := clampi(int(data.get("hp", 0)), 0, int(cap["hp"]))
-			_peer_stats[from_id] = {"atk": atk, "hp": hp}
+			# 무기 id는 표시 전용 — allowlist 리졸브만 하면 안전(모르는 id→null→직업 기본, 경로 조작 불가)
+			var wid := str(data.get("weapon", ""))
+			_peer_stats[from_id] = {"atk": atk, "hp": hp, "weapon": wid}
 			if _players.has(from_id):
 				_players[from_id].set_equip_stats(atk, hp)
+				_players[from_id].set_weapon_visual(GameState.equip_def(wid))
 		NetSchema.G_ATK:
 			if _players.has(from_id):
 				var dir := Vector2(float(data.get("dx", 1.0)), float(data.get("dy", 0.0)))

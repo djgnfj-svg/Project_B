@@ -78,7 +78,7 @@ func _refresh_equip() -> void:
 	for c: Node in _equip_row.get_children():
 		c.queue_free()
 	_equip_row.add_child(_make_equip_slot(EquipDef.SLOT_WEAPON, "무기"))
-	_equip_row.add_child(_make_equip_slot(EquipDef.SLOT_ARMOR, "방어구"))
+	# 방어구 슬롯은 뺐다(현재 방어구 미도입) — 나중에 방어구가 생기면 여기 SLOT_ARMOR 슬롯을 다시 추가.
 
 
 func _make_equip_slot(slot: int, slot_name: String) -> Control:
@@ -178,8 +178,8 @@ func _on_slot_activated(payload: Dictionary) -> void:
 
 
 func _is_equipped(eid: String) -> bool:
-	return GameState.equipped_id(EquipDef.SLOT_WEAPON) == eid \
-		or GameState.equipped_id(EquipDef.SLOT_ARMOR) == eid
+	# 방어구 슬롯은 현재 미도입 — 무기 슬롯만 확인 (SLOT_ARMOR는 스키마에 dormant 유지)
+	return GameState.equipped_id(EquipDef.SLOT_WEAPON) == eid
 
 
 func _commit_save() -> void:

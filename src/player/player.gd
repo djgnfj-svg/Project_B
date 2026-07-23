@@ -39,6 +39,13 @@ var seated: bool = false  # 모닥불 앉기 (campfire 씬이 켠다) — 이동
 var equip_atk_bonus: int = 0  # 착용 장비 공격 보너스 (G_STATS 공지/수신) — 호스트가 calc_damage에 더한다
 var equip_hp_bonus: int = 0   # 착용 장비 체력 보너스 — max_hp = job.max_hp + 이 값 (set_max_hp로 이월 HP 보존)
 
+# 무기 겉모습 — 착용 무기(EquipDef.weapon_texture)에서 그린다. 미착용이면 직업 기본 무기로 폴백.
+# _weapon_grip은 _update_weapon이 매 프레임 참조 → 착용/직업에 따라 바뀌므로 멤버로 보관(job.weapon_grip 직참 금지).
+var _weapon_grip: Vector2 = Vector2.ZERO
+var _default_weapon_tex: Texture2D = null   # 직업 기본 무기(미착용 폴백)
+var _default_weapon_grip: Vector2 = Vector2.ZERO
+var _weapon_override: EquipDef = null       # 마지막 착용 무기 — set_job 재호출(재공지/재합류) 시 겉모습이 직업 기본으로 안 되돌아가게 보관
+
 var _remote_target: Vector2 = Vector2.ZERO
 var _remote_flip: bool = false
 var _send_accum: float = 0.0
@@ -106,10 +113,12 @@ func set_job(j: JobDef) -> void:
 	if j.frames != null:
 		_sprite.sprite_frames = j.frames
 		_sprite.play("idle")
-	# 무기 = 몸과 분리된 독립 스프라이트 (장비 교체 = 텍스처 교체). 그립을 회전축에 정렬.
-	_weapon.texture = j.weapon_texture
-	_weapon.position = -j.weapon_grip + Vector2(HOLD_DIST, 0.0)
-	_weapon_pivot.visible = j.weapon_texture != null
+	# 무기 = 몸과 분리된 독립 스프라이트 (장비 교체 = 텍스처 교체). 직업 무기 = 미착용 시 폴백.
+	_default_weapon_tex = j.weapon_texture
+	_default_weapon_grip = j.weapon_grip
+	# 직업 재공지/재합류로 set_job이 다시 불려도 착용 무기 겉모습을 유지 — override(마지막 착용) 재적용.
+	# (첫 스폰엔 override=null이라 직업 기본. 이후 G_STATS로 override가 채워지면 이 경로가 보존.)
+	set_weapon_visual(_weapon_override)
 	if is_node_ready():
 		# setup이 아니라 set_max_hp — 직업 재공지가 챕터 이월 HP(호스트 확정)를 풀피로 되돌리지 않게
 		_health.set_max_hp(j.max_hp + equip_hp_bonus)  # 장비 체력 보너스 유지
@@ -125,6 +134,21 @@ func set_equip_stats(atk: int, hp: int) -> void:
 func _apply_max_hp() -> void:
 	if job != null and is_node_ready():
 		_health.set_max_hp(job.max_hp + equip_hp_bonus)
+
+
+# 무기 겉모습 적용 — 착용 무기(equip)의 텍스처/그립, 없으면(null·텍스처 없음) 직업 기본 무기로 폴백.
+# 로컬은 peer_sync가 GameState 착용 무기로, 원격은 G_STATS의 weapon id 리졸브로 부른다 (표시 전용, 판정 무관).
+func set_weapon_visual(equip: EquipDef) -> void:
+	_weapon_override = equip  # 재공지/재합류 대비 마지막 착용 무기 보관 (set_job이 재적용)
+	var tex := _default_weapon_tex
+	var grip := _default_weapon_grip
+	if equip != null and equip.weapon_texture != null:
+		tex = equip.weapon_texture
+		grip = equip.weapon_grip
+	_weapon.texture = tex
+	_weapon_grip = grip
+	_weapon.position = -grip + Vector2(HOLD_DIST, 0.0)
+	_weapon_pivot.visible = tex != null
 
 
 func is_alive() -> bool:
@@ -309,7 +333,7 @@ func _update_weapon(delta: float) -> void:
 			swing_off = SWING_HALF_ARC * (1.0 - (t - 0.75) / 0.25)
 	var ang := _aim_angle + swing_off
 	_weapon_pivot.rotation = ang
-	_weapon.position = -job.weapon_grip + Vector2(HOLD_DIST + lunge, 0.0)
+	_weapon.position = -_weapon_grip + Vector2(HOLD_DIST + lunge, 0.0)
 	# 좌향 조준 시 뒤집기 — 안 하면 검이 거꾸로(날이 아래) 보인다. 기준은 조준각(스윙 중 깜빡임 방지)
 	_weapon.flip_v = absf(wrapf(_aim_angle, -PI, PI)) > PI / 2.0
 	# 위쪽 조준 = 몸 뒤(0), 아래 = 몸 앞(2) — 몸(Sprite z=1) 기준 상대 배치.

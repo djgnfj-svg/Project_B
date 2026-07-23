@@ -29,7 +29,7 @@ const KEY_KIND := "k"
 const G_POS := "pos"                  # {k, s, x, y, f, a}  자기 캐릭터 위치+좌우 플립+조준각(a, 라디안 — 무기 표시 전용, 판정 아님) (각자 자기 것만 보낸다). s = 씬 id — 다른 씬 피어의 유령 스폰 방지
 const G_ATK := "atk"                  # {k, dx, dy}   공격 연출 (방향) — 판정 아님, 원격 표시용
 const G_JOB := "job"                  # {k, job}      직업 공지 (id 문자열) — 스테이지 입장·피어 합류 시. 수신 측은 자기 data/jobs에서 리졸브(모르는 id = 기본 직업)
-const G_STATS := "stats"              # {k, atk, hp}  장비 총 스탯 공지 (직업처럼 — 호스트가 데미지/HP 확정에 사용). 트러스트=발신자(co-op, G_JOB과 동일 모델). 4인/PvP 전 검증 게이트(rules §2)
+const G_STATS := "stats"              # {k, atk, hp, weapon}  장비 총 스탯 + 착용 무기 id 공지. atk/hp = 호스트가 데미지/HP 확정에 사용(트러스트=발신자, clamp). weapon = 원격 무기 겉모습(표시 전용, allowlist 리졸브만). 4인/PvP 전 검증 게이트(rules §2)
 const G_HIT_REQ := "hitreq"           # {k, eid}      게스트 → 호스트: 적중 요청 (호스트가 사거리 검증 후 확정)
 const G_ENEMY_HP := "ehp"             # {k, eid, hp}  호스트 → 전원: 적 HP 확정 브로드캐스트 (hp<=0 = 사망)
 const G_SCENE := "scene"              # {k, scene, c, i} 호스트 → 전원: 씬 전환 지시 — 전환 확정 권한은 호스트 (rules §1·§3). scene=stage일 때 c=챕터 id·i=스테이지 인덱스 — 수신 측은 data/chapters 스캔 allowlist + 범위 검증(scene_flow)
