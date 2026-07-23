@@ -211,9 +211,10 @@ func _fire_strike() -> void:
 		_swamp_seq += 1
 		var sid := "%s:swamp:%d" % [eid, _swamp_seq]
 		# 호스트는 자기 G_SWAMP를 릴레이로 못 받으므로 로컬 스폰 (drop_spawn_local 미러).
-		# 구독자 = SwampField(슬라이스 2 — 지금 없어도 무해).
+		# 구독자 = SwampField. 튜플 = [sid, x, y, r, ttl, slow] (net_schema G_SWAMP "sw" 미러).
 		EventBus.swamp_spawn_local.emit(
-			[[sid, _strike_center.x, _strike_center.y, def.swamp_radius, def.swamp_ttl]])
+			[[sid, _strike_center.x, _strike_center.y,
+			def.swamp_radius, def.swamp_ttl, def.swamp_slow_factor]])
 
 
 # 추격/조준 좌표는 표시 좌표가 아니라 net_anchor — 호스트 판정 기준과 일치 (rules §3)

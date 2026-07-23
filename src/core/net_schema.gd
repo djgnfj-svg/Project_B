@@ -48,7 +48,7 @@ const G_PICK_OK := "pickok"           # {k, did, pid} 호스트→전원: 픽업
 
 # 보스전 (2026-07-23). 상태 확정 권한 = 호스트 (§1·§3). 전부 저빈도(패턴/생성당 1회) → relay-worker 로그 제외 불필요.
 const G_BOSS_ATK := "batk"            # {k, eid, p, x, y, a} 호스트→전원: 보스 패턴 텔레그래프. p=패턴 id·(x,y)=판정 중심·a=각(rad). 타격 시각·판정 반경은 패턴 telegraph_s/range를 각자 로컬 리졸브 (matk 규약 확장)
-const G_SWAMP := "swamp"              # {k, s, sw}    호스트→전원: 늪 존 스폰. s=stage_token(유령 스폰 차단, G_DROP "s" 미러)·sw=[[sid,x,y,r,ttl], …] sid=늪 고유 id·(x,y)=중심·r=반경·ttl=지속(초, 로컬 despawn)
+const G_SWAMP := "swamp"              # {k, s, sw}    호스트→전원: 늪 존 스폰. s=stage_token(유령 스폰 차단, G_DROP "s" 미러)·sw=[[sid,x,y,r,ttl,slow], …] sid=늪 고유 id·(x,y)=중심·r=반경·ttl=지속(초, 로컬 despawn)·slow=늪 안 이동 배율
 const G_BOSS_PHASE := "bphase"        # {k, ph}       호스트→전원: 페이즈 전환 표시 큐(연출/배너용). 정본 판정은 호스트 hp — 표시 동기화일 뿐
 
 # 씬 id — G_SCENE 페이로드·G_POS "s" 필드의 값. main의 씬 매핑·각 씬 PeerSync.scene_id와 짝 (단일 소스)
