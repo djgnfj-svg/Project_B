@@ -59,6 +59,7 @@ var _attack_anim_left: float = 0.0  # 공격 스윙 창 — 로컬은 공격 발
 var _aim_angle: float = 0.0  # 무기 조준각 — 로컬은 마우스, 원격은 _remote_aim으로 보간
 var _remote_aim: float = 0.0  # G_POS "a" 수신 목표각 (표시 전용, 판정 아님)
 var _remote_moving: bool = false
+var _swamp_factors: Array[float] = []  # 현재 겹친 늪들의 이동 배율 (SwampZone enter/exit로 추가·제거). 걷기 속도에 min 적용, 구르기 예외
 
 var _prev_hp: int = 0  # 피격 손맛(combat_impact 감소량) 계산용 — hp_changed 표시 경로 추적
 
@@ -133,6 +134,27 @@ func is_alive() -> bool:
 # 호스트가 자기 로컬 플레이어의 i-frame을 직접 조회 (원격 피어는 G_ROLL 그랜트 창으로 판정)
 func is_rolling() -> bool:
 	return _roll_time_left > 0.0
+
+
+# --- 늪 슬로우 (SwampZone이 로컬 플레이어 겹칠 때만 호출 — 네트워크 0, 이동은 각자 소유 rules §3) ---
+# 여러 늪이 겹치면 가장 느린 배율(min)을 걷기 속도에 적용. exit는 factor를 받아 정확히 그 늪 항목만 제거
+# (여러 늪 배율이 다를 때 min 재계산이 어긋나지 않게 — 현재는 def.swamp_slow_factor 하나라 전부 동일).
+func enter_swamp(factor: float) -> void:
+	_swamp_factors.append(factor)
+
+
+func exit_swamp(factor: float) -> void:
+	var idx := _swamp_factors.find(factor)
+	if idx >= 0:
+		_swamp_factors.remove_at(idx)
+
+
+# 현재 유효 걷기 배율 — 겹친 늪 없으면 1.0, 있으면 가장 느린 값. 구르기엔 적용 안 한다(탈출 수단).
+func _swamp_mult() -> float:
+	var m := 1.0
+	for f: float in _swamp_factors:
+		m = minf(m, f)
+	return m
 
 
 # 게스트 수신 경로 — php 브로드캐스트 반영. 타이머 없는 표시 전용 (§3: 자기 HP도 이것만 믿는다)
@@ -308,9 +330,9 @@ func _local_move(delta: float) -> void:
 			return
 	if _roll_time_left > 0.0:
 		_roll_time_left -= delta
-		velocity = _roll_dir * job.move_speed * ROLL_SPEED_MULT
+		velocity = _roll_dir * job.move_speed * ROLL_SPEED_MULT  # 구르기는 늪 슬로우 예외 — 늪 탈출 수단
 	else:
-		velocity = dir * job.move_speed
+		velocity = dir * job.move_speed * _swamp_mult()  # 걷기만 늪 배율 적용
 		if _alive and Input.is_action_just_pressed("roll") and _roll_cd_left <= 0.0:
 			_roll_dir = dir if dir != Vector2.ZERO else _aim_dir()
 			_roll_time_left = CombatMath.ROLL_TIME_S

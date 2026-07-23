@@ -10,8 +10,10 @@ static func calc_damage(job: JobDef, bonus_attack: int = 0) -> int:
 
 
 # 호스트의 적중 요청 검증 — 공격자 위치 기준 사거리 내인가 (지연 감안 여유 배율).
-static func is_hit_in_reach(attacker_pos: Vector2, enemy_pos: Vector2, job: JobDef) -> bool:
-	return attacker_pos.distance_to(enemy_pos) <= job.attack_range * 2.0
+# enemy_radius = 적 몸 반경 — 중심거리에서 빼 준다. 거대 보스(radius ~48)는 중심이 멀어
+# "붙어도 사거리 밖"이 되므로 몸통 표면까지로 판정한다 (기본 0 = 기존 잔몹 동작 불변).
+static func is_hit_in_reach(attacker_pos: Vector2, enemy_pos: Vector2, job: JobDef, enemy_radius: float = 0.0) -> bool:
+	return attacker_pos.distance_to(enemy_pos) - enemy_radius <= job.attack_range * 2.0
 
 
 # 히트 기하 — 단일 소스 (§3). 실제 판정(원형 질의)과 공격 FX 위치가 같은 함수를 부른다.
@@ -60,6 +62,28 @@ static func is_iframe_active(grant_msec: int, now_msec: int) -> bool:
 # 잔몹 타격 판정 — 단일 소스 (§3). 호스트 판정과 텔레그래프 표시가 같은 반경(def.strike_radius)을 읽는다.
 static func is_strike_hit(player_pos: Vector2, strike_center: Vector2, strike_radius: float) -> bool:
 	return player_pos.distance_to(strike_center) <= strike_radius
+
+
+# 부채꼴 판정 — 단일 소스 (§3, 보스전 2026-07-23). 보스 평타/전방 분사 등 전방 원뿔형 공격.
+# apex = 부채꼴 꼭짓점(보스 중심), facing = 향한 각(rad), half_angle = 반각(rad), radius = 사거리.
+# 판정 각/반경 = 텔레그래프 표시(부채꼴 텍스처 스케일·회전)와 같은 값 — "맞는 곳=보이는 곳".
+static func is_hit_in_cone(pt: Vector2, apex: Vector2, facing: float, half_angle: float, radius: float) -> bool:
+	var to_pt := pt - apex
+	var dist := to_pt.length()
+	if dist > radius:
+		return false
+	if dist < 0.01:
+		return true  # 꼭짓점 위 = 안쪽 (각 계산 무의미)
+	return absf(angle_difference(facing, to_pt.angle())) <= half_angle
+
+
+# 인원 스케일링 — 솔로 시 보스 약화 (§3 예약 → 구현, GDD §11·§5 확정). party_size>=2 → base(항등),
+# 1(솔로) → base*solo_factor. max_hp·물 착탄 수·늪 자동 생성 빈도에 곱한다. 호스트가 계산(게스트도
+# 같은 피어 수로 동일 계산 → 표시 일치). solo_factor·적용 대상 수치는 사용자 실기 튜닝.
+static func party_scale(base: float, party_size: int, solo_factor: float = 0.6) -> float:
+	if party_size >= 2:
+		return base
+	return base * solo_factor
 
 
 # --- 장비 스탯 (드랍·제작 2026-07-23) — 단일 소스 (§3). 제작/강화 UI·전투·HUD가 전부 이 함수만 부른다. ---

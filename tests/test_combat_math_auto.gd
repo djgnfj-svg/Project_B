@@ -40,6 +40,29 @@ func _initialize() -> void:
 	failures += _check(not CombatMath.is_strike_hit(Vector2(18.1, 0.0), Vector2.ZERO, 18.0), "strike: 반경 밖(18.1) 빗나감")
 	failures += _check(CombatMath.is_strike_hit(Vector2.ZERO, Vector2.ZERO, 18.0), "strike: 중심(0) 적중")
 
+	# --- 보스전 (§3 하드 계약 — 보스 AI 판정과 텔레그래프 표시 공용 단일 소스) ---
+	# 부채꼴 — apex=원점, facing=+x(0rad), half_angle=0.6rad(~34°), radius=50
+	failures += _check(CombatMath.is_hit_in_cone(Vector2(40.0, 0.0), Vector2.ZERO, 0.0, 0.6, 50.0), "cone: 정면·사거리 안 적중")
+	failures += _check(CombatMath.is_hit_in_cone(Vector2.ZERO, Vector2.ZERO, 0.0, 0.6, 50.0), "cone: 꼭짓점 위 적중")
+	failures += _check(not CombatMath.is_hit_in_cone(Vector2(51.0, 0.0), Vector2.ZERO, 0.0, 0.6, 50.0), "cone: 정면이나 사거리 밖(51) 빗나감")
+	# 각 경계: 반경 40, 각 = 0.6rad 안(0.5)/밖(0.7)
+	failures += _check(CombatMath.is_hit_in_cone(Vector2(40.0, 0.0).rotated(0.5), Vector2.ZERO, 0.0, 0.6, 50.0), "cone: 반각 안(0.5rad) 적중")
+	failures += _check(not CombatMath.is_hit_in_cone(Vector2(40.0, 0.0).rotated(0.7), Vector2.ZERO, 0.0, 0.6, 50.0), "cone: 반각 밖(0.7rad) 빗나감")
+	failures += _check(not CombatMath.is_hit_in_cone(Vector2(-40.0, 0.0), Vector2.ZERO, 0.0, 0.6, 50.0), "cone: 뒤쪽(180°) 빗나감")
+	# facing 회전(위쪽 향함 = PI/2): 위 적중, 옆 빗나감
+	failures += _check(CombatMath.is_hit_in_cone(Vector2(0.0, 40.0), Vector2.ZERO, PI / 2.0, 0.6, 50.0), "cone: facing 회전(위)·정면 적중")
+	failures += _check(not CombatMath.is_hit_in_cone(Vector2(40.0, 0.0), Vector2.ZERO, PI / 2.0, 0.6, 50.0), "cone: facing 회전(위)·옆 빗나감")
+
+	# 인원 스케일링 — 솔로(1) 약화, 2인 이상 항등
+	failures += _check(is_equal_approx(CombatMath.party_scale(100.0, 2), 100.0), "party_scale: 2인 = 항등(100)")
+	failures += _check(is_equal_approx(CombatMath.party_scale(100.0, 1), 60.0), "party_scale: 솔로 = base*0.6(60)")
+	failures += _check(is_equal_approx(CombatMath.party_scale(100.0, 1, 0.5), 50.0), "party_scale: 솔로 커스텀 factor(0.5)=50")
+
+	# 사거리 검증에 적 몸 반경 반영 — job.attack_range 20 → 한계 40. 반경 48 보스는 중심 80이어도 표면(80-48=32<40) 적중
+	failures += _check(CombatMath.is_hit_in_reach(origin, Vector2(80.0, 0.0), job, 48.0), "reach+radius: 큰 보스 중심 80·반경48 → 표면(32) 적중")
+	failures += _check(not CombatMath.is_hit_in_reach(origin, Vector2(90.0, 0.0), job, 48.0), "reach+radius: 중심 90·반경48 → 표면(42>40) 거부")
+	failures += _check(CombatMath.is_hit_in_reach(origin, Vector2(40.0, 0.0), job), "reach+radius: 반경 기본 0 = 기존 동작 불변(40 허용)")
+
 	# --- 장비 스탯 (§3 하드 계약 — 제작/강화 UI·전투·HUD 공용 단일 소스) ---
 	failures += _check(CombatMath.calc_damage(job, 5) == 12, "calc_damage: 장비 보너스(+5) = 12")
 	failures += _check(CombatMath.calc_damage(job, 0) == 7, "calc_damage: 보너스 0 = 기존 항등 폴백")
