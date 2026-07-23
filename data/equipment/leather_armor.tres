@@ -6,6 +6,7 @@
 script = ExtResource("1")
 id = "leather_armor"
 display_name = "가죽 갑옷"
+description = "질긴 가죽을 덧댄 경갑. 최대 체력을 늘려준다."
 slot_name = "armor"
 base_attack = 0
 base_hp = 20

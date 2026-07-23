@@ -14,6 +14,9 @@ extends CanvasLayer
 # ⚠ UI 씬 스크립트라 전역 오토로드(GameState·EventBus·CombatMath) 직접 접근 OK
 #   (헤드리스 -s 대상 아님, rules §5). class_name 선언은 하지 않는다(서브에이전트 규칙 §0).
 
+const UiTheme := preload("res://src/ui/ui_theme.gd")
+const ItemUi := preload("res://src/ui/item_ui.gd")
+
 @onready var _close_btn: Button = %CloseBtn
 @onready var _mat_list: VBoxContainer = %MatList
 @onready var _equip_list: VBoxContainer = %EquipList
@@ -23,6 +26,7 @@ signal closed
 
 func _ready() -> void:
 	visible = false
+	$Center.theme = UiTheme.get_theme()  # 공용 픽셀 테마 (제작/창고와 통일)
 	_close_btn.pressed.connect(close)
 	# 픽업/장착으로 인벤이 바뀌면(inventory_changed) 열려 있는 동안 즉시 반영.
 	EventBus.inventory_changed.connect(_on_inventory_changed)
@@ -82,9 +86,11 @@ func _refresh_materials() -> void:
 		var mdef := GameState.material_def(mid)
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 6)
+		row.tooltip_text = ItemUi.material_tooltip(mdef, qty) if mdef != null else mid  # 아이템 상세 hover
 		row.add_child(_make_icon(mdef.icon if mdef != null else null))
 		var lbl := Label.new()
 		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE  # 툴팁은 행이 받게 라벨은 이벤트 통과
 		var name_txt := mdef.display_name if mdef != null else mid
 		lbl.text = name_txt
 		row.add_child(lbl)
@@ -117,15 +123,18 @@ func _make_equip_row(eid: String, equip: EquipDef) -> Control:
 	row.add_child(_make_icon(equip.icon))
 
 	var level := GameState.equip_level(eid)
+	var cur := CombatMath.equip_stat_at_level(equip, level)
+	row.tooltip_text = ItemUi.equip_tooltip(equip, level, int(cur["attack"]), int(cur["hp"]))  # 아이템 상세 hover
 
 	var info := VBoxContainer.new()
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.mouse_filter = Control.MOUSE_FILTER_IGNORE  # 행 툴팁이 이 영역 hover에서도 뜨게 이벤트 통과
 	var name_lbl := Label.new()
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_lbl.text = "%s  Lv.%d/%d" % [equip.display_name, level, equip.max_level]
 	info.add_child(name_lbl)
-
-	var cur := CombatMath.equip_stat_at_level(equip, level)
 	var stat_lbl := Label.new()
+	stat_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	stat_lbl.text = "공격 %d · HP %d" % [int(cur["attack"]), int(cur["hp"])]
 	stat_lbl.add_theme_font_size_override("font_size", 10)
 	info.add_child(stat_lbl)

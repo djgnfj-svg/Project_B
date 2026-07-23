@@ -7,6 +7,7 @@
 script = ExtResource("1")
 id = "brute_core"
 display_name = "브루트의 핵"
+description = "보스가 남긴 응축된 핵. 상급 장비 제작의 열쇠다."
 icon = ExtResource("2")
 is_core = true
 rarity = 2

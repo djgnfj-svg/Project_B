@@ -7,6 +7,7 @@
 script = ExtResource("1")
 id = "goblin_hide"
 display_name = "고블린 가죽"
+description = "흔한 잡템 가죽. 기초 장비 제작·강화에 두루 쓰인다."
 icon = ExtResource("2")
 is_core = false
 rarity = 0

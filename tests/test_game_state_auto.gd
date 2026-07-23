@@ -85,6 +85,56 @@ func _initialize() -> void:
 	_check("강화 성공", gs.upgrade_equipment("leather_armor"))
 	_check("강화 후 레벨 = 1", gs.equip_level("leather_armor") == 1)
 	_check("착용 장비 체력이 현재 스탯에 반영", int(gs.current_stats()["hp"]) > 0)
+
+	# --- 창고 넣기/빼기 (개인·로컬 보관함, 비네트워크) ---
+	# 재료: 예치→창고 증가·가방 감소, 회수→역. 0이 된 창고 키는 삭제(표시 정돈).
+	gs.deposit_material("goblin_hide", 1)
+	_check("재료 예치: 가방 감소(2→1)", gs.material_count("goblin_hide") == 1)
+	_check("재료 예치: 창고 증가(0→1)", gs.storage_material_count("goblin_hide") == 1)
+	gs.withdraw_material("goblin_hide", 1)
+	_check("재료 회수: 가방 복귀(1→2)", gs.material_count("goblin_hide") == 2)
+	_check("재료 회수: 창고 0 → 키 삭제",
+		gs.storage_material_count("goblin_hide") == 0 and not gs.storage_materials.has("goblin_hide"))
+	# 초과 이동 clamp — 보유량 넘게 못 넣음/뺌
+	gs.deposit_material("goblin_hide", 999)
+	_check("초과 예치 clamp: 보유 전량만 이동",
+		gs.material_count("goblin_hide") == 0 and gs.storage_material_count("goblin_hide") == 2)
+	gs.withdraw_material("goblin_hide", 999)
+	_check("초과 회수 clamp: 전량 복귀", gs.material_count("goblin_hide") == 2)
+	# 골드 예치/회수 + 초과 clamp
+	var g0: int = gs.gold
+	gs.deposit_gold(30)
+	_check("골드 예치: 가방 감소", gs.gold == g0 - 30 and gs.storage_gold == 30)
+	gs.deposit_gold(99999)
+	_check("골드 초과 예치 clamp", gs.gold == 0 and gs.storage_gold == g0)
+	gs.withdraw_gold(g0)
+	_check("골드 회수 복귀", gs.gold == g0 and gs.storage_gold == 0)
+	# 장비 예치 → 장착 해제 + 레벨 보존, 회수 → 가방 복귀(자동장착 안 함)
+	gs.deposit_equipment("leather_armor")
+	_check("장비 예치: 가방에서 제거", gs.equip_level("leather_armor") == -1)
+	_check("장비 예치: 창고에 레벨 보존", int(gs.storage_equipment.get("leather_armor", -1)) == 1)
+	_check("장비 예치: 장착 자동 해제", gs.equipped_id(1) == "")
+	# 창고 보유 장비를 add_equipment 해도 가방에 사본 안 생김 (id당 1개 불변식)
+	gs.add_equipment("leather_armor")
+	_check("창고 보유 장비 중복 생성 방지", gs.equip_level("leather_armor") == -1)
+	gs.withdraw_equipment("leather_armor")
+	_check("장비 회수: 가방 복귀(레벨 유지)", gs.equip_level("leather_armor") == 1)
+	_check("장비 회수: 자동 장착 안 함(장착은 패널에서)", gs.equipped_id(1) == "")
+	_check("장비 회수: 창고에서 제거", not gs.storage_equipment.has("leather_armor"))
+	# 창고 저장 라운드트립 — 창고에 든 채로 to→from 복원
+	gs.deposit_material("goblin_hide", 1)
+	gs.deposit_gold(15)
+	var ssnap: Dictionary = gs.to_save_dict()
+	var gs3 := GameStateScript.new() as Node
+	gs3.from_save_dict(ssnap)
+	_check("창고 저장 복원: 재료", gs3.storage_material_count("goblin_hide") == 1)
+	_check("창고 저장 복원: 골드", gs3.storage_gold == 15)
+	gs3.free()
+	# 원복 — 아래 인벤 저장 라운드트립이 창고 비고 장착된 상태를 전제
+	gs.withdraw_material("goblin_hide", 1)
+	gs.withdraw_gold(15)
+	gs.equip("leather_armor")
+
 	# 저장 라운드트립 — to→from 복원 (로드 시 allowlist 재검증)
 	var snap: Dictionary = gs.to_save_dict()
 	var gs2 := GameStateScript.new() as Node
@@ -100,6 +150,17 @@ func _initialize() -> void:
 	_check("조작 세이브: 모르는 장비 폐기", gs2.equip_level("hack_eq") == -1)
 	_check("조작 세이브: 골드는 로드", gs2.gold == 10)
 	gs2.free()
+
+	# --- 리뷰 Critical 회귀: 창고 보관 중 재제작이 equipped를 창고 아이템에 물리지 않음 ---
+	# 재료·골드를 충분히 줘도 이미 보유(가방/창고)한 장비면 제작이 막혀야 한다(막힌 제작 = no-op).
+	# 안 막으면 자동 장착이 창고 아이템을 물어 equip_level=-1 → 음수 레벨 스탯이 전투에 반영된다.
+	gs.add_gold(100)
+	gs.add_material("goblin_hide", 10)
+	gs.deposit_equipment("leather_armor")  # 창고로 이동(장착 해제)
+	_check("보유(창고)면 재료 충분해도 재제작 불가", not gs.can_craft("leather_armor"))
+	gs.craft("leather_armor")  # 막혀서 no-op이어야 함
+	_check("막힌 재제작: equipped 오염 없음(창고 아이템 안 물림)", gs.equipped_id(1) == "")
+	_check("막힌 재제작: 창고분 그대로", int(gs.storage_equipment.get("leather_armor", -1)) == 1)
 
 	gs.free()
 	if _fails == 0:

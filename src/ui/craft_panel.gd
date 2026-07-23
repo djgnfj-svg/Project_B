@@ -11,6 +11,9 @@ extends CanvasLayer
 # ⚠ UI 씬 스크립트라 전역 오토로드(GameState·EventBus·CombatMath·Audio) 직접 접근 OK
 #   (헤드리스 -s 대상 아님, rules §5). class_name 선언은 하지 않는다(서브에이전트 규칙 §0).
 
+const UiTheme := preload("res://src/ui/ui_theme.gd")
+const ItemUi := preload("res://src/ui/item_ui.gd")
+
 @onready var _close_btn: Button = %CloseBtn
 @onready var _inv_row: HBoxContainer = %InvRow
 @onready var _tabs: TabContainer = %Tabs
@@ -26,6 +29,7 @@ var _ignore_toggle: bool = false
 
 func _ready() -> void:
 	visible = false
+	$Center.theme = UiTheme.get_theme()  # 공용 픽셀 테마 (인벤/창고와 통일)
 	_close_btn.pressed.connect(close)
 	_tabs.set_tab_title(0, "제작")
 	_tabs.set_tab_title(1, "강화")
@@ -91,8 +95,10 @@ func _refresh_inv_bar() -> void:
 		var mdef := GameState.material_def(mid)
 		var cell := HBoxContainer.new()
 		cell.add_theme_constant_override("separation", 2)
+		cell.tooltip_text = ItemUi.material_tooltip(mdef, qty) if mdef != null else mid  # 아이템 상세 hover
 		cell.add_child(_make_icon(mdef.icon if mdef != null else null))
 		var lbl := Label.new()
+		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var name_txt := mdef.display_name if mdef != null else mid
 		lbl.text = "%s %d" % [name_txt, qty]
 		cell.add_child(lbl)
@@ -121,14 +127,20 @@ func _make_craft_row(rid: String, recipe: RecipeDef) -> Control:
 	row.add_theme_constant_override("separation", 8)
 
 	var result := GameState.equip_def(recipe.result_equip_id)
+	if result != null:
+		var base := CombatMath.equip_stat_at_level(result, 0)  # 제작 결과는 Lv.0
+		row.tooltip_text = ItemUi.equip_tooltip(result, 0, int(base["attack"]), int(base["hp"]))
 	row.add_child(_make_icon(result.icon if result != null else null))
 
 	var info := VBoxContainer.new()
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.mouse_filter = Control.MOUSE_FILTER_IGNORE  # 행 툴팁이 이 영역 hover에서도 뜨게 이벤트 통과
 	var name_lbl := Label.new()
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_lbl.text = result.display_name if result != null else recipe.result_equip_id
 	info.add_child(name_lbl)
 	var cost_lbl := Label.new()
+	cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cost_lbl.text = _craft_cost_text(recipe)
 	cost_lbl.add_theme_font_size_override("font_size", 10)
 	info.add_child(cost_lbl)
@@ -182,20 +194,25 @@ func _make_upgrade_row(eid: String, equip: EquipDef) -> Control:
 
 	var level := GameState.equip_level(eid)
 	var maxed := level >= equip.max_level
+	var cur0 := CombatMath.equip_stat_at_level(equip, level)
+	row.tooltip_text = ItemUi.equip_tooltip(equip, level, int(cur0["attack"]), int(cur0["hp"]))  # 아이템 상세 hover
 
 	var info := VBoxContainer.new()
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.mouse_filter = Control.MOUSE_FILTER_IGNORE  # 행 툴팁이 이 영역 hover에서도 뜨게 이벤트 통과
 	var name_lbl := Label.new()
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_lbl.text = "%s  Lv.%d/%d" % [equip.display_name, level, equip.max_level]
 	info.add_child(name_lbl)
 
-	var cur := CombatMath.equip_stat_at_level(equip, level)
 	var stat_lbl := Label.new()
-	stat_lbl.text = "공격 %d · HP %d" % [int(cur["attack"]), int(cur["hp"])]
+	stat_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	stat_lbl.text = "공격 %d · HP %d" % [int(cur0["attack"]), int(cur0["hp"])]
 	stat_lbl.add_theme_font_size_override("font_size", 10)
 	info.add_child(stat_lbl)
 
 	var prev_lbl := Label.new()
+	prev_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	prev_lbl.add_theme_font_size_override("font_size", 10)
 	if maxed:
 		prev_lbl.text = "MAX"
