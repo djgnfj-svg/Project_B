@@ -1,0 +1,67 @@
+[gd_resource type="Resource" script_class="BossDef" load_steps=13 format=3]
+
+[ext_resource type="Script" path="res://src/core/boss_def.gd" id="1"]
+[ext_resource type="Script" path="res://src/core/boss_pattern_def.gd" id="2"]
+[ext_resource type="Texture2D" path="res://assets/sprites/enemies/brute_48.png" id="3"]
+[ext_resource type="Script" path="res://src/core/drop_table.gd" id="4"]
+[ext_resource type="Script" path="res://src/core/drop_entry.gd" id="5"]
+[ext_resource type="Texture2D" path="res://assets/sprites/fx/telegraph_cone.png" id="6"]
+[ext_resource type="SpriteFrames" path="res://assets/sprites/enemies/croc_boss_frames.tres" id="7"]
+
+[sub_resource type="Resource" id="p_swing"]
+script = ExtResource("2")
+id = "swing"
+shape = "cone"
+telegraph_s = 1.0
+damage = 15
+range = 90.0
+half_angle = 0.6
+cooldown_s = 2.5
+use_min_dist = 0.0
+use_max_dist = 110.0
+min_phase = 1
+creates_swamp = false
+burst_count = 1
+telegraph_tex = ExtResource("6")
+
+[sub_resource type="Resource" id="d_gold"]
+script = ExtResource("5")
+kind = "gold"
+gold_min = 30
+gold_max = 60
+
+[sub_resource type="Resource" id="d_core"]
+script = ExtResource("5")
+kind = "material"
+ref_id = "brute_core"
+chance = 1.0
+qty_min = 1
+qty_max = 1
+
+[sub_resource type="Resource" id="d_bp"]
+script = ExtResource("5")
+kind = "blueprint"
+ref_id = "iron_greatsword"
+chance = 1.0
+
+[sub_resource type="Resource" id="d_table"]
+script = ExtResource("4")
+entries = Array[DropEntry]([SubResource("d_gold"), SubResource("d_core"), SubResource("d_bp")])
+
+[resource]
+script = ExtResource("1")
+display_name = "늪의 군주"
+max_hp = 300
+respawns = false
+sprite = ExtResource("3")
+frames = ExtResource("7")
+body_radius = 44.0
+move_speed = 35.0
+aggro_range = 400.0
+drop_table = SubResource("d_table")
+patterns = Array[BossPatternDef]([SubResource("p_swing")])
+phase2_hp_ratio = 0.5
+swamp_radius = 40.0
+swamp_slow_factor = 0.5
+swamp_ttl = 6.0
+swamp_auto_interval_p2 = 4.0

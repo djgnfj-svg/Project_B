@@ -34,6 +34,7 @@ func _ready() -> void:
 	EventBus.enemy_hp_confirmed.connect(_on_enemy_hp_confirmed)
 	EventBus.player_hp_confirmed.connect(_on_player_hp_confirmed)
 	EventBus.mob_strike.connect(_on_mob_strike)
+	EventBus.boss_strike.connect(_on_boss_strike)
 	for node: Node in get_tree().get_nodes_in_group("enemy"):
 		_register_enemy(node)
 	EventBus.peer_left.connect(func(peer_id: int) -> void:
@@ -154,6 +155,28 @@ func _on_mob_strike(eid: String, center: Vector2) -> void:
 		(p.get_node("Health") as HealthComponent).apply_damage(def.attack_damage)
 
 
+# 호스트 전용(보스 AI가 호스트에서만 emit) — 패턴 타격 판정·확정. 판정 좌표 = net_anchor (rules §3),
+# 판정 기하 = pattern.shape별(원/부채꼴, CombatMath 단일 소스 §3). "맞는 곳=보이는 곳" — 텔레그래프와 같은 range/half_angle.
+func _on_boss_strike(center: Vector2, angle: float, pattern: BossPatternDef) -> void:
+	if not Net.is_host() or _stage_over or pattern == null:
+		return
+	for node: Node in get_tree().get_nodes_in_group("player"):
+		var p := node as PlayerActor
+		if p == null or not p.is_alive():
+			continue
+		var anchor := p.net_anchor()
+		var hit := false
+		if pattern.shape == "cone":
+			hit = CombatMath.is_hit_in_cone(anchor, center, angle, pattern.half_angle, pattern.range)
+		else:
+			hit = CombatMath.is_strike_hit(anchor, center, pattern.range)
+		if not hit:
+			continue
+		if _is_iframe_active(p):
+			continue  # 구르기 무적 (GDD §11 — 잔몹/보스 공용 예고 회피)
+		(p.get_node("Health") as HealthComponent).apply_damage(pattern.damage)
+
+
 # i-frame 조회 — 호스트 자신은 로컬 구르기 상태 직접, 원격은 G_ROLL 그랜트 창 (CombatMath 단일 소스)
 func _is_iframe_active(p: PlayerActor) -> bool:
 	if p.is_local:
@@ -214,8 +237,11 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			var entry := entry_req as Dictionary
 			# 신뢰 경계(rules §3): 공격자의 job 기준 사거리 검증 + _confirm_damage의 쿨다운 게이트.
 			# 좌표는 net_anchor() — 스푸핑 클램프는 유지하되 표시 보간 지연은 검증에서 제외.
+			# 적 몸 반경 반영 — 거대 보스(radius ~48)는 중심이 멀어 표면까지로 판정 (§3, 기존 잔몹 영향 미미).
+			var reach_def := entry["def"] as EnemyDef
+			var reach_radius := reach_def.body_radius if reach_def != null else 0.0
 			if CombatMath.is_hit_in_reach(
-					attacker.net_anchor(), (entry["root"] as Node2D).global_position, attacker.job):
+					attacker.net_anchor(), (entry["root"] as Node2D).global_position, attacker.job, reach_radius):
 				_confirm_damage(entry["health"] as HealthComponent, attacker.job, from_id)
 		NetSchema.G_ENEMY_HP:
 			if Net.is_host():

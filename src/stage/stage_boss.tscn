@@ -2,8 +2,8 @@
 
 [ext_resource type="Script" path="res://src/stage/stage.gd" id="1"]
 [ext_resource type="Texture2D" path="res://assets/sprites/stage/ground_32.png" id="2"]
-[ext_resource type="PackedScene" path="res://src/enemies/mob_melee.tscn" id="3"]
-[ext_resource type="Resource" path="res://data/enemies/brute.tres" id="4"]
+[ext_resource type="PackedScene" path="res://src/enemies/boss_croc.tscn" id="3"]
+[ext_resource type="Resource" path="res://data/enemies/croc_boss.tres" id="4"]
 [ext_resource type="Script" path="res://src/net/peer_sync.gd" id="5"]
 [ext_resource type="Script" path="res://src/stage/combat_authority.gd" id="6"]
 [ext_resource type="Script" path="res://src/stage/mob_sync.gd" id="7"]
@@ -24,9 +24,9 @@ texture = ExtResource("2")
 region_enabled = true
 region_rect = Rect2(0, 0, 640, 360)
 
-[node name="Brute" parent="." instance=ExtResource("3")]
-position = Vector2(500, 180)
-eid = "brute1"
+[node name="BossCroc" parent="." instance=ExtResource("3")]
+position = Vector2(440, 180)
+eid = "boss1"
 def = ExtResource("4")
 
 [node name="PeerSync" type="Node" parent="."]
