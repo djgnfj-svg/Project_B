@@ -5,16 +5,16 @@
 
 [resource]
 script = ExtResource("1")
-id = "iron_greatsword"
-display_name = "철 대검"
-description = "묵직한 양손 대검. 느리지만 한 방이 무겁다."
+id = "worn_greatsword"
+display_name = "낡은 대검"
+description = "전사가 처음부터 쥔 손때 묻은 대검. 강화하면 쓸 만해진다."
 icon = ExtResource("2")
 slot_name = "weapon"
-base_attack = 5
+base_attack = 0
 base_hp = 0
-atk_per_level = 3
+atk_per_level = 2
 hp_per_level = 0
 max_level = 5
-upgrade_gold_base = 15
+upgrade_gold_base = 10
 weapon_texture = ExtResource("2")
 weapon_grip = Vector2(4, 8)

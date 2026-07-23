@@ -13,6 +13,7 @@ sprite = ExtResource("2")
 frames = ExtResource("3")
 weapon_texture = ExtResource("4")
 weapon_grip = Vector2(4, 8)
+starting_weapon_id = "worn_greatsword"
 move_speed = 100.0
 attack_damage = 10
 attack_range = 42.0

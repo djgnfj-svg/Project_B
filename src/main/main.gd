@@ -27,6 +27,7 @@ func _to_lobby() -> void:
 
 func _to_village() -> void:
 	GameState.leave_chapter()
+	GameState.grant_starting_loadout(GameState.selected_job())  # 새 판이면 시작 무기 지급·착용(멱등)
 	_swap(VillageScene.instantiate())
 
 
@@ -36,6 +37,7 @@ func _on_scene_change(scene_id: String) -> void:
 	match scene_id:
 		NetSchema.SCENE_VILLAGE:
 			GameState.leave_chapter()  # 귀환 = 챕터 종료 (완주·전멸 공통) — 이월 HP 리셋
+			GameState.grant_starting_loadout(GameState.selected_job())  # 전멸 롤백으로 잃었으면 재지급(멱등)
 			_swap(VillageScene.instantiate())
 		NetSchema.SCENE_STAGE:
 			var path := GameState.stage_scene_path()

@@ -25,7 +25,7 @@ grow_vertical = 2
 mouse_filter = 2
 
 [node name="Dialog" type="PanelContainer" parent="Center"]
-custom_minimum_size = Vector2(292, 300)
+custom_minimum_size = Vector2(440, 296)
 layout_mode = 2
 
 [node name="Margin" type="MarginContainer" parent="Center/Dialog"]
@@ -72,44 +72,55 @@ layout_mode = 2
 focus_mode = 0
 text = "닫기"
 
-[node name="EquipTop" type="HBoxContainer" parent="Center/Dialog/Margin/VBox"]
+[node name="Body" type="HBoxContainer" parent="Center/Dialog/Margin/VBox"]
 layout_mode = 2
+size_flags_vertical = 3
 theme_override_constants/separation = 10
 
-[node name="EquipRow" type="HBoxContainer" parent="Center/Dialog/Margin/VBox/EquipTop"]
+[node name="LeftCol" type="VBoxContainer" parent="Center/Dialog/Margin/VBox/Body"]
+custom_minimum_size = Vector2(126, 0)
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="EquipRow" type="HBoxContainer" parent="Center/Dialog/Margin/VBox/Body/LeftCol"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="StatsBox" type="PanelContainer" parent="Center/Dialog/Margin/VBox/EquipTop"]
+[node name="StatsBox" type="PanelContainer" parent="Center/Dialog/Margin/VBox/Body/LeftCol"]
 layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 4
+size_flags_vertical = 3
 
-[node name="StatsMargin" type="MarginContainer" parent="Center/Dialog/Margin/VBox/EquipTop/StatsBox"]
+[node name="StatsMargin" type="MarginContainer" parent="Center/Dialog/Margin/VBox/Body/LeftCol/StatsBox"]
 layout_mode = 2
 theme_override_constants/margin_left = 8
-theme_override_constants/margin_top = 5
+theme_override_constants/margin_top = 6
 theme_override_constants/margin_right = 8
-theme_override_constants/margin_bottom = 5
+theme_override_constants/margin_bottom = 6
 
-[node name="Stats" type="Label" parent="Center/Dialog/Margin/VBox/EquipTop/StatsBox/StatsMargin"]
+[node name="Stats" type="Label" parent="Center/Dialog/Margin/VBox/Body/LeftCol/StatsBox/StatsMargin"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_vertical = 0
 theme_override_font_sizes/font_size = 10
 text = "총 스탯"
 
-[node name="Sep" type="HSeparator" parent="Center/Dialog/Margin/VBox"]
+[node name="VSep" type="VSeparator" parent="Center/Dialog/Margin/VBox/Body"]
 layout_mode = 2
 
-[node name="Scroll" type="ScrollContainer" parent="Center/Dialog/Margin/VBox"]
-custom_minimum_size = Vector2(240, 200)
+[node name="RightCol" type="VBoxContainer" parent="Center/Dialog/Margin/VBox/Body"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="Scroll" type="ScrollContainer" parent="Center/Dialog/Margin/VBox/Body/RightCol"]
+custom_minimum_size = Vector2(240, 210)
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
-[node name="BagGrid" type="GridContainer" parent="Center/Dialog/Margin/VBox/Scroll"]
+[node name="BagGrid" type="GridContainer" parent="Center/Dialog/Margin/VBox/Body/RightCol/Scroll"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3

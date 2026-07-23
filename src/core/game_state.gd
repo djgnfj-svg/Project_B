@@ -371,6 +371,19 @@ func unequip(slot: int) -> void:
 		_notify_inventory()
 
 
+# 새 게임 기본 지급 — 직업의 시작 무기를 지급·착용. 멱등: 이미 보유(가방/창고)면 스킵.
+# 세이브 로드 후(마을 진입 시) 부른다 → 신규 판만 지급, 로드한 판은 플레이어의 착용/보관 상태를 존중.
+func grant_starting_loadout(job: JobDef) -> void:
+	if job == null or job.starting_weapon_id.is_empty():
+		return
+	var wid := job.starting_weapon_id
+	if owned_equipment.has(wid) or storage_equipment.has(wid):
+		return  # 이미 가졌던 무기 — 재지급·강제 재장착 안 함
+	add_equipment(wid)  # allowlist 통과분만 추가
+	if owned_equipment.has(wid) and equipped_id(EquipDef.SLOT_WEAPON).is_empty():
+		equip(wid)
+
+
 # 착용 장비 → [[EquipDef, level], …] (CombatMath.total_stats 입력)
 func equipped_defs() -> Array:
 	var out: Array = []
