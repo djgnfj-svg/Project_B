@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://src/ui/inventory_panel.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/items/gold.png" id="2"]
 
 [node name="InventoryPanel" type="CanvasLayer"]
 layer = 11
@@ -13,7 +14,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0, 0, 0, 0.5)
+color = Color(0, 0, 0, 0.55)
 
 [node name="Center" type="CenterContainer" parent="."]
 anchors_preset = 15
@@ -24,14 +25,14 @@ grow_vertical = 2
 mouse_filter = 2
 
 [node name="Dialog" type="PanelContainer" parent="Center"]
-custom_minimum_size = Vector2(360, 300)
+custom_minimum_size = Vector2(474, 300)
 layout_mode = 2
 
 [node name="Margin" type="MarginContainer" parent="Center/Dialog"]
 layout_mode = 2
-theme_override_constants/margin_left = 14
+theme_override_constants/margin_left = 12
 theme_override_constants/margin_top = 10
-theme_override_constants/margin_right = 14
+theme_override_constants/margin_right = 12
 theme_override_constants/margin_bottom = 10
 
 [node name="VBox" type="VBoxContainer" parent="Center/Dialog/Margin"]
@@ -40,51 +41,101 @@ theme_override_constants/separation = 8
 
 [node name="TitleRow" type="HBoxContainer" parent="Center/Dialog/Margin/VBox"]
 layout_mode = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 6
 
 [node name="Title" type="Label" parent="Center/Dialog/Margin/VBox/TitleRow"]
 layout_mode = 2
 size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 13
+theme_override_colors/font_color = Color(0.31, 0.72, 0.86, 1)
 text = "인벤토리"
+
+[node name="GoldIcon" type="TextureRect" parent="Center/Dialog/Margin/VBox/TitleRow"]
+custom_minimum_size = Vector2(14, 14)
+layout_mode = 2
+size_flags_vertical = 4
+texture = ExtResource("2")
+stretch_mode = 5
+
+[node name="Gold" type="Label" parent="Center/Dialog/Margin/VBox/TitleRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(48, 0)
+layout_mode = 2
+size_flags_vertical = 4
+theme_override_colors/font_color = Color(1, 0.82, 0.3, 1)
+text = "0"
 
 [node name="CloseBtn" type="Button" parent="Center/Dialog/Margin/VBox/TitleRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(56, 0)
+custom_minimum_size = Vector2(52, 0)
 layout_mode = 2
 focus_mode = 0
 text = "닫기"
 
-[node name="Scroll" type="ScrollContainer" parent="Center/Dialog/Margin/VBox"]
-custom_minimum_size = Vector2(0, 230)
+[node name="Body" type="HBoxContainer" parent="Center/Dialog/Margin/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 10
+
+[node name="LeftCol" type="VBoxContainer" parent="Center/Dialog/Margin/VBox/Body"]
+custom_minimum_size = Vector2(148, 0)
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="EquipHeader" type="Label" parent="Center/Dialog/Margin/VBox/Body/LeftCol"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+theme_override_colors/font_color = Color(0.31, 0.72, 0.86, 1)
+text = "장비"
+
+[node name="EquipRow" type="HBoxContainer" parent="Center/Dialog/Margin/VBox/Body/LeftCol"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="StatsBox" type="PanelContainer" parent="Center/Dialog/Margin/VBox/Body/LeftCol"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="StatsMargin" type="MarginContainer" parent="Center/Dialog/Margin/VBox/Body/LeftCol/StatsBox"]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 6
+
+[node name="Stats" type="Label" parent="Center/Dialog/Margin/VBox/Body/LeftCol/StatsBox/StatsMargin"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 10
+text = "총 스탯"
+
+[node name="VSep" type="VSeparator" parent="Center/Dialog/Margin/VBox/Body"]
+layout_mode = 2
+
+[node name="RightCol" type="VBoxContainer" parent="Center/Dialog/Margin/VBox/Body"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="BagHeader" type="Label" parent="Center/Dialog/Margin/VBox/Body/RightCol"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+theme_override_colors/font_color = Color(0.31, 0.72, 0.86, 1)
+text = "가방"
+
+[node name="Scroll" type="ScrollContainer" parent="Center/Dialog/Margin/VBox/Body/RightCol"]
+custom_minimum_size = Vector2(240, 210)
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
-[node name="Content" type="VBoxContainer" parent="Center/Dialog/Margin/VBox/Scroll"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-
-[node name="MatHeader" type="Label" parent="Center/Dialog/Margin/VBox/Scroll/Content"]
-layout_mode = 2
-text = "재료"
-
-[node name="MatList" type="VBoxContainer" parent="Center/Dialog/Margin/VBox/Scroll/Content"]
+[node name="BagGrid" type="GridContainer" parent="Center/Dialog/Margin/VBox/Body/RightCol/Scroll"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_constants/separation = 4
-
-[node name="Sep" type="HSeparator" parent="Center/Dialog/Margin/VBox/Scroll/Content"]
-layout_mode = 2
-
-[node name="EquipHeader" type="Label" parent="Center/Dialog/Margin/VBox/Scroll/Content"]
-layout_mode = 2
-text = "장비"
-
-[node name="EquipList" type="VBoxContainer" parent="Center/Dialog/Margin/VBox/Scroll/Content"]
-unique_name_in_owner = true
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
+theme_override_constants/h_separation = 4
+theme_override_constants/v_separation = 4
+columns = 6

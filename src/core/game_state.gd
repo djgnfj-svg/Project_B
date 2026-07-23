@@ -364,6 +364,13 @@ func equipped_id(slot: int) -> String:
 	return str(equipped.get(slot, ""))
 
 
+# 장착 해제 — 그 슬롯을 비운다(장비는 이미 가방(owned)에 있으므로 슬롯만 지우면 됨).
+func unequip(slot: int) -> void:
+	if equipped.has(slot):
+		equipped.erase(slot)
+		_notify_inventory()
+
+
 # 착용 장비 → [[EquipDef, level], …] (CombatMath.total_stats 입력)
 func equipped_defs() -> Array:
 	var out: Array = []
