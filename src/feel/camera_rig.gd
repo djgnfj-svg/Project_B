@@ -20,6 +20,16 @@ func _ready() -> void:
 	position_smoothing_speed = SMOOTH_SPEED
 	EventBus.combat_impact.connect(_on_impact)
 	EventBus.screen_shake.connect(add_shake)
+	# 씬 루트가 map_rect 메타를 선언하면 맵 경계로 클램프 — 맵 밖(공허)이 안 보이게.
+	# 각 씬은 _ready에서 set_meta("map_rect", Rect2(...)) 한 줄만 선언한다 (복붙 배선 방지).
+	# ⚠ current_scene은 못 쓴다 — main의 씬 스왑이 수동 add_child라 항상 부팅 씬(Main)이다.
+	#   대신 조상 체인을 올라가며 메타를 찾는다 (플레이어 → 씬 루트 → Main 순).
+	var n: Node = get_parent()
+	while n != null:
+		if n.has_meta("map_rect"):
+			set_limits(n.get_meta("map_rect") as Rect2)
+			break
+		n = n.get_parent()
 
 
 func _on_impact(kind: String, _world_pos: Vector2, _amount: int) -> void:
@@ -28,6 +38,15 @@ func _on_impact(kind: String, _world_pos: Vector2, _amount: int) -> void:
 
 func add_shake(strength: float) -> void:
 	_shake = minf(SHAKE_MAX, _shake + strength)
+
+
+# 맵 경계 클램프 — 씬(마을 등)이 스폰 후 호출해 카메라가 맵 밖(공허)을 못 보게 한다.
+# 맵이 뷰포트(640×360)보다 큰 씬에서만 의미 있다 — 미호출 시 기본(무제한) 유지.
+func set_limits(rect: Rect2) -> void:
+	limit_left = int(rect.position.x)
+	limit_top = int(rect.position.y)
+	limit_right = int(rect.end.x)
+	limit_bottom = int(rect.end.y)
 
 
 func _process(delta: float) -> void:

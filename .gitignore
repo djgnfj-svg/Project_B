@@ -31,3 +31,9 @@ server/game-worker/public/
 .wrangler/
 **/.wrangler/
 _holdout/
+
+# 외부 레퍼런스 이미지 (저작권 — 커밋 금지, 로컬 참고용)
+assets/sprites/_refs/
+assets/sprites/**/_ref*
+# 검수용 임시 산출물
+.tmp/

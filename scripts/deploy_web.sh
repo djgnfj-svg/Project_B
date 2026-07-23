@@ -21,6 +21,7 @@ fi
 
 # Godot 헤드리스 익스포트는 실패해도 exit 0인 사례가 있어 산출물 신선도로 판정한다
 STAMP=$(mktemp)
+mkdir -p build/web  # 클론 직후엔 없다(gitignore) — 없으면 익스포트가 "대상 폴더 없음"으로 죽는다 (b-hy 첫 배포에서 발견)
 "$GODOT" --headless --path . --export-release "Web" build/web/index.html
 for f in build/web/index.wasm build/web/index.pck; do
 	if [[ ! -s "$f" || ! "$f" -nt "$STAMP" ]]; then

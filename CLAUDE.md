@@ -42,7 +42,7 @@
 - 친구 사전 준비(1회): Godot 4.7.1을 레포 루트에 다운로드 + 웹 익스포트 템플릿 설치 + `npx wrangler login`(무료 계정). `export_presets.cfg`는 커밋돼 있어 클론만으로 익스포트 가능.
 - 릴레이는 친구가 배포하지 않는다 — 공용 `wss://relay.jachana.com`이 클라이언트 기본값(`Net.DEFAULT_RELAY_URL`)이라 workers.dev 임시배포·네이티브 클론 실행 모두 `?relay=` 없이 바로 붙는다. (릴레이 배포 = djgnfj 전용, `server/relay-worker`.)
 - djgnfj는 친구가 보낸 workers.dev 링크(`…?host`)를 브라우저로 열기만 하면 됨 — 로컬 설치·실행 불필요. 심사위원은 README.md의 "바로 플레이/클론해서 실행" 참조.
-- ⚠ **미검증 1건:** 외부 계정 → workers.dev 분기는 아직 실기로 안 돌았다(djgnfj 계정뿐이라 검증 불가). **친구(b-hy\*)의 첫 배포가 이 분기의 실기 검증이다** — 성공하면 이 줄을 지운다. 친구가 Cloudflare 계정이 없으면 그때 무료 가입(이메일만, 카드 불필요) 후 `npx wrangler login`.
+- ✅ workers.dev 분기 실기 검증 완료 (2026-07-23, b-hy 첫 배포 성공 → `https://projectb-game.youqlrqod.workers.dev`). 이때 발견한 함정 2건을 해소함: 웹 익스포트 템플릿 미설치(→ 설치 완료), `build/web` 폴더 부재로 익스포트 실패(→ deploy_web.sh에 `mkdir -p` 추가).
 
 **커밋 규약:**
 - **메시지는 한국어로 쓴다.** (요약 줄 + 필요 시 본문. 트레일러 `Co-Authored-By`·`Claude-Session`은 형식이라 그대로 영어로 붙인다.)

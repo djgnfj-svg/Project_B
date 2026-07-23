@@ -9,3 +9,5 @@ const PeerSyncNode := preload("res://src/net/peer_sync.gd")
 
 func _ready() -> void:
 	($PeerSync as PeerSyncNode).scene_id = GameState.stage_token()
+	# 카메라 맵 클램프 (camera_rig가 읽음) — 스테이지 바닥 = 640×360 (stage_*.tscn Ground 미러)
+	set_meta("map_rect", Rect2(0, 0, 640, 360))

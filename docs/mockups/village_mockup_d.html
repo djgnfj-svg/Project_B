@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Project_B 마을 목업 D안 — 밝은 카툰 포레스트</title>
+<style>
+  body { background:#221f26; color:#e8e2d0; font-family:monospace; display:flex; flex-direction:column; align-items:center; gap:10px; padding:20px; }
+  h1 { font-size:16px; margin:8px 0 0; }
+  canvas { image-rendering:pixelated; width:1280px; height:768px; border:4px solid #14100f; }
+  .legend { font-size:13px; line-height:1.7; max-width:1280px; }
+  .legend b { color:#f0c04a; }
+</style>
+</head>
+<body>
+<h1>D안 — 밝은 카툰 포레스트 · 돌 유적 담장 (핀터레스트 레퍼런스 스타일)</h1>
+<canvas id="d" width="640" height="384"></canvas>
+<div class="legend">
+  <b>의도:</b> 레퍼런스의 밝은 라임그린 + 카툰 광택 나무 + <b>돌무더기 유적 담장</b> 스타일.
+  길 대신 <b>둥근 흙 공터</b>들이 동선을 만든다(스폰 공터 → 중앙 광장 → 게이트 앞 돌계단).
+  북쪽 건물들은 돌담이 반쯤 감싸고, 표지판·그루터기·통나무·자갈로 밀도를 채움. 침엽수+활엽수 혼합 숲 테두리.
+</div>
+<script>
+const ctx = document.getElementById('d').getContext('2d');
+const PAL = {
+  grass:'#7cc24e', grassD:'#69ad3f', grassL:'#8ed45f', tuft:'#57a035',
+  dirt:'#c9a06b', dirtD:'#b3854f', dirtEdge:'#9a7040',
+  rock:'#aeb6b8', rockL:'#cfd6d6', rockD:'#7e8688',
+  wall:'#e8dcc0', wallD:'#c2b494', timber:'#7a5535',
+  roofA:'#d4713f', roofAD:'#b05528', roofB:'#8f6bc2', roofBD:'#7050a0', roofC:'#5fa848', roofCD:'#468534',
+  trunk:'#7a4f2e', leafD:'#3e8f3c', leaf:'#57b04b', leafL:'#7ed060', gloss:'#a5e57e',
+  pineD:'#2e7d46', pine:'#3f9458', pineL:'#5cb06e',
+  wood:'#8a5f3a', woodL:'#a87c4f',
+  outline:'#3a3f37', win:'#f5d878', warm:'#ffb45e', fire:'#e8863c', water:'#5b98c9'
+};
+function seed(x,y){ let n=(Math.floor(x)*73856093)^(Math.floor(y)*19349663); n=(n<<13)^n; return ((n*(n*n*15731+789221)+1376312589)&0x7fffffff)/0x7fffffff; }
+const px=(x,y,w,h,c)=>{ ctx.fillStyle=c; ctx.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h)); };
+
+// ── 1. 밝은 잔디 + 풀포기·자갈
+for(let ty=0;ty<12;ty++) for(let tx=0;tx<20;tx++){
+  px(tx*32,ty*32,32,32,PAL.grass);
+  const r=seed(tx,ty);
+  if(r<0.35){ px(tx*32+7,ty*32+9,4,2,PAL.grassD); px(tx*32+21,ty*32+23,4,2,PAL.grassD); }
+  if(r>0.62){ px(tx*32+14,ty*32+5,3,4,PAL.grassL); }
+  if(r>0.80){ px(tx*32+8,ty*32+18,2,5,PAL.tuft); px(tx*32+10,ty*32+17,2,6,PAL.tuft); px(tx*32+12,ty*32+18,2,5,PAL.tuft); } // 풀포기
+  if(r>0.55&&r<0.60){ px(tx*32+20,ty*32+12,5,4,PAL.rock); px(tx*32+21,ty*32+13,3,2,PAL.rockL); } // 자갈
+}
+
+// ── 2. 둥근 흙 공터 (레퍼런스식 — 밝은 잔디 립 + 어두운 테두리)
+function dirtPatch(x,y,w,h){
+  const r=14;
+  function blob(ox,oy,ow,oh,c){
+    px(ox+r,oy,ow-r*2,oh,c); px(ox,oy+r,ow,oh-r*2,c);
+    [[ox+r,oy+r],[ox+ow-r,oy+r],[ox+r,oy+oh-r],[ox+ow-r,oy+oh-r]].forEach(([cx,cy])=>{
+      for(let yy=-r;yy<=r;yy+=2){ const ww=Math.floor(r*Math.sqrt(Math.max(0,1-(yy/r)*(yy/r))));
+        px(cx-ww,cy+yy,ww*2,2,c); } });
+  }
+  blob(x-3,y-3,w+6,h+6,PAL.grassL);   // 잔디 립
+  blob(x-1,y-1,w+2,h+2,PAL.dirtEdge); // 어두운 테두리
+  blob(x,y,w,h,PAL.dirt);
+  for(let i=0;i<Math.floor(w*h/900);i++){ const dx=x+8+seed(i,x)*(w-16), dy=y+8+seed(y,i)*(h-16);
+    if(seed(dx,dy)<0.5) px(dx,dy,6,3,PAL.dirtD); else px(dx,dy,4,3,'#d9b487'); }
+}
+dirtPatch(30,270,150,84);   // 스폰 공터 (좌하)
+dirtPatch(240,150,190,110); // 중앙 광장
+dirtPatch(500,140,120,90);  // 게이트 앞 공터 (우)
+dirtPatch(60,90,90,54);     // 제작소 앞
+dirtPatch(430,60,80,50);    // 강화소 앞
+// 공터 연결 좁은 흙길
+function dirtLink(x0,y0,x1,y1){ const steps=Math.ceil(Math.hypot(x1-x0,y1-y0)/4);
+  for(let i=0;i<=steps;i++){ const t=i/steps, x=x0+(x1-x0)*t, y=y0+(y1-y0)*t;
+    px(x-8,y-6,16,12,PAL.dirt); if(seed(x,y)>0.6) px(x-4,y-2,6,3,PAL.dirtD); } }
+dirtLink(160,300,260,240); dirtLink(420,200,510,185); dirtLink(120,140,150,120); dirtLink(300,150,310,120); dirtLink(470,105,500,140);
+
+// ── 3. 돌무더기 유적 담장 (레퍼런스 핵심 요소)
+function rockWall(pts){
+  for(let s=0;s<pts.length-1;s++){
+    const [x0,y0]=pts[s], [x1,y1]=pts[s+1];
+    const steps=Math.ceil(Math.hypot(x1-x0,y1-y0)/13);
+    for(let i=0;i<=steps;i++){
+      const t=i/steps, x=x0+(x1-x0)*t+seed(i,s)*4-2, y=y0+(y1-y0)*t+seed(s,i)*4-2;
+      const w=12+seed(x,y)*6, h=9+seed(y,x)*4;
+      px(x-w/2-1,y-h/2-1,w+2,h+2,PAL.outline);
+      px(x-w/2,y-h/2,w,h,PAL.rock);
+      px(x-w/2+2,y-h/2+1,w*0.45,h*0.4,PAL.rockL);
+      px(x-w/2+1,y+h/2-3,w-2,2,PAL.rockD);
+    }
+  }
+}
+rockWall([[20,60],[150,52],[210,58]]);            // 북서 담장 (제작소 뒤)
+rockWall([[210,58],[218,120]]);                    // ㄱ자 꺾임
+rockWall([[390,50],[470,44],[560,52]]);            // 북동 담장 (강화소 뒤)
+rockWall([[20,180],[24,250]]);                     // 좌측 짧은 담장 (스폰 위)
+rockWall([[600,240],[608,320]]);                   // 우하 담장 조각 (유적 느낌)
+
+// ── 4. 돌계단 (게이트 진입로 — 레퍼런스의 계단 요소)
+(function(){ const x=560, y=158;
+  px(x-4,y-4,52,60,PAL.outline);
+  for(let i=0;i<6;i++){ px(x,y+i*9,44,7,i%2?PAL.rock:PAL.rockL); px(x,y+i*9+6,44,2,PAL.rockD); }
+})();
+
+// ── 5. 건물 3채 (밝은 톤)
+function house(x,y,wpx,roof,roofD,label){
+  px(x-2,y+22,wpx+4,30,PAL.outline); px(x,y+24,wpx,26,PAL.wall); px(x,y+42,wpx,8,PAL.wallD);
+  for(let i=0;i<Math.floor(wpx/32);i++) px(x+i*32+2,y+24,3,26,PAL.timber);
+  const rows=[[10,0],[6,4],[3,10],[1,16]];
+  px(x-8,y-14,wpx+16,40,PAL.outline);
+  rows.forEach(([inset,dy],i)=>{ px(x-8+inset,y-12+dy,wpx+16-inset*2,i<3?8:22,i<2?roofD:roof); });
+  px(x-8,y+20,wpx+16,4,PAL.outline);
+  px(x+wpx-14,y-20,10,14,PAL.outline); px(x+wpx-12,y-18,6,10,PAL.rock);
+  const dx=x+wpx/2-8; px(dx-2,y+30,20,22,PAL.outline); px(dx,y+32,16,20,PAL.timber);
+  px(x+8,y+28,13,11,PAL.outline); px(x+10,y+30,9,7,PAL.win);
+  px(x+wpx-21,y+28,13,11,PAL.outline); px(x+wpx-19,y+30,9,7,PAL.win);
+}
+house(60,28,96,PAL.roofA,PAL.roofAD);
+house(420,10,96,PAL.roofB,PAL.roofBD);
+house(180,180,80,PAL.roofC,PAL.roofCD); // 창고는 광장 옆
+
+// ── 6. 카툰 광택 나무 (블롭 2덩이 + 글로스) & 침엽수
+function tree(x,y,s){
+  px(x+13*s,y+18*s,7*s,14*s,PAL.trunk); px(x+15*s,y+22*s,3*s,6*s,'#93683f');
+  function lump(ox,oy,w,h){
+    px(ox-2,oy-2,w+4,h+4,PAL.outline);
+    px(ox,oy,w,h,PAL.leafD); px(ox+2,oy+2,w-4,h*0.6,PAL.leaf);
+  }
+  lump(x-2*s,y+2*s,18*s,16*s); lump(x+12*s,y+1*s,20*s,18*s); lump(x+4*s,y-8*s,22*s,17*s);
+  px(x+8*s,y-5*s,10*s,6*s,PAL.leafL); px(x+11*s,y-3*s,5*s,3*s,PAL.gloss);
+  px(x+18*s,y+5*s,8*s,5*s,PAL.leafL);
+}
+function pine(x,y,s){
+  px(x+9*s,y+26*s,6*s,8*s,PAL.trunk);
+  [[0,18,24,10],[3,10,18,10],[6,2,12,10],[9,-5,6,9]].forEach(([ox,oy,w,h])=>{
+    px(x+ox*s-2,y+oy*s-2,w*s+4,h*s+4,PAL.outline);
+    px(x+ox*s,y+oy*s,w*s,h*s,PAL.pineD);
+    px(x+ox*s+2,y+oy*s+1,w*s*0.5,h*s*0.5,PAL.pine);
+    px(x+ox*s+3,y+oy*s+1,w*s*0.25,h*s*0.35,PAL.pineL);
+  });
+}
+// 숲 테두리 — 활엽수+침엽수 혼합 (스폰 좌하·게이트 우중은 뚫음)
+const openings=[{x0:0,y0:250,x1:200,y1:384},{x0:585,y0:130,x1:640,y1:240}];
+const border=[];
+for(let x=-10;x<650;x+=44){ border.push([x+seed(x,1)*16,-16+seed(x,2)*12,'t']); border.push([x+20+seed(x,3)*16,336+seed(x,4)*12, seed(x,9)>0.6?'p':'t']); }
+for(let y=10;y<380;y+=42){ border.push([-14+seed(1,y)*12,y,'t']); border.push([600+seed(3,y)*18,y, seed(y,9)>0.5?'p':'t']); }
+border.forEach(([bx,by,kind])=>{
+  if(openings.some(o=>bx+14>o.x0&&bx+14<o.x1&&by+14>o.y0&&by+14<o.y1)) return;
+  kind==='p'?pine(bx,by,1):tree(bx,by,seed(bx,by)>0.5?1:0.8);
+});
+// 안쪽 나무·침엽수 포인트
+tree(300,290,1); pine(480,270,1.1); tree(560,60,0.8); pine(240,90,0.9);
+
+// ── 7. 소품 — 표지판·그루터기·통나무·모닥불
+function signpost(x,y,dir){ // dir: 1 오른쪽 화살, -1 왼쪽
+  px(x+4,y-2,5,22,PAL.outline); px(x+5,y-1,3,20,PAL.wood);
+  px(x-8,y-14,29,10,PAL.outline); px(x-6,y-12,25,6,PAL.woodL);
+  px(dir>0?x+19:x-10,y-11,4,4,PAL.outline); // 화살촉 힌트
+  px(x-8,y-26,29,10,PAL.outline); px(x-6,y-24,25,6,PAL.wood);
+}
+function stump(x,y){ px(x-1,y-1,16,12,PAL.outline); px(x,y,14,10,PAL.trunk); px(x+2,y+1,10,6,PAL.woodL); px(x+4,y+3,5,3,PAL.wood); }
+function log(x,y){ px(x-1,y-1,34,12,PAL.outline); px(x,y,32,10,PAL.trunk); px(x+1,y+2,30,3,PAL.woodL); px(x+28,y+1,4,8,PAL.woodL); }
+function campfire(cx,cy){
+  for(let a=0;a<8;a++){ const x=cx+Math.cos(a/8*6.283)*19, y=cy+Math.sin(a/8*6.283)*12;
+    px(x-4,y-3,9,7,PAL.outline); px(x-3,y-2,7,5,PAL.rock); }
+  px(cx-8,cy-2,16,6,PAL.trunk);
+  px(cx-5,cy-10,10,10,PAL.outline); px(cx-4,cy-9,8,8,PAL.fire); px(cx-2,cy-13,4,6,'#f5c95e');
+  const g=ctx.createRadialGradient(cx,cy-6,2,cx,cy-6,38);
+  g.addColorStop(0,'rgba(255,180,94,0.32)'); g.addColorStop(1,'rgba(255,180,94,0)');
+  ctx.fillStyle=g; ctx.fillRect(cx-38,cy-44,76,76);
+}
+signpost(150,315,1);  // 스폰 공터 — 게이트 방향
+signpost(330,140,1);  // 광장 위 — 게이트 방향
+stump(260,300); stump(90,200); log(340,300); log(520,260);
+campfire(335,205);    // 중앙 광장 모닥불
+// 우물 (광장 구석)
+(function(){ const x=380,y=170; px(x-2,y-2,40,28,PAL.outline); px(x,y,36,24,PAL.rock);
+  px(x+5,y+5,26,14,PAL.outline); px(x+7,y+7,22,10,PAL.water); px(x+10,y+9,8,2,'#8ac0e0'); })();
+
+// ── 8. 게이트 (우측, 계단 위)
+(function(){ const gx=598,gy=170;
+  [[gx,gy-46],[gx,gy+18]].forEach(([x,y])=>{ px(x-2,y-2,20,50,PAL.outline); px(x,y,16,46,PAL.rock); px(x+3,y+4,5,38,PAL.rockD); });
+  px(gx-6,gy-56,34,14,PAL.outline); px(gx-4,gy-54,30,10,PAL.rock);
+})();
+
+// ── 9. 간판·마커 (맨 위)
+function tag(x,y,label){ ctx.fillStyle='#2a2e28'; ctx.fillRect(x-26,y,52,14);
+  ctx.fillStyle='#f0e6c8'; ctx.font='bold 11px monospace'; ctx.textAlign='center'; ctx.fillText(label,x,y+11); }
+tag(108,0,'제작소'); tag(468,34,'강화소'); tag(220,152,'창고');
+ctx.fillStyle='#2a2e28'; ctx.fillRect(505,235,104,14);
+ctx.fillStyle='#f0e6c8'; ctx.font='bold 11px monospace'; ctx.fillText('출발 게이트 (F)',557,246);
+(function(){ const x=70,y=300; tag(x+8,y+24,'스폰');
+  px(x,y-2,18,18,PAL.outline); px(x+2,y,14,14,'#597dce'); px(x+5,y-7,9,8,PAL.outline); px(x+6,y-6,7,6,'#d2aa99'); })();
+</script>
+</body>
+</html>
