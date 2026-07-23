@@ -27,6 +27,13 @@ var unlocked_blueprints: Dictionary = {}  # recipe_id(String) -> true
 var owned_equipment: Dictionary = {}      # equip_id(String) -> level(int, 0=미강화)
 var equipped: Dictionary = {}             # slot(int, EquipDef.SLOT_*) -> equip_id(String)
 
+# --- 창고 (개인·로컬, 비네트워크 — 마을 보관함, GDD §3·§6 사용자 확정: 공유 아님) ---
+# 인벤과 대칭 컨테이너다. 넣기/빼기는 로컬 GameState 조작뿐(네트워크 0개) — 저장은 인벤과 함께 IndexedDB.
+# 창고 장비는 착용 불가(예치 시 해제) — 장착은 가방(owned_equipment)에서만.
+var storage_gold: int = 0
+var storage_materials: Dictionary = {}    # mat_id(String) -> qty(int)
+var storage_equipment: Dictionary = {}    # equip_id(String) -> level(int)
+
 
 # 직업 id 목록 — data/jobs/*.tres 파일명에서 유도. 하드코딩 금지: "새 직업 = 파일 한 장" (rules §4).
 # 익스포트 pck에선 .tres가 .remap(바이너리 변환 리맵)으로 보일 수 있어 접미사를 벗겨 판별한다.
@@ -287,6 +294,9 @@ func can_craft(recipe_id: String) -> bool:
 	var r := recipe_def(recipe_id)
 	if r == null or not has_blueprint(recipe_id):
 		return false
+	# 이미 보유(가방/창고)한 장비는 재제작 불가 — 장비는 id당 1개(중복 제작이 재료만 태우는 걸 차단).
+	if owned_equipment.has(r.result_equip_id) or storage_equipment.has(r.result_equip_id):
+		return false
 	return gold >= r.gold_cost and has_materials(r.material_costs)
 
 
@@ -298,8 +308,9 @@ func craft(recipe_id: String) -> bool:
 	_spend_materials(r.material_costs)
 	add_equipment(r.result_equip_id)
 	# 슬롯이 비어 있으면 자동 장착 — 첫 제작이 바로 효과나게 (QoL). 재장착은 패널에서.
+	# ⚠ 반드시 가방 보유(owned) 확인 — 창고에만 있는 아이템에 equipped를 물리면 음수 레벨 스탯이 된다(방어).
 	var e := equip_def(r.result_equip_id)
-	if e != null and equipped_id(e.slot()).is_empty():
+	if e != null and owned_equipment.has(r.result_equip_id) and equipped_id(e.slot()).is_empty():
 		equipped[e.slot()] = r.result_equip_id
 	_notify_inventory()
 	return true
@@ -309,7 +320,8 @@ func add_equipment(equip_id: String) -> void:
 	if equip_id not in equipment_ids():  # allowlist
 		push_warning("[GameState] 모르는 장비 id '%s'" % equip_id)
 		return
-	if not owned_equipment.has(equip_id):
+	# 가방·창고 어디에도 없을 때만 신규 생성 — 장비는 id당 1개(중복 생성 방지, 창고 대칭 도입).
+	if not owned_equipment.has(equip_id) and not storage_equipment.has(equip_id):
 		owned_equipment[equip_id] = 0  # 레벨 0 = 미강화
 	_notify_inventory()
 
@@ -352,6 +364,26 @@ func equipped_id(slot: int) -> String:
 	return str(equipped.get(slot, ""))
 
 
+# 장착 해제 — 그 슬롯을 비운다(장비는 이미 가방(owned)에 있으므로 슬롯만 지우면 됨).
+func unequip(slot: int) -> void:
+	if equipped.has(slot):
+		equipped.erase(slot)
+		_notify_inventory()
+
+
+# 새 게임 기본 지급 — 직업의 시작 무기를 지급·착용. 멱등: 이미 보유(가방/창고)면 스킵.
+# 세이브 로드 후(마을 진입 시) 부른다 → 신규 판만 지급, 로드한 판은 플레이어의 착용/보관 상태를 존중.
+func grant_starting_loadout(job: JobDef) -> void:
+	if job == null or job.starting_weapon_id.is_empty():
+		return
+	var wid := job.starting_weapon_id
+	if owned_equipment.has(wid) or storage_equipment.has(wid):
+		return  # 이미 가졌던 무기 — 재지급·강제 재장착 안 함
+	add_equipment(wid)  # allowlist 통과분만 추가
+	if owned_equipment.has(wid) and equipped_id(EquipDef.SLOT_WEAPON).is_empty():
+		equip(wid)
+
+
 # 착용 장비 → [[EquipDef, level], …] (CombatMath.total_stats 입력)
 func equipped_defs() -> Array:
 	var out: Array = []
@@ -383,6 +415,80 @@ func max_equip_stats() -> Dictionary:
 	return {"attack": atk, "hp": hp}
 
 
+# --- 창고 넣기/빼기 (각 클라 로컬 — 네트워크 0개, inventory_changed로 UI 갱신) ---
+# 전부 clampi로 보유량 상한을 강제 → 음수/초과 이동 없음. 재료·창고는 0이 되면 키를 지워 표시 정돈.
+
+func storage_material_count(id: String) -> int:
+	return int(storage_materials.get(id, 0))
+
+
+func deposit_gold(amount: int) -> void:
+	var a := clampi(amount, 0, gold)
+	if a <= 0:
+		return
+	gold -= a
+	storage_gold += a
+	_notify_inventory()
+
+
+func withdraw_gold(amount: int) -> void:
+	var a := clampi(amount, 0, storage_gold)
+	if a <= 0:
+		return
+	storage_gold -= a
+	gold += a
+	_notify_inventory()
+
+
+func deposit_material(id: String, qty: int) -> void:
+	var a := clampi(qty, 0, material_count(id))
+	if a <= 0:
+		return
+	var left := material_count(id) - a
+	if left <= 0:
+		materials.erase(id)
+	else:
+		materials[id] = left
+	storage_materials[id] = storage_material_count(id) + a
+	_notify_inventory()
+
+
+func withdraw_material(id: String, qty: int) -> void:
+	var a := clampi(qty, 0, storage_material_count(id))
+	if a <= 0:
+		return
+	var left := storage_material_count(id) - a
+	if left <= 0:
+		storage_materials.erase(id)
+	else:
+		storage_materials[id] = left
+	materials[id] = material_count(id) + a
+	_notify_inventory()
+
+
+# 장비 예치 — 장착 중이면 먼저 해제(창고 장비는 착용 불가). 레벨은 그대로 따라간다.
+func deposit_equipment(equip_id: String) -> void:
+	if not owned_equipment.has(equip_id):
+		return
+	var lv := int(owned_equipment[equip_id])
+	var e := equip_def(equip_id)
+	if e != null and equipped_id(e.slot()) == equip_id:
+		equipped.erase(e.slot())
+	owned_equipment.erase(equip_id)
+	storage_equipment[equip_id] = lv
+	_notify_inventory()
+
+
+# 장비 회수 — 가방으로 되돌린다(자동 장착 안 함, 장착은 패널에서).
+func withdraw_equipment(equip_id: String) -> void:
+	if not storage_equipment.has(equip_id):
+		return
+	var lv := int(storage_equipment[equip_id])
+	storage_equipment.erase(equip_id)
+	owned_equipment[equip_id] = lv
+	_notify_inventory()
+
+
 # --- 저장 직렬화 (SaveManager가 부른다) ---
 
 func clear_inventory() -> void:
@@ -391,6 +497,9 @@ func clear_inventory() -> void:
 	unlocked_blueprints.clear()
 	owned_equipment.clear()
 	equipped.clear()
+	storage_gold = 0
+	storage_materials.clear()
+	storage_equipment.clear()
 
 
 func to_save_dict() -> Dictionary:
@@ -400,6 +509,9 @@ func to_save_dict() -> Dictionary:
 		"blueprints": unlocked_blueprints.keys(),
 		"equipment": owned_equipment.duplicate(),
 		"equipped": {"0": equipped_id(EquipDef.SLOT_WEAPON), "1": equipped_id(EquipDef.SLOT_ARMOR)},
+		"storage_gold": storage_gold,
+		"storage_materials": storage_materials.duplicate(),
+		"storage_equipment": storage_equipment.duplicate(),
 	}
 
 
@@ -425,4 +537,17 @@ func from_save_dict(d: Dictionary) -> void:
 		equipped[EquipDef.SLOT_WEAPON] = w
 	if a in owned_equipment:
 		equipped[EquipDef.SLOT_ARMOR] = a
+	# 창고 — 인벤과 같은 allowlist 재검증(손상·조작 세이브의 모르는 id 폐기), JSON float→int 캐스트.
+	storage_gold = maxi(0, int(d.get("storage_gold", 0)))
+	var smats: Dictionary = d.get("storage_materials", {})
+	for mid: String in smats:
+		if mid in material_ids():
+			var q := maxi(0, int(smats[mid]))
+			if q > 0:
+				storage_materials[mid] = q
+	var seqp: Dictionary = d.get("storage_equipment", {})
+	for eid: String in seqp:
+		# 창고와 가방 양쪽에 같은 id가 오면(손상 세이브) 가방 우선 — 창고분은 버려 id당 1개 불변식 유지.
+		if eid in equipment_ids() and not owned_equipment.has(eid):
+			storage_equipment[eid] = maxi(0, int(seqp[eid]))
 	_notify_inventory()

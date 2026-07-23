@@ -8,6 +8,7 @@ const SLOT_ARMOR := 1
 
 @export var id: String = ""            # data/equipment/<id>.tres 파일명과 일치 — 인벤/레시피/저장의 키
 @export var display_name: String = ""
+@export_multiline var description: String = ""  # 아이템 툴팁 설명(선택) — 비면 스탯만 표시 (UI item_ui 헬퍼)
 @export var icon: Texture2D            # 제작/강화 UI·인벤 표시 (도형 금지, rules §0)
 @export_enum("weapon", "armor") var slot_name: String = "weapon"
 

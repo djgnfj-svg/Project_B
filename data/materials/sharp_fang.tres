@@ -7,6 +7,7 @@
 script = ExtResource("1")
 id = "sharp_fang"
 display_name = "날카로운 엄니"
+description = "예리하게 벼린 엄니. 공격력 위주 장비에 쓰인다."
 icon = ExtResource("2")
 is_core = false
 rarity = 1

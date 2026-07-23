@@ -61,38 +61,95 @@ func _initialize() -> void:
 	# --- 인벤/제작/강화/저장 (드랍·제작 신뢰 경계) ---
 	_check("재료 스캔에 goblin_hide", "goblin_hide" in gs.material_ids())
 	_check("장비 스캔에 iron_greatsword", "iron_greatsword" in gs.equipment_ids())
-	_check("레시피 스캔에 leather_armor", "leather_armor" in gs.recipe_ids())
+	_check("레시피 스캔에 iron_greatsword", "iron_greatsword" in gs.recipe_ids())
+	# 무기 id가 이제 G_STATS로 네트워크를 건너온다(표시용) — equip_def allowlist 경로조작 거부 미러(job_def와 동일)
+	_check("장비 경로 조작 → null", gs.equip_def("../../src/core/net_schema") == null)
+	_check("모르는 장비 id → null", gs.equip_def("bogus_equip") == null)
 	# 모르는 id 폐기 — 조작 드랍/세이브 방어 (신뢰 경계)
 	gs.add_material("bogus_mat", 5)
 	_check("모르는 재료 id 폐기", gs.material_count("bogus_mat") == 0)
-	gs.add_material("goblin_hide", 5)
-	_check("정상 재료 추가", gs.material_count("goblin_hide") == 5)
+	# iron_greatsword 재료 확보 (goblin 7 → 제작 5 소비 후 2 남게 = 아래 창고 테스트 전제)
+	gs.add_material("goblin_hide", 7)
+	gs.add_material("sharp_fang", 2)
+	gs.add_material("brute_core", 1)
+	_check("정상 재료 추가", gs.material_count("goblin_hide") == 7)
 	gs.unlock_blueprint("bogus_recipe")
 	_check("모르는 도면 id 폐기", not gs.has_blueprint("bogus_recipe"))
-	_check("leather_armor 기본 언락(튜토 제작템)", gs.has_blueprint("leather_armor"))
-	_check("iron_greatsword 도면 없음", not gs.has_blueprint("iron_greatsword"))
-	# 제작 — 골드+재료 소비 → 보유 + 빈 슬롯 자동 장착
-	gs.add_gold(50)
-	_check("제작 가능(재료·골드 충족)", gs.can_craft("leather_armor"))
+	_check("iron_greatsword 도면 기본 잠김", not gs.has_blueprint("iron_greatsword"))
 	_check("도면 없는 레시피 제작 불가", not gs.can_craft("iron_greatsword"))
-	_check("제작 성공", gs.craft("leather_armor"))
-	_check("제작 후 장비 보유(lv0)", gs.equip_level("leather_armor") == 0)
-	_check("제작 시 재료 차감(5-3)", gs.material_count("goblin_hide") == 2)
-	_check("빈 방어구 슬롯 자동 장착", gs.equipped_id(1) == "leather_armor")
-	# 강화 — 골드 소비 → 레벨 +1
+	gs.unlock_blueprint("iron_greatsword")
+	_check("도면 언락", gs.has_blueprint("iron_greatsword"))
+	# 제작 — 골드+재료 소비 → 보유 + 빈 무기 슬롯 자동 장착
+	gs.add_gold(30)
+	_check("제작 가능(재료·골드 충족)", gs.can_craft("iron_greatsword"))
+	_check("제작 성공", gs.craft("iron_greatsword"))
+	_check("제작 후 장비 보유(lv0)", gs.equip_level("iron_greatsword") == 0)
+	_check("제작 시 재료 차감(goblin 7-5)", gs.material_count("goblin_hide") == 2)
+	_check("빈 무기 슬롯 자동 장착", gs.equipped_id(0) == "iron_greatsword")
+	# 강화 — 골드 소비 → 레벨 +1 (upgrade_gold_base 15)
 	gs.add_gold(100)
-	_check("강화 가능", gs.can_upgrade("leather_armor"))
-	_check("강화 성공", gs.upgrade_equipment("leather_armor"))
-	_check("강화 후 레벨 = 1", gs.equip_level("leather_armor") == 1)
-	_check("착용 장비 체력이 현재 스탯에 반영", int(gs.current_stats()["hp"]) > 0)
+	_check("강화 가능", gs.can_upgrade("iron_greatsword"))
+	_check("강화 성공", gs.upgrade_equipment("iron_greatsword"))
+	_check("강화 후 레벨 = 1", gs.equip_level("iron_greatsword") == 1)
+	_check("착용 장비 공격이 현재 스탯에 반영", int(gs.current_stats()["attack"]) > 0)
+
+	# --- 창고 넣기/빼기 (개인·로컬 보관함, 비네트워크) ---
+	# 재료: 예치→창고 증가·가방 감소, 회수→역. 0이 된 창고 키는 삭제(표시 정돈).
+	gs.deposit_material("goblin_hide", 1)
+	_check("재료 예치: 가방 감소(2→1)", gs.material_count("goblin_hide") == 1)
+	_check("재료 예치: 창고 증가(0→1)", gs.storage_material_count("goblin_hide") == 1)
+	gs.withdraw_material("goblin_hide", 1)
+	_check("재료 회수: 가방 복귀(1→2)", gs.material_count("goblin_hide") == 2)
+	_check("재료 회수: 창고 0 → 키 삭제",
+		gs.storage_material_count("goblin_hide") == 0 and not gs.storage_materials.has("goblin_hide"))
+	# 초과 이동 clamp — 보유량 넘게 못 넣음/뺌
+	gs.deposit_material("goblin_hide", 999)
+	_check("초과 예치 clamp: 보유 전량만 이동",
+		gs.material_count("goblin_hide") == 0 and gs.storage_material_count("goblin_hide") == 2)
+	gs.withdraw_material("goblin_hide", 999)
+	_check("초과 회수 clamp: 전량 복귀", gs.material_count("goblin_hide") == 2)
+	# 골드 예치/회수 + 초과 clamp
+	var g0: int = gs.gold
+	gs.deposit_gold(30)
+	_check("골드 예치: 가방 감소", gs.gold == g0 - 30 and gs.storage_gold == 30)
+	gs.deposit_gold(99999)
+	_check("골드 초과 예치 clamp", gs.gold == 0 and gs.storage_gold == g0)
+	gs.withdraw_gold(g0)
+	_check("골드 회수 복귀", gs.gold == g0 and gs.storage_gold == 0)
+	# 장비 예치 → 장착 해제 + 레벨 보존, 회수 → 가방 복귀(자동장착 안 함)
+	gs.deposit_equipment("iron_greatsword")
+	_check("장비 예치: 가방에서 제거", gs.equip_level("iron_greatsword") == -1)
+	_check("장비 예치: 창고에 레벨 보존", int(gs.storage_equipment.get("iron_greatsword", -1)) == 1)
+	_check("장비 예치: 장착 자동 해제", gs.equipped_id(0) == "")
+	# 창고 보유 장비를 add_equipment 해도 가방에 사본 안 생김 (id당 1개 불변식)
+	gs.add_equipment("iron_greatsword")
+	_check("창고 보유 장비 중복 생성 방지", gs.equip_level("iron_greatsword") == -1)
+	gs.withdraw_equipment("iron_greatsword")
+	_check("장비 회수: 가방 복귀(레벨 유지)", gs.equip_level("iron_greatsword") == 1)
+	_check("장비 회수: 자동 장착 안 함(장착은 패널에서)", gs.equipped_id(0) == "")
+	_check("장비 회수: 창고에서 제거", not gs.storage_equipment.has("iron_greatsword"))
+	# 창고 저장 라운드트립 — 창고에 든 채로 to→from 복원
+	gs.deposit_material("goblin_hide", 1)
+	gs.deposit_gold(15)
+	var ssnap: Dictionary = gs.to_save_dict()
+	var gs3 := GameStateScript.new() as Node
+	gs3.from_save_dict(ssnap)
+	_check("창고 저장 복원: 재료", gs3.storage_material_count("goblin_hide") == 1)
+	_check("창고 저장 복원: 골드", gs3.storage_gold == 15)
+	gs3.free()
+	# 원복 — 아래 인벤 저장 라운드트립이 창고 비고 장착된 상태를 전제
+	gs.withdraw_material("goblin_hide", 1)
+	gs.withdraw_gold(15)
+	gs.equip("iron_greatsword")
+
 	# 저장 라운드트립 — to→from 복원 (로드 시 allowlist 재검증)
 	var snap: Dictionary = gs.to_save_dict()
 	var gs2 := GameStateScript.new() as Node
 	gs2.from_save_dict(snap)
 	_check("저장 복원: 골드", gs2.gold == gs.gold)
 	_check("저장 복원: 재료", gs2.material_count("goblin_hide") == 2)
-	_check("저장 복원: 장비 레벨", gs2.equip_level("leather_armor") == 1)
-	_check("저장 복원: 장착 슬롯", gs2.equipped_id(1) == "leather_armor")
+	_check("저장 복원: 장비 레벨", gs2.equip_level("iron_greatsword") == 1)
+	_check("저장 복원: 장착 슬롯", gs2.equipped_id(0) == "iron_greatsword")
 	# 조작 세이브 방어 — 모르는 id는 로드에서 폐기
 	gs2.from_save_dict({"gold": 10, "materials": {"hack_mat": 99},
 		"equipment": {"hack_eq": 3}, "blueprints": ["hack_bp"], "equipped": {"0": "hack_eq", "1": ""}})
@@ -100,6 +157,19 @@ func _initialize() -> void:
 	_check("조작 세이브: 모르는 장비 폐기", gs2.equip_level("hack_eq") == -1)
 	_check("조작 세이브: 골드는 로드", gs2.gold == 10)
 	gs2.free()
+
+	# --- 리뷰 Critical 회귀: 창고 보관 중 재제작이 equipped를 창고 아이템에 물리지 않음 ---
+	# 재료·골드를 충분히 줘도 이미 보유(가방/창고)한 장비면 제작이 막혀야 한다(막힌 제작 = no-op).
+	# 안 막으면 자동 장착이 창고 아이템을 물어 equip_level=-1 → 음수 레벨 스탯이 전투에 반영된다.
+	gs.add_gold(100)
+	gs.add_material("goblin_hide", 10)
+	gs.add_material("sharp_fang", 2)
+	gs.add_material("brute_core", 1)
+	gs.deposit_equipment("iron_greatsword")  # 창고로 이동(장착 해제)
+	_check("보유(창고)면 재료 충분해도 재제작 불가", not gs.can_craft("iron_greatsword"))
+	gs.craft("iron_greatsword")  # 막혀서 no-op이어야 함
+	_check("막힌 재제작: equipped 오염 없음(창고 아이템 안 물림)", gs.equipped_id(0) == "")
+	_check("막힌 재제작: 창고분 그대로", int(gs.storage_equipment.get("iron_greatsword", -1)) == 1)
 
 	gs.free()
 	if _fails == 0:
