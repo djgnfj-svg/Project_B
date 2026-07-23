@@ -1,6 +1,9 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://src/hud/stage_hud.gd" id="1"]
+
+[sub_resource type="StyleBoxFlat" id="hp_fill"]
+bg_color = Color(0.85, 0.16, 0.16, 1)
 
 [node name="StageHUD" type="CanvasLayer"]
 script = ExtResource("1")
@@ -28,12 +31,34 @@ offset_bottom = 46.0
 focus_mode = 0
 text = "초대 코드 복사"
 
+[node name="SettingsBtn" type="Button" parent="."]
+offset_left = 6.0
+offset_top = 50.0
+offset_right = 120.0
+offset_bottom = 70.0
+focus_mode = 0
+text = "설정"
+
+[node name="GoldBar" type="HBoxContainer" parent="."]
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -140.0
+offset_top = -26.0
+offset_right = -8.0
+offset_bottom = -6.0
+mouse_filter = 2
+alignment = 2
+theme_override_constants/separation = 3
+
 [node name="HpBar" type="ProgressBar" parent="."]
 offset_left = 6.0
 offset_top = 336.0
 offset_right = 166.0
 offset_bottom = 354.0
 mouse_filter = 2
+theme_override_styles/fill = SubResource("hp_fill")
 show_percentage = false
 max_value = 100.0
 value = 100.0
@@ -41,6 +66,10 @@ value = 100.0
 [node name="HpLabel" type="Label" parent="HpBar"]
 anchor_right = 1.0
 anchor_bottom = 1.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.8)
+theme_override_constants/outline_size = 3
 horizontal_alignment = 1
 vertical_alignment = 1
 text = "HP 100"
@@ -59,3 +88,14 @@ offset_bottom = 180.0
 horizontal_alignment = 1
 vertical_alignment = 1
 theme_override_font_sizes/font_size = 24
+
+[node name="Toast" type="Label" parent="."]
+visible = false
+anchor_right = 1.0
+offset_top = 100.0
+offset_bottom = 128.0
+mouse_filter = 2
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_colors/font_color = Color(1, 0.85, 0.3, 1)
+theme_override_font_sizes/font_size = 20

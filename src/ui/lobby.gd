@@ -3,11 +3,14 @@ extends Control
 # 기본 흐름 = "방 만들기" 원클릭. 코드 참가는 폴백, 서버 주소는 접힌 고급 옵션.
 # 직업(GDD §5: 시작 시 선택·이후 고정)은 GameState.selected_job_id에 기록 — 스테이지가 읽는다.
 
+const SettingsPanelScene := preload("res://src/ui/settings_panel.tscn")  # rules §0: class_name 대신 preload
+
 @onready var _url_edit: LineEdit = %UrlEdit
 @onready var _code_edit: LineEdit = %CodeEdit
 @onready var _host_btn: Button = %HostBtn
 @onready var _join_btn: Button = %JoinBtn
 @onready var _adv_btn: Button = %AdvBtn
+@onready var _settings_btn: Button = %SettingsBtn
 @onready var _status: Label = %Status
 @onready var _job_btns: Dictionary[String, Button] = {  # job id -> 토글 버튼 (ButtonGroup로 라디오)
 	"warrior": %WarriorBtn as Button,
@@ -39,6 +42,9 @@ func _ready() -> void:
 	_host_btn.pressed.connect(_on_host_pressed)
 	_join_btn.pressed.connect(_on_join_pressed)
 	_adv_btn.pressed.connect(func() -> void: _url_edit.visible = not _url_edit.visible)
+	var settings := SettingsPanelScene.instantiate()
+	add_child(settings)  # CanvasLayer(layer 10) — 로비 위 오버레이
+	_settings_btn.pressed.connect(settings.open)
 	EventBus.net_connected.connect(func() -> void: _status.text = "서버 연결됨…")
 	EventBus.net_connect_failed.connect(
 		func(reason: String) -> void: _set_idle("연결 실패: %s" % reason))

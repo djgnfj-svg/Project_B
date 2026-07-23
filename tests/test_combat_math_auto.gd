@@ -40,6 +40,29 @@ func _initialize() -> void:
 	failures += _check(not CombatMath.is_strike_hit(Vector2(18.1, 0.0), Vector2.ZERO, 18.0), "strike: 반경 밖(18.1) 빗나감")
 	failures += _check(CombatMath.is_strike_hit(Vector2.ZERO, Vector2.ZERO, 18.0), "strike: 중심(0) 적중")
 
+	# --- 장비 스탯 (§3 하드 계약 — 제작/강화 UI·전투·HUD 공용 단일 소스) ---
+	failures += _check(CombatMath.calc_damage(job, 5) == 12, "calc_damage: 장비 보너스(+5) = 12")
+	failures += _check(CombatMath.calc_damage(job, 0) == 7, "calc_damage: 보너스 0 = 기존 항등 폴백")
+	var wep := EquipDef.new()
+	wep.base_attack = 5
+	wep.atk_per_level = 3
+	wep.max_level = 5
+	wep.upgrade_gold_base = 15
+	var arm := EquipDef.new()
+	arm.base_hp = 20
+	arm.hp_per_level = 15
+	failures += _check(int(CombatMath.equip_stat_at_level(wep, 0)["attack"]) == 5, "equip_stat: 무기 lv0 공격 = base 5")
+	failures += _check(int(CombatMath.equip_stat_at_level(wep, 2)["attack"]) == 11, "equip_stat: 무기 lv2 공격 = 5+3*2")
+	failures += _check(int(CombatMath.equip_stat_at_level(arm, 3)["hp"]) == 65, "equip_stat: 방어구 lv3 체력 = 20+15*3")
+	var total := CombatMath.total_stats([[wep, 1], [arm, 2]])
+	failures += _check(int(total["attack"]) == 8 and int(total["hp"]) == 50, "total_stats: 무기lv1+방어구lv2 = 공8·체50")
+	var empty := CombatMath.total_stats([])
+	failures += _check(int(empty["attack"]) == 0 and int(empty["hp"]) == 0, "total_stats: 미착용 = 공0·체0 (항등 폴백)")
+	var up := CombatMath.upgraded_stats(wep, 1, 2)
+	failures += _check(int(up["attack"]) == 3, "upgraded_stats: 무기 lv1→2 델타 = 공+3")
+	failures += _check(CombatMath.upgrade_cost(wep, 0) == 15, "upgrade_cost: lv0→ = base*1 = 15")
+	failures += _check(CombatMath.upgrade_cost(wep, 2) == 45, "upgrade_cost: lv2→ = base*3 = 45")
+
 	if failures == 0:
 		print("TEST_OK combat_math")
 		quit(0)

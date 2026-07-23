@@ -6,6 +6,9 @@ extends CharacterBody2D
 
 const HealthComponent := preload("res://src/combat/health_component.gd")
 const PlayerActor := preload("res://src/player/player.gd")
+const HitStop := preload("res://src/feel/hit_stop.gd")
+const HitFlash := preload("res://src/feel/hit_flash.gd")
+const Flinch := preload("res://src/feel/flinch.gd")
 
 # 연출값 (rules §0 예외)
 const REMOTE_LERP_SPEED := 12.0
@@ -26,6 +29,7 @@ enum State { IDLE, CHASE, WINDUP, RECOVER }
 
 var _state: State = State.IDLE
 var _state_left: float = 0.0
+var _prev_hp: int = 0  # combat_impact 감소량 계산용
 var _strike_center: Vector2 = Vector2.ZERO
 var _remote_target: Vector2 = Vector2.ZERO
 var _remote_flip: bool = false
@@ -58,6 +62,7 @@ func _ready() -> void:
 			shape.radius = def.body_radius
 			_collision.shape = shape
 		_health.setup(def.max_hp, def.respawns, def.respawn_delay)
+		_prev_hp = def.max_hp
 		# 텔레그래프 표시 반경 = 판정 반경(def.strike_radius) — "맞는 곳=보이는 곳" (rules §3)
 		_telegraph.scale = Vector2.ONE * (def.strike_radius * 2.0 / TELEGRAPH_TEX_SIZE)
 	_health.hp_changed.connect(_on_hp_changed)
@@ -67,9 +72,22 @@ func _ready() -> void:
 	_play(&"idle")
 
 
-func _on_hp_changed(hp: int, _dropped: bool) -> void:
+func _on_hp_changed(hp: int, dropped: bool) -> void:
 	var dead := hp <= 0
 	_collision.set_deferred("disabled", dead)
+	if dropped:
+		var amount := _prev_hp - hp
+		_prev_hp = hp
+		EventBus.combat_impact.emit("enemy", global_position, maxi(amount, 0))  # 손맛 공용 훅
+		if dead:
+			EventBus.entity_died.emit("enemy", global_position)  # 사망 SFX
+		else:
+			HitStop.punch(_sprite)   # 맞은 대상만 정지+스케일 튕김
+			HitFlash.flash(_sprite)  # 흰색 번쩍
+			var opp := Flinch.nearest_pos(global_position, get_tree().get_nodes_in_group("player"))
+			Flinch.play(_sprite, global_position - opp)  # 플레이어 반대로 흠칫
+	else:
+		_prev_hp = hp
 	if dead:
 		_telegraph.visible = false
 		velocity = Vector2.ZERO

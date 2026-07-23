@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene load_steps=13 format=3]
 
 [ext_resource type="Script" path="res://src/stage/stage.gd" id="1"]
 [ext_resource type="Texture2D" path="res://assets/sprites/stage/ground_32.png" id="2"]
@@ -10,6 +10,8 @@
 [ext_resource type="Script" path="res://src/net/scene_flow.gd" id="8"]
 [ext_resource type="Script" path="res://src/stage/chapter_flow.gd" id="9"]
 [ext_resource type="PackedScene" path="res://src/hud/stage_hud.tscn" id="10"]
+[ext_resource type="Script" path="res://src/stage/drop_authority.gd" id="11"]
+[ext_resource type="Script" path="res://src/stage/drop_field.gd" id="12"]
 
 [node name="Stage" type="Node2D"]
 script = ExtResource("1")
@@ -45,6 +47,13 @@ spawn_base = Vector2(140, 180)
 [node name="CombatAuthority" type="Node" parent="."]
 script = ExtResource("6")
 peer_sync_path = NodePath("../PeerSync")
+
+[node name="DropAuthority" type="Node" parent="."]
+script = ExtResource("11")
+
+[node name="DropField" type="Node" parent="."]
+script = ExtResource("12")
+drop_authority_path = NodePath("../DropAuthority")
 
 [node name="MobSync" type="Node" parent="."]
 script = ExtResource("7")

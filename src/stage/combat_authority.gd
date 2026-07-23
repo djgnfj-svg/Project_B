@@ -101,13 +101,24 @@ func _confirm_damage(health: HealthComponent, job: JobDef, attacker_id: int) -> 
 		return
 	if now - last > CombatMath.SAME_SWING_MS:
 		_last_hit_msec[attacker_id] = now  # 새 스윙 앵커 — 매 확정마다 갱신하면 창이 미끄러진다
-	health.apply_damage(CombatMath.calc_damage(job))
+	# 착용 장비 공격 보너스 = 공격자 아바타(G_STATS로 반영). 미착용/미상 = 0 (항등 폴백).
+	var atk_p := _peer_sync.player(attacker_id)
+	var bonus := atk_p.equip_atk_bonus if atk_p != null else 0
+	health.apply_damage(CombatMath.calc_damage(job, bonus))
 
 
 # 호스트 전용 수신 경로 — Health 권한 경로(apply_damage/부활)가 확정한 HP를 전원에 브로드캐스트
 func _on_enemy_hp_confirmed(eid: String, hp: int) -> void:
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ENEMY_HP, "eid": eid, "hp": hp})
 	if hp <= 0:
+		# 드랍 롤 트리거 (호스트 전용 경로) — 죽는 순간 좌표에서 떨어지도록 clear 판정 전에 쏜다.
+		# 실제 롤·산개·브로드캐스트는 DropAuthority가 받는다 (rules §2 책임 분리, §1 호스트 권한).
+		var entry_v: Variant = _enemies.get(eid)
+		if entry_v != null:
+			var entry := entry_v as Dictionary
+			var root := entry["root"] as Node2D
+			if root != null:
+				EventBus.enemy_killed.emit(eid, entry["def"] as EnemyDef, root.global_position)
 		_check_clear()
 
 

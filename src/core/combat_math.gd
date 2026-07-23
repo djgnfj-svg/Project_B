@@ -4,9 +4,9 @@ extends RefCounted
 # UI 표시·실전투(호스트 확정)가 전부 이 함수만 부른다. 다른 곳에서 같은 계산을 만들면 갈라진다.
 
 
-# 최종 데미지. 장비 도입 시 total_stats() 결과를 받도록 확장한다 (§3 예약).
-static func calc_damage(job: JobDef) -> int:
-	return job.attack_damage
+# 최종 데미지. bonus_attack = 착용 장비 공격 합(total_stats.attack). 미착용=0 → 기존 동작과 동일(항등 폴백).
+static func calc_damage(job: JobDef, bonus_attack: int = 0) -> int:
+	return job.attack_damage + bonus_attack
 
 
 # 호스트의 적중 요청 검증 — 공격자 위치 기준 사거리 내인가 (지연 감안 여유 배율).
@@ -60,3 +60,36 @@ static func is_iframe_active(grant_msec: int, now_msec: int) -> bool:
 # 잔몹 타격 판정 — 단일 소스 (§3). 호스트 판정과 텔레그래프 표시가 같은 반경(def.strike_radius)을 읽는다.
 static func is_strike_hit(player_pos: Vector2, strike_center: Vector2, strike_radius: float) -> bool:
 	return player_pos.distance_to(strike_center) <= strike_radius
+
+
+# --- 장비 스탯 (드랍·제작 2026-07-23) — 단일 소스 (§3). 제작/강화 UI·전투·HUD가 전부 이 함수만 부른다. ---
+
+# 한 장비의 레벨별 스탯 = base + step*level. total_stats·강화 미리보기가 같이 부른다(갈라짐 방지).
+static func equip_stat_at_level(equip: EquipDef, level: int) -> Dictionary:
+	return {
+		"attack": equip.base_attack + equip.atk_per_level * level,
+		"hp": equip.base_hp + equip.hp_per_level * level,
+	}
+
+
+# 착용 장비 총 스탯. equip_levels = [[EquipDef, level], …]. 미착용이면 {attack=0, hp=0} (항등 폴백).
+static func total_stats(equip_levels: Array) -> Dictionary:
+	var atk := 0
+	var hp := 0
+	for pair: Array in equip_levels:
+		var s := equip_stat_at_level(pair[0] as EquipDef, int(pair[1]))
+		atk += int(s["attack"])
+		hp += int(s["hp"])
+	return {"attack": atk, "hp": hp}
+
+
+# 강화 미리보기 델타(from→to 레벨). 강화 UI "다음 단계"와 실제 적용이 같은 함수를 부른다.
+static func upgraded_stats(equip: EquipDef, from_level: int, to_level: int) -> Dictionary:
+	var a := equip_stat_at_level(equip, from_level)
+	var b := equip_stat_at_level(equip, to_level)
+	return {"attack": int(b["attack"]) - int(a["attack"]), "hp": int(b["hp"]) - int(a["hp"])}
+
+
+# 강화 비용(골드). UI 미리보기 = 실제 차감 단일 소스. 곡선 = base * (다음 레벨).
+static func upgrade_cost(equip: EquipDef, current_level: int) -> int:
+	return equip.upgrade_gold_base * (current_level + 1)

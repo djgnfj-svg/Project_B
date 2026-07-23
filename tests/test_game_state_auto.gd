@@ -57,6 +57,50 @@ func _initialize() -> void:
 	gs.leave_chapter()
 	_check("챕터 이탈 시 좌표 리셋", not gs.in_chapter())
 	_check("챕터 이탈 시 이월 HP 리셋", gs.carried_hp(7) == -1)
+
+	# --- 인벤/제작/강화/저장 (드랍·제작 신뢰 경계) ---
+	_check("재료 스캔에 goblin_hide", "goblin_hide" in gs.material_ids())
+	_check("장비 스캔에 iron_greatsword", "iron_greatsword" in gs.equipment_ids())
+	_check("레시피 스캔에 leather_armor", "leather_armor" in gs.recipe_ids())
+	# 모르는 id 폐기 — 조작 드랍/세이브 방어 (신뢰 경계)
+	gs.add_material("bogus_mat", 5)
+	_check("모르는 재료 id 폐기", gs.material_count("bogus_mat") == 0)
+	gs.add_material("goblin_hide", 5)
+	_check("정상 재료 추가", gs.material_count("goblin_hide") == 5)
+	gs.unlock_blueprint("bogus_recipe")
+	_check("모르는 도면 id 폐기", not gs.has_blueprint("bogus_recipe"))
+	_check("leather_armor 기본 언락(튜토 제작템)", gs.has_blueprint("leather_armor"))
+	_check("iron_greatsword 도면 없음", not gs.has_blueprint("iron_greatsword"))
+	# 제작 — 골드+재료 소비 → 보유 + 빈 슬롯 자동 장착
+	gs.add_gold(50)
+	_check("제작 가능(재료·골드 충족)", gs.can_craft("leather_armor"))
+	_check("도면 없는 레시피 제작 불가", not gs.can_craft("iron_greatsword"))
+	_check("제작 성공", gs.craft("leather_armor"))
+	_check("제작 후 장비 보유(lv0)", gs.equip_level("leather_armor") == 0)
+	_check("제작 시 재료 차감(5-3)", gs.material_count("goblin_hide") == 2)
+	_check("빈 방어구 슬롯 자동 장착", gs.equipped_id(1) == "leather_armor")
+	# 강화 — 골드 소비 → 레벨 +1
+	gs.add_gold(100)
+	_check("강화 가능", gs.can_upgrade("leather_armor"))
+	_check("강화 성공", gs.upgrade_equipment("leather_armor"))
+	_check("강화 후 레벨 = 1", gs.equip_level("leather_armor") == 1)
+	_check("착용 장비 체력이 현재 스탯에 반영", int(gs.current_stats()["hp"]) > 0)
+	# 저장 라운드트립 — to→from 복원 (로드 시 allowlist 재검증)
+	var snap: Dictionary = gs.to_save_dict()
+	var gs2 := GameStateScript.new() as Node
+	gs2.from_save_dict(snap)
+	_check("저장 복원: 골드", gs2.gold == gs.gold)
+	_check("저장 복원: 재료", gs2.material_count("goblin_hide") == 2)
+	_check("저장 복원: 장비 레벨", gs2.equip_level("leather_armor") == 1)
+	_check("저장 복원: 장착 슬롯", gs2.equipped_id(1) == "leather_armor")
+	# 조작 세이브 방어 — 모르는 id는 로드에서 폐기
+	gs2.from_save_dict({"gold": 10, "materials": {"hack_mat": 99},
+		"equipment": {"hack_eq": 3}, "blueprints": ["hack_bp"], "equipped": {"0": "hack_eq", "1": ""}})
+	_check("조작 세이브: 모르는 재료 폐기", gs2.material_count("hack_mat") == 0)
+	_check("조작 세이브: 모르는 장비 폐기", gs2.equip_level("hack_eq") == -1)
+	_check("조작 세이브: 골드는 로드", gs2.gold == 10)
+	gs2.free()
+
 	gs.free()
 	if _fails == 0:
 		print("TEST_OK game_state")

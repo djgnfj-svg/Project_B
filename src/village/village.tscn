@@ -1,10 +1,11 @@
-[gd_scene load_steps=58 format=3]
+[gd_scene load_steps=60 format=3]
 
 [ext_resource type="Script" path="res://src/village/village.gd" id="1"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/ground/baked.png" id="2"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/buildings/gate_48.png" id="3"]
 [ext_resource type="Script" path="res://src/net/peer_sync.gd" id="4"]
 [ext_resource type="PackedScene" path="res://src/hud/stage_hud.tscn" id="5"]
+[ext_resource type="PackedScene" path="res://src/ui/craft_panel.tscn" id="59"]
 [ext_resource type="Script" path="res://src/net/scene_flow.gd" id="6"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/buildings/forge_house.png" id="7"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/buildings/forge_shed.png" id="8"]
@@ -49,6 +50,9 @@
 [ext_resource type="Texture2D" path="res://assets/sprites/village/npc/bobber.png" id="47"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/npc/guard.png" id="48"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/npc/rabbit.png" id="49"]
+
+[sub_resource type="RectangleShape2D" id="shape_craft"]
+size = Vector2(40, 40)
 
 [sub_resource type="RectangleShape2D" id="shape_gate"]
 size = Vector2(40, 44)
@@ -497,4 +501,21 @@ spawn_base = Vector2(80, 190)
 [node name="SceneFlow" type="Node" parent="."]
 script = ExtResource("6")
 
+[node name="CraftStation" type="Area2D" parent="."]
+position = Vector2(92, 110)
+collision_layer = 64
+collision_mask = 2
+
+[node name="Collision" type="CollisionShape2D" parent="CraftStation"]
+shape = SubResource("shape_craft")
+
+[node name="Hint" type="Label" parent="CraftStation"]
+offset_left = -80.0
+offset_top = -40.0
+offset_right = 80.0
+offset_bottom = -22.0
+horizontal_alignment = 1
+
 [node name="HUD" parent="." instance=ExtResource("5")]
+
+[node name="CraftPanel" parent="." instance=ExtResource("59")]

@@ -39,7 +39,7 @@ func set_max_hp(p_max: int) -> void:
 	max_hp = p_max
 	if hp > max_hp:
 		hp = max_hp
-		hp_changed.emit(hp, true)
+		hp_changed.emit(hp, false)  # 최대치 축소 클램프는 피격 아님 — dropped=false (거짓 손맛 방지, 장비 교체 시)
 
 
 # 호스트 권한 경로 전용 — 데미지 확정. 사망 + respawns면 부활 타이머 arm.

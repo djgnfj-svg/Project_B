@@ -1,7 +1,35 @@
-[gd_resource type="Resource" script_class="EnemyDef" load_steps=3 format=3]
+[gd_resource type="Resource" script_class="EnemyDef" load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://src/core/enemy_def.gd" id="1"]
 [ext_resource type="SpriteFrames" path="res://assets/sprites/enemies/goblin_melee_frames.tres" id="2"]
+[ext_resource type="Script" path="res://src/core/drop_table.gd" id="3"]
+[ext_resource type="Script" path="res://src/core/drop_entry.gd" id="4"]
+
+[sub_resource type="Resource" id="d_gold"]
+script = ExtResource("4")
+kind = "gold"
+gold_min = 2
+gold_max = 6
+
+[sub_resource type="Resource" id="d_hide"]
+script = ExtResource("4")
+kind = "material"
+ref_id = "goblin_hide"
+chance = 0.8
+qty_min = 1
+qty_max = 2
+
+[sub_resource type="Resource" id="d_fang"]
+script = ExtResource("4")
+kind = "material"
+ref_id = "sharp_fang"
+chance = 0.3
+qty_min = 1
+qty_max = 1
+
+[sub_resource type="Resource" id="d_table"]
+script = ExtResource("3")
+entries = Array[DropEntry]([SubResource("d_gold"), SubResource("d_hide"), SubResource("d_fang")])
 
 [resource]
 script = ExtResource("1")
@@ -16,3 +44,4 @@ strike_radius = 20.0
 attack_damage = 8
 telegraph_s = 0.6
 attack_cooldown_s = 1.4
+drop_table = SubResource("d_table")
