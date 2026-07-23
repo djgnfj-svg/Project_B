@@ -173,14 +173,17 @@ func _host_ai(delta: float) -> void:
 			if _state_left <= 0.0:
 				_fire_strike()
 				_state = State.RECOVER
-				_state_left = _cur_pattern.cooldown_s if _cur_pattern != null else 1.0
+				# 회복은 짧게(recover_s) — 재사용 쿨다운(cooldown_s)은 _pattern_last_msec가 따로 막는다.
+				# 둘을 분리하지 않으면 슬램 후 쿨다운(4s)만큼 멈춰 서 "빈틈"이 생긴다.
+				_state_left = _cur_pattern.recover_s if _cur_pattern != null else 0.5
 		State.RECOVER:
 			if _state_left <= 0.0:
 				_state = State.CHASE
 
 
 # 패턴 선택기 — (a) min_phase ≤ 현재 페이즈 (b) 대상 거리 ∈ [use_min_dist, use_max_dist]
-# (c) 쿨다운 경과, 를 만족하는 후보 중 근접형 우선(range 작은 것). 결정적 선택 — 랜덤 없음.
+# (c) 쿨다운 경과, 를 만족하는 후보 중 **priority 높은 것** 우선(거리별 역할 분리 — 가까이=평타·중간=슬램·
+# 멀리=물뿌리기). 동률이면 range 작은 것. 결정적 선택 — 랜덤 없음.
 func _select_pattern(dist: float) -> BossPatternDef:
 	var now := Time.get_ticks_msec()
 	var best: BossPatternDef = null
@@ -192,8 +195,9 @@ func _select_pattern(dist: float) -> BossPatternDef:
 		var last := int(_pattern_last_msec.get(p.id, -1000000000))
 		if now - last < int(p.cooldown_s * 1000.0):
 			continue
-		if best == null or p.range < best.range:
-			best = p  # 근접형(작은 range) 우선 — 붙으면 부채꼴 평타부터
+		if best == null or p.priority > best.priority \
+				or (p.priority == best.priority and p.range < best.range):
+			best = p
 	return best
 
 

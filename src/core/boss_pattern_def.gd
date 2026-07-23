@@ -11,7 +11,9 @@ extends Resource
 @export var range: float = 60.0          # 원 반경 / 부채꼴 사거리
 @export var half_angle: float = 0.6      # 부채꼴 반각(rad) — shape=="cone"만 사용
 
-@export var cooldown_s: float = 3.0      # 이 패턴 재사용 대기
+@export var cooldown_s: float = 3.0      # 이 패턴 재사용 대기 (재선택 게이트 — RECOVER와 별개, "빈틈" 방지)
+@export var recover_s: float = 0.5       # STRIKE 후 회복(경직) 시간 — 짧게. 이게 길면 공격 사이 보스가 멈춰 서 빈틈이 커진다. 쿨다운(cooldown_s)은 재선택만 막고, 회복은 이 값만큼만
+@export var priority: int = 0            # 패턴 선택 우선순위 — 유효 후보 중 높은 게 선택(가까이=평타 우선 등 거리별 역할 분리). 동률이면 range 작은 것
 @export var use_min_dist: float = 0.0    # 대상과 이 거리 이상일 때만 선택 후보
 @export var use_max_dist: float = 99999.0
 @export var min_phase: int = 1           # 이 페이즈 이상에서만 개방 (페이즈2 패턴 = 2)
