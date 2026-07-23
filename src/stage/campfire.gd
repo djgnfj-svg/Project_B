@@ -28,6 +28,7 @@ var _heal_accum: float = 0.0
 
 func _ready() -> void:
 	_peer_sync.scene_id = GameState.stage_token()  # 칸 좌표 토큰 — stage.gd와 동일 규약
+	set_meta("map_rect", Rect2(0, 0, 640, 360))  # 카메라 맵 클램프 — stage.gd와 동일 규약
 	if def == null:
 		push_error("[Campfire] def 미배선 — 회복 불능")
 	else:

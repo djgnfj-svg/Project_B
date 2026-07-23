@@ -11,6 +11,9 @@ const SceneFlowNode := preload("res://src/net/scene_flow.gd")
 var _local_in_gate: bool = false  # 로컬 플레이어가 게이트 영역 안 — 상호작용 게이트 + 안내 표시
 var _local_in_craft: bool = false  # 로컬 플레이어가 제작대 영역 안 — F로 제작/강화 패널 오픈
 
+# 마을 맵 크기 = baked 바닥(640×384) × Ground scale 1.5 — 바닥을 다시 구우면 여기도 같이 갱신 (미러)
+const MAP_RECT := Rect2(0, 0, 960, 576)
+
 @onready var _gate: Area2D = $Gate
 @onready var _hint: Label = $Gate/Hint
 @onready var _scene_flow: SceneFlowNode = $SceneFlow
@@ -26,6 +29,7 @@ func _ready() -> void:
 	_craft_station.body_entered.connect(_on_craft_body_entered)
 	_craft_station.body_exited.connect(_on_craft_body_exited)
 	_craft_hint.visible = false
+	set_meta("map_rect", MAP_RECT)  # 카메라 맵 클램프 — camera_rig가 스폰 시 읽는다
 
 
 # 출발 확인은 폴링이 아니라 _unhandled_input — UI(Control)가 소비한 입력은 여기 안 온다
