@@ -101,6 +101,7 @@ func fill(p: Dictionary, tex: Texture2D, qty: int, badge: String, border: Color,
 	_filled = true
 	_equipped = equipped
 	_icon.texture = tex
+	_icon.modulate = Color(1, 1, 1, 1)  # 채운 셀은 아이콘 원색 (빈 슬롯 고스트에서 복귀)
 	_qty_lbl.text = "x%d" % qty
 	_qty_lbl.visible = qty > 1
 	_badge_lbl.text = badge
@@ -110,17 +111,24 @@ func fill(p: Dictionary, tex: Texture2D, qty: int, badge: String, border: Color,
 	_restyle()
 
 
-# 빈 셀. slot_name이 있으면 장비 doll 빈 슬롯(무기/방어구), 없으면 그냥 빈 칸(그리드 패딩).
-func set_empty(slot_name: String = "") -> void:
+# 빈 셀. placeholder 아이콘이 있으면 흐린 고스트로 표시(빈 장비 슬롯 = 검 실루엣 등),
+# 없고 slot_name만 있으면 글자, 둘 다 없으면 그냥 빈 칸(그리드 패딩).
+func set_empty(slot_name: String = "", placeholder: Texture2D = null) -> void:
 	payload = {}
 	_draggable = false
 	_filled = false
 	_equipped = false
-	_icon.texture = null
 	_qty_lbl.visible = false
 	_badge_lbl.visible = false
-	_slot_lbl.text = slot_name
-	_slot_lbl.visible = not slot_name.is_empty()
+	if placeholder != null:
+		_icon.texture = placeholder
+		_icon.modulate = Color(1, 1, 1, 0.28)  # 흐린 고스트 — "여기 무기를 장착" 힌트
+		_slot_lbl.visible = false
+	else:
+		_icon.texture = null
+		_icon.modulate = Color(1, 1, 1, 1)
+		_slot_lbl.text = slot_name
+		_slot_lbl.visible = not slot_name.is_empty()
 	tooltip_text = ""
 	_restyle()
 

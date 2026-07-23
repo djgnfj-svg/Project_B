@@ -11,6 +11,7 @@ extends CanvasLayer
 const UiTheme := preload("res://src/ui/ui_theme.gd")
 const ItemUi := preload("res://src/ui/item_ui.gd")
 const SlotCell := preload("res://src/ui/slot_cell.gd")
+const WEAPON_PLACEHOLDER := preload("res://assets/sprites/weapons/greatsword.png")  # 빈 무기 슬롯 고스트(검 실루엣)
 
 const BAG_MIN_CELLS := 24  # 가방 최소 칸(빈 슬롯 패딩) — 4행×6열 그리드 형태 유지
 
@@ -20,7 +21,6 @@ signal closed
 @onready var _gold: Label = %Gold
 @onready var _equip_row: HBoxContainer = %EquipRow
 @onready var _stats: Label = %Stats
-@onready var _bag_header: Label = %BagHeader
 @onready var _bag_grid: GridContainer = %BagGrid
 
 
@@ -84,13 +84,15 @@ func _refresh_equip() -> void:
 func _make_equip_slot(slot: int, slot_name: String) -> Control:
 	var cell: PanelContainer = SlotCell.new()
 	cell.activated.connect(_on_slot_activated)
+	# 빈 무기 슬롯 = "무기" 글자 대신 검 실루엣 고스트 (slot_name은 방어구 등 나중 슬롯용 폴백으로 유지)
+	var placeholder: Texture2D = WEAPON_PLACEHOLDER if slot == EquipDef.SLOT_WEAPON else null
 	var eid := GameState.equipped_id(slot)
 	if eid.is_empty():
-		cell.set_empty(slot_name)
+		cell.set_empty(slot_name, placeholder)
 		return cell
 	var equip := GameState.equip_def(eid)
 	if equip == null:
-		cell.set_empty(slot_name)
+		cell.set_empty(slot_name, placeholder)
 		return cell
 	var level := GameState.equip_level(eid)
 	var s := CombatMath.equip_stat_at_level(equip, level)
@@ -128,7 +130,6 @@ func _refresh_bag() -> void:
 		count += 1
 	# 빈 칸 패딩 — 그리드 형태 유지 (언던류: 빈 슬롯도 보이게)
 	var target := maxi(BAG_MIN_CELLS, int(ceil(float(count) / _bag_grid.columns)) * _bag_grid.columns)
-	_bag_header.text = "가방 (%d)" % count
 	for _i in range(target - count):
 		var empty: PanelContainer = SlotCell.new()
 		empty.set_empty("")
