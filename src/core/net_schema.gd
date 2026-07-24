@@ -26,7 +26,7 @@ const FAIL_SERVER_FULL := "server_full"  # 서버 전체 방 상한 (Workers 릴
 
 # 게임 페이로드 (data 내부). "k" = 종류.
 const KEY_KIND := "k"
-const G_POS := "pos"                  # {k, s, x, y, f, a}  자기 캐릭터 위치+좌우 플립+조준각(a, 라디안 — 무기 표시 전용, 판정 아님) (각자 자기 것만 보낸다). s = 씬 id — 다른 씬 피어의 유령 스폰 방지
+const G_POS := "pos"                  # {k, s, x, y, f, a, c}  자기 캐릭터 위치+좌우 플립+조준각(a, 라디안 — 무기 표시 전용, 판정 아님) (각자 자기 것만 보낸다). s = 씬 id — 다른 씬 피어의 유령 스폰 방지. c = 현재 차지 레벨(0~3, 법사 지팡이 — 원격 차지 오브 표시 전용, 판정 아님. 실제 발사 레벨은 G_SHOOT "c"를 호스트가 별도 검증)
 const G_ATK := "atk"                  # {k, dx, dy}   공격 연출 (방향) — 판정 아님, 원격 표시용
 const G_JOB := "job"                  # {k, job}      직업 공지 (id 문자열) — 스테이지 입장·피어 합류 시. 수신 측은 자기 data/jobs에서 리졸브(모르는 id = 기본 직업)
 const G_STATS := "stats"              # {k, atk, hp, weapon}  장비 총 스탯 + 착용 무기 id 공지. atk/hp = 호스트가 데미지/HP 확정에 사용(트러스트=발신자, clamp). weapon = 원격 무기 겉모습(표시 전용, allowlist 리졸브만). 4인/PvP 전 검증 게이트(rules §2)
@@ -43,8 +43,8 @@ const G_SIT := "sit"                  # {k, on}       발신자=본인: 모닥�
 
 # 투사체 (궁수 활 — 실제 이동 화살, 2026-07-24). 상태 확정 권한 = 호스트 (§1·§3).
 # 결정론적 직선 이동 = 각 클라가 로컬로 표시 화살 시뮬(위치 스트림 불필요, 네트워크 최소). 명중 판정은 호스트만.
-const G_SHOOT := "shoot"              # {k, ox, oy, dx, dy, aid, r} 발신자=본인: 발사 선언. (ox,oy)=원점·(dx,dy)=정규화 방향·aid=화살 고유 id("피어id:seq")·r=사거리(px, 무기 EquipDef.arrow_range). 각 클라가 표시 화살 스폰. 호스트는 발사 쿨다운+원점 근접 검증 후 권한 화살 등록(명중 판정용), r은 MAX로 clamp(§3). 속도는 CombatMath.ARROW_SPEED 공용(결정론). ⚠ 연사(~6.6Hz) 고빈도 → 릴레이 2곳 로그 제외 목록에 등록
-const G_ARROW_HIT := "arrowhit"       # {k, aid, x, y} 호스트→전원: 화살 aid 종료(적중)를 (x,y)에서. 각 클라가 표시 화살 despawn + 임팩트 연출. 데미지 자체는 G_ENEMY_HP 경유. ⚠ 명중마다 고빈도 → 릴레이 2곳 로그 제외 목록에 등록
+const G_SHOOT := "shoot"              # {k, ox, oy, dx, dy, aid, r, w, c} 발신자=본인: 발사 선언. (ox,oy)=원점·(dx,dy)=정규화 방향·aid=투사체 고유 id("피어id:seq")·r=사거리(px, 무기 EquipDef.arrow_range)·w=착용 무기 id(선택 — 수신 측이 allowlist 리졸브해 탄 겉모습/속도/폭발 반경을 얻는다, 경로는 절대 안 보냄 §3)·c=차지 레벨(선택, 0~3 — 법사 지팡이). 각 클라가 표시 투사체 스폰. 호스트는 발사 쿨다운+원점 근접+차지 시간(is_charge_time_ok) 검증 후 권한 투사체 등록(명중 판정용), r·속도·폭발 반경은 MAX로 clamp(§3). ⚠ 연사(~6.6Hz) 고빈도 → 릴레이 2곳 로그 제외 목록에 등록
+const G_ARROW_HIT := "arrowhit"       # {k, aid, x, y} 호스트→전원: 투사체 aid 종료(적중)를 (x,y)에서. 각 클라가 표시 투사체 despawn + 임팩트/폭발 연출(반경은 스폰 때 리졸브한 로컬 값 — 전송 불필요). 데미지 자체는 G_ENEMY_HP 경유. ⚠ 명중마다 고빈도 → 릴레이 2곳 로그 제외 목록에 등록
 
 # 드랍/픽업 (공유 드랍 — 호스트 롤·선착 픽업, 2026-07-23). 상태 확정 권한 = 호스트 (§1·§3).
 const G_DROP := "drop"                # {k, s, d}     호스트→전원: 한 킬의 드랍 묶음. s=stage_token(유령 스폰 차단, G_POS "s" 미러). d=[[did,dk,id,q,x,y,r], …] did=드랍 고유 id·dk=kind(gold/material/blueprint)·id=ref_id·q=수량(gold=금액)·x/y=위치·r=rarity

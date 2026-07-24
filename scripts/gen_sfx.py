@@ -246,6 +246,57 @@ def bow_fire():
         out.append(twang + thwip)
     return lowpass(out, 0.75)
 
+# 14. charge_step — 차지 단계 상승: 위로 올라가는 짧은 "띵"(마법 에너지가 한 칸 찬 느낌).
+def charge_step():
+    total = n(0.12)
+    out = []
+    ph1 = ph2 = 0.0
+    for i in range(total):
+        t = i / SR
+        e = env_ad(i, total, 0.005, 0.08)
+        f = 620 + 900*t            # 상승 글리산도 = "차올랐다"
+        ph1 += 2*math.pi*f/SR
+        ph2 += 2*math.pi*(f*1.5)/SR   # 5도 위 배음 = 맑은 벨 톤
+        out.append((0.34*math.sin(ph1) + 0.16*math.sin(ph2)) * e)
+    return out
+
+# 15. staff_fire — 마법탄 발사: 낮게 깔리는 "우웅" + 방출 순간의 에어리 슬래시.
+def staff_fire():
+    total = n(0.22)
+    raw = [(random.random()*2-1) for _ in range(total)]
+    lp = lowpass(raw, 0.25)
+    air = [raw[i] - lp[i] for i in range(total)]
+    out = []
+    ph = 0.0
+    dur = total / SR
+    for i in range(total):
+        t = i / SR
+        e = env_ad(i, total, 0.006, 0.16)
+        f = 420*math.exp(-t*9) + 120     # 방출 = 아래로 훅 빠지는 톤
+        ph += 2*math.pi*f/SR
+        body = 0.40*math.sin(ph) + 0.10*math.sin(ph*2.02)  # 살짝 디튠된 배음 = 마법 울림
+        hiss = air[i]*0.22*max(0.0, 1.0 - t/dur)
+        out.append((body + hiss) * e)
+    return lowpass(out, 0.8)
+
+# 16. blast — 착탄 폭발: 저역 "펑" + 넓게 퍼지는 노이즈 테일(차지 범위 공격).
+def blast():
+    total = n(0.42)
+    raw = [(random.random()*2-1) for _ in range(total)]
+    lp = lowpass(raw, 0.12)   # 저역 럼블
+    mid = lowpass(raw, 0.45)
+    out = []
+    ph = 0.0
+    for i in range(total):
+        t = i / SR
+        f = 150*math.exp(-t*14) + 45      # 킥처럼 떨어지는 저음
+        ph += 2*math.pi*f/SR
+        boom = 0.55*math.sin(ph)*math.exp(-t*7)
+        rumble = lp[i]*0.5*math.exp(-t*5)
+        crack = mid[i]*0.28*math.exp(-t*22)  # 터지는 순간의 파열
+        out.append(boom + rumble + crack)
+    return out
+
 write_wav("swing", swing())
 write_wav("hit", hit())
 write_wav("hurt", hurt())
@@ -259,4 +310,9 @@ write_wav("blueprint", blueprint())
 write_wav("swing_heavy", swing_heavy())
 write_wav("thud", thud())
 write_wav("bow_fire", bow_fire())
+# ⚠ 새 SFX는 반드시 이 아래에 추가한다 — write_wav 호출 순서가 random 시퀀스를 소비하므로,
+#   중간에 끼워 넣으면 기존 소리들의 파형이 통째로 달라진다(seed 42 결정론).
+write_wav("charge_step", charge_step())
+write_wav("staff_fire", staff_fire())
+write_wav("blast", blast())
 print("done")

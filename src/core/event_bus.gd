@@ -28,9 +28,9 @@ signal player_hp_confirmed(peer_id: int, hp: int)  # 확정 HP 통지 — 호스
 signal mob_telegraph(eid: String, center: Vector2)  # 호스트 전용 emit(잔몹 AI WINDUP) — MobSync가 matk 브로드캐스트
 signal mob_strike(eid: String, center: Vector2)     # 호스트 전용 emit(잔몹 AI STRIKE) — CombatAuthority가 데미지 확정
 
-# --- 투사체 (궁수 활 2026-07-24) — 발사는 로컬 선언, 표시 화살은 각 클라 로컬 시뮬, 명중 확정은 호스트만 ---
-signal player_shoot(shooter_id: int, origin: Vector2, dir: Vector2, aid: String, arrow_range: float)  # 로컬 발사 선언(player emit) — ArrowField가 표시 화살 스폰, CombatAuthority(호스트 자기 발사)가 권한 화살 등록. arrow_range = 무기 사거리(EquipDef.arrow_range). player가 G_SHOOT도 송신(원격 표시용)
-signal arrow_gone_local(aid: String, world_pos: Vector2)  # 호스트 전용 emit(CombatAuthority: 자기 권한 화살 종료 — 적중/사거리 소진) → 호스트 ArrowField가 자기 표시 화살 despawn+임팩트. 호스트는 자기 G_ARROW_HIT를 릴레이로 못 받으므로(drop_pick_local 미러). 게스트는 G_ARROW_HIT 수신으로 처리
+# --- 투사체 (궁수 활 2026-07-24 / 법사 차지 지팡이 확장) — 발사는 로컬 선언, 표시 탄은 각 클라 로컬 시뮬, 명중 확정은 호스트만 ---
+signal player_shoot(shooter_id: int, origin: Vector2, dir: Vector2, aid: String, arrow_range: float, weapon_id: String, charge: int)  # 로컬 발사 선언(player emit) — ArrowField가 표시 투사체 스폰, CombatAuthority(호스트 자기 발사)가 권한 투사체 등록. arrow_range = 무기 사거리(EquipDef.arrow_range) · weapon_id = 착용 무기 id(수신 측이 allowlist 리졸브해 탄 겉모습/속도/폭발 반경을 얻는다) · charge = 차지 레벨(0~3, 비차지 무기는 0). player가 G_SHOOT도 송신(원격 표시용)
+signal arrow_gone_local(aid: String, world_pos: Vector2)  # 호스트 전용 emit(CombatAuthority: 자기 권한 투사체 종료 — 적중/사거리 소진) → 호스트 ArrowField가 자기 표시 탄 despawn+임팩트. 호스트는 자기 G_ARROW_HIT를 릴레이로 못 받으므로(drop_pick_local 미러). 게스트는 G_ARROW_HIT 수신으로 처리
 
 # --- boss (보스전 2026-07-23) — 호스트 전용 emit(보스 AI), 표시(telegraph)와 판정(strike) 분리. mob_* 규약 확장 ---
 signal boss_telegraph(eid: String, pattern_id: String, center: Vector2, angle: float)  # 호스트 emit(보스 WINDUP) — MobSync가 G_BOSS_ATK 브로드캐스트(표시). 수신 측은 자기 def에서 패턴 리졸브
@@ -50,7 +50,7 @@ signal stage_wiped
 signal combat_impact(kind: String, world_pos: Vector2, amount: int)
 signal screen_shake(strength: float)  # 명시적 셰이크 트리거 (사망·보스 슬램 등) — 카메라가 소비
 # 소리/연출 트리거 (표시·소리 전용, 각 클라 로컬) — Audio가 SFX로, 필요시 연출이 구독.
-signal player_swing(world_pos: Vector2, sfx: String)   # 플레이어 공격 스윙(로컬·원격 연출 시점) — sfx = 무기 스윙음 id(EquipDef.swing_sfx)
+signal player_swing(world_pos: Vector2, sfx: String)   # 플레이어 공격 스윙(로컬·원격 연출 시점) — sfx = 무기 스윙음 id(EquipDef.swing_sfx). ⚠ 발사(EquipDef.swing_sfx)·**차지 단계 상승(charge_sfx)**도 이 훅을 재사용한다 = "소리 낼 순간" 훅에 가깝다. 여기에 스윙 궤적 같은 **시각** 연출을 매달면 기 모을 때마다 검을 휘두른다 — 시각을 붙일 땐 sfx id로 갈라내거나 별도 시그널을 파라
 signal player_roll(world_pos: Vector2)    # 플레이어 구르기 시작
 signal entity_died(kind: String, world_pos: Vector2)  # kind = "enemy"|"player" — 사망 확정 표시
 # 내 무기가 적중(공격자 로컬 예측 — 호스트 확정 전 즉발). 무기별 타격 손맛: Audio가 sfx(비면 무음),

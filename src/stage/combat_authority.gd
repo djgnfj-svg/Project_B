@@ -114,16 +114,19 @@ func _confirm_damage(health: HealthComponent, job: JobDef, attacker_id: int) -> 
 	health.apply_damage(CombatMath.calc_damage(job, bonus))
 
 
-# --- 투사체(궁수 활) 호스트 권한 (2026-07-24) — 화살 = 결정론 직선. 표시는 ArrowField(전 클라), 판정은 여기(호스트만) ---
-# 로컬 발사(호스트 자신) — 권한 화살 등록. 자기 발사는 신뢰(로컬 쿨다운이 발사율 제한). 게스트는 여기 안 옴(is_host 가드).
-func _on_player_shoot(shooter_id: int, origin: Vector2, dir: Vector2, aid: String, arrow_range: float) -> void:
+# --- 투사체(궁수 활·법사 차지 지팡이) 호스트 권한 (2026-07-24) — 결정론 직선. 표시는 ArrowField(전 클라), 판정은 여기(호스트만) ---
+# 로컬 발사(호스트 자신) — 권한 투사체 등록. 자기 발사는 신뢰(로컬 쿨다운·차지가 발사율 제한). 게스트는 여기 안 옴(is_host 가드).
+func _on_player_shoot(shooter_id: int, origin: Vector2, dir: Vector2, aid: String,
+		arrow_range: float, weapon_id: String, charge: int) -> void:
 	if not Net.is_host() or _stage_over:
 		return
-	_register_arrow(aid, origin, dir, shooter_id, arrow_range)
+	_register_arrow(aid, origin, dir, shooter_id, arrow_range, weapon_id, charge)
 
 
-# arrow_range는 arrow_lifetime_s가 MAX로 clamp한다 (게스트 스푸핑 상한, §3). 호스트 자기 발사는 로컬 무기값이라 안전.
-func _register_arrow(aid: String, origin: Vector2, dir: Vector2, shooter_id: int, arrow_range: float) -> void:
+# 속도·수명·폭발 반경은 GameState.projectile_params 단일 소스(§3) — 표시(ArrowField)와 같은 값이라
+# "맞는 곳=보이는 곳"이 유지된다. 게스트 주장(w·r·c)은 그 안에서 allowlist 리졸브·clamp된다.
+func _register_arrow(aid: String, origin: Vector2, dir: Vector2, shooter_id: int,
+		arrow_range: float, weapon_id: String, charge: int) -> void:
 	# 유한성 가드 — 게스트 발 dx/dy가 INF(JSON 1e999)면 normalized()가 NaN이 되어 == ZERO를 통과한다.
 	# apply_remote_pos의 Inf/NaN 방어와 일관되게 차단 (NaN 화살은 무해하나 리스트를 오염시키지 않게).
 	if aid.is_empty() or not (is_finite(dir.x) and is_finite(dir.y)):
@@ -131,28 +134,38 @@ func _register_arrow(aid: String, origin: Vector2, dir: Vector2, shooter_id: int
 	var d := dir.normalized()
 	if d == Vector2.ZERO:
 		return
-	_arrows.append({"aid": aid, "pos": origin, "dir": d,
-		"life": CombatMath.arrow_lifetime_s(arrow_range), "shooter": shooter_id})
+	var p := GameState.projectile_params(weapon_id, arrow_range, charge)
+	_arrows.append({"aid": aid, "pos": origin, "dir": d, "life": float(p["life"]),
+		"speed": float(p["speed"]), "blast": float(p["blast"]), "level": int(p["level"]),
+		"shooter": shooter_id})
 
 
-# 호스트 전용 — 권한 화살 전진 + 명중 판정. 매 프레임 거리 질의(is_arrow_hit)라 물리 레이어 함정(§5) 회피 + 단위 테스트 가능.
-# 첫 적중에서 멈춤(관통 없음). 발사율은 발사 시 is_fire_rate_ok로 이미 강제 — 명중엔 쿨다운 게이트 재적용 안 함(화살 하나=한 발).
+# 호스트 전용 — 권한 투사체 전진 + 명중 판정. 매 프레임 거리 질의(is_arrow_hit)라 물리 레이어 함정(§5) 회피 + 단위 테스트 가능.
+# 첫 적중에서 멈춤(관통 없음). 폭발탄(차지)은 그 지점에서 반경 판정(여러 적) + 빗나가도 만료 지점에서 폭발.
+# 발사율은 발사 시 is_fire_rate_ok로 이미 강제 — 명중엔 쿨다운 게이트 재적용 안 함(투사체 하나=한 발).
 func _physics_process(delta: float) -> void:
 	if not Net.is_host() or _stage_over or _arrows.is_empty():
 		return
-	var step := CombatMath.ARROW_SPEED * delta
 	var survivors: Array = []
 	for a: Dictionary in _arrows:
-		var pos := (a["pos"] as Vector2) + (a["dir"] as Vector2) * step
+		var pos := (a["pos"] as Vector2) + (a["dir"] as Vector2) * (float(a["speed"]) * delta)
 		a["pos"] = pos
 		a["life"] = float(a["life"]) - delta
+		var blast_r := float(a["blast"])
 		var hit_eid := _arrow_probe(pos)
 		if not hit_eid.is_empty():
-			_confirm_arrow_hit(hit_eid, int(a["shooter"]))
+			if blast_r > 0.0:
+				_confirm_blast(a, pos)  # 폭발탄 — 반경 안 전원(첫 적중 대상 포함)
+			else:
+				_confirm_arrow_hit(hit_eid, a)
 			_terminate_arrow(str(a["aid"]), pos)
-			continue  # 화살 소멸 — survivors에 안 넣음
+			continue  # 투사체 소멸 — survivors에 안 넣음
 		if float(a["life"]) <= 0.0:
-			continue  # 빗나감 — 표시 화살은 각 클라 로컬 수명으로 동시 소멸(브로드캐스트 불필요)
+			# 빗나감 — 표시 탄은 각 클라 로컬 수명으로 동시 소멸(브로드캐스트 불필요).
+			# 폭발탄은 그 자리에서 터진다: 판정은 여기(호스트), FX는 각 클라 arrow.expired 로컬(같은 지점).
+			if blast_r > 0.0:
+				_confirm_blast(a, pos)
+			continue
 		survivors.append(a)
 	_arrows = survivors
 
@@ -174,16 +187,47 @@ func _arrow_probe(pos: Vector2) -> String:
 	return ""
 
 
-# 호스트 전용 — 화살 명중 데미지 확정. calc_damage 단일 소스(§3), 공격자 job+장비 보너스. 쿨다운 게이트 없음(발사 시 강제).
-func _confirm_arrow_hit(eid: String, shooter_id: int) -> void:
+# 호스트 전용 — 투사체 데미지. calc_damage 단일 소스(§3, 공격자 job+장비 보너스) × 차지 배율(charge_damage).
+# 비차지(level 0)는 배율 1.0 = 항등이라 궁수 화살 동작이 그대로다. 발사자 이탈/무직업이면 0(무피해).
+func _projectile_damage(a: Dictionary) -> int:
+	var atk_p := _peer_sync.player(int(a["shooter"]))
+	if atk_p == null or atk_p.job == null:
+		return 0
+	return CombatMath.charge_damage(
+		CombatMath.calc_damage(atk_p.job, atk_p.equip_atk_bonus), int(a["level"]))
+
+
+# 호스트 전용 — 단일 명중(화살) 데미지 확정. 쿨다운 게이트 없음(발사 시 강제).
+func _confirm_arrow_hit(eid: String, a: Dictionary) -> void:
 	var entry_v: Variant = _enemies.get(eid)
 	if entry_v == null:
 		return
-	var atk_p := _peer_sync.player(shooter_id)
-	if atk_p == null or atk_p.job == null:
+	var dmg := _projectile_damage(a)
+	if dmg <= 0:
 		return
-	((entry_v as Dictionary)["health"] as HealthComponent).apply_damage(
-		CombatMath.calc_damage(atk_p.job, atk_p.equip_atk_bonus))
+	((entry_v as Dictionary)["health"] as HealthComponent).apply_damage(dmg)
+
+
+# 호스트 전용 — 폭발 확정(차지 무기): 반경 안 살아있는 적 전원에게 같은 데미지 1회.
+# 판정 반경 = 표시 폭발 FX 반경(둘 다 GameState.projectile_params → charge_blast_radius) — "맞는 곳=보이는 곳"(§3).
+# ⚠ 현재는 적만 친다 — 아군 오사(플레이어 피격)는 협동 설계상 없음(GDD §5 2인 협동). 넣으려면 여기에 플레이어 루프 추가.
+func _confirm_blast(a: Dictionary, center: Vector2) -> void:
+	var dmg := _projectile_damage(a)
+	if dmg <= 0:
+		return
+	var radius := float(a["blast"])
+	for eid: String in _enemies:
+		var entry := _enemies[eid] as Dictionary
+		var health := entry["health"] as HealthComponent
+		if health == null or health.is_dead():
+			continue
+		var root := entry["root"] as Node2D
+		if root == null:
+			continue
+		var def := entry["def"] as EnemyDef
+		var body_r := def.body_radius if def != null else 0.0
+		if CombatMath.is_blast_hit(root.global_position, center, radius, body_r):
+			health.apply_damage(dmg)
 
 
 # 호스트 전용 — 화살 종료 통지: 게스트는 G_ARROW_HIT로, 호스트 자신은 arrow_gone_local로(릴레이 미에코). ArrowField가 despawn.
@@ -345,15 +389,27 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			# 신뢰 경계(rules §3): 발사율(job 쿨다운) + 원점 근접 검증. 스팸·순간이동 원점 거부.
 			# 좌표는 net_anchor() — 표시 보간 지연 제외(사거리 검증과 같은 철학).
 			var now_shot := Time.get_ticks_msec()
-			if not CombatMath.is_fire_rate_ok(int(_last_shot_msec.get(from_id, -1000000000)), now_shot, shooter.job):
+			var last_shot := int(_last_shot_msec.get(from_id, -1000000000))
+			if not CombatMath.is_fire_rate_ok(last_shot, now_shot, shooter.job):
 				return
 			var origin := Vector2(float(data.get("ox", 0.0)), float(data.get("oy", 0.0)))
 			if not CombatMath.is_shot_origin_ok(shooter.net_anchor(), origin):
 				return
+			# 차지 레벨 검증(법사 지팡이, rules §3) — 주장한 단계만큼 실제로 모을 시간이 있었는가.
+			# ⚠ 무기는 **메시지 "w"가 아니라 그 피어가 G_STATS로 공지한 착용 무기**로 리졸브한다 —
+			#   안 그러면 전사/궁수가 w="worn_staff"를 실어 차지 배율(×3.4)과 광역 폭발을 얻는다(2026-07-24 리뷰).
+			#   표시(ArrowField)는 메시지 w를 쓰므로 사칭 시 그 클라 화면에만 폭발이 그려지고 판정은 안 난다(안전한 방향).
+			#   G_STATS 미도착 창에서는 ""(기본 화살) → 폭발/차지 없음. 관대한 쪽으로 실패하지 않는다.
+			# ⚠ 네트워크 지연은 도착을 늦출 뿐이라 정당한 발사를 떨구지 않는다(경과 시간이 길어지는 쪽).
+			var weapon_id := _peer_sync.peer_weapon_id(from_id)
+			var charge := CombatMath.clamp_charge_level(int(data.get("c", 0)))
+			var step_time := float(GameState.projectile_params(weapon_id, 0.0, charge)["step_time"])
+			if not CombatMath.is_charge_time_ok(last_shot, now_shot, charge, step_time):
+				return
 			_last_shot_msec[from_id] = now_shot
 			_register_arrow(aid_s, origin,
 				Vector2(float(data.get("dx", 1.0)), float(data.get("dy", 0.0))), from_id,
-				float(data.get("r", CombatMath.DEFAULT_ARROW_RANGE)))
+				float(data.get("r", CombatMath.DEFAULT_ARROW_RANGE)), weapon_id, charge)
 		NetSchema.G_ENEMY_HP:
 			if Net.is_host():
 				return  # 호스트 상태가 원본

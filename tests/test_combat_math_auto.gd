@@ -111,6 +111,54 @@ func _initialize() -> void:
 	failures += _check(is_equal_approx(CombatMath.clamp_arrow_range(INF), CombatMath.DEFAULT_ARROW_RANGE), "clamp_range: INF → DEFAULT (비유한 방어)")
 	failures += _check(is_equal_approx(CombatMath.arrow_lifetime_s(9999.0), CombatMath.MAX_ARROW_RANGE / CombatMath.ARROW_SPEED), "arrow_lifetime(9999): MAX로 clamp된 수명")
 
+	# --- 차지 발사(법사 지팡이) §3 계약 — 레벨 clamp·홀드→레벨·위력/반경 배율·폭발 판정·차지 시간 검증 ---
+	var step := 0.35  # worn_staff.charge_step_time
+	# 레벨 clamp — 게스트가 주장하는 c는 반드시 0..MAX 안으로 접힌다 (배열 인덱스 안전 + 위력 상한)
+	failures += _check(CombatMath.clamp_charge_level(-5) == 0, "charge clamp: 음수(-5) → 0")
+	failures += _check(CombatMath.clamp_charge_level(99) == CombatMath.MAX_CHARGE_LEVEL, "charge clamp: 과대(99) → MAX")
+	failures += _check(CombatMath.clamp_charge_level(2) == 2, "charge clamp: 정상(2) 통과")
+	# 홀드 시간 → 레벨 (단계 경계값)
+	failures += _check(CombatMath.charge_level_for(0.0, step) == 0, "charge_level: 탭(0s) → 0단계")
+	failures += _check(CombatMath.charge_level_for(0.349, step) == 0, "charge_level: 1단계 직전(0.349s) → 0")
+	failures += _check(CombatMath.charge_level_for(0.35, step) == 1, "charge_level: 1단계 경계(0.35s) → 1")
+	failures += _check(CombatMath.charge_level_for(1.05, step) == 3, "charge_level: 3단계 경계(1.05s) → 3")
+	failures += _check(CombatMath.charge_level_for(99.0, step) == CombatMath.MAX_CHARGE_LEVEL, "charge_level: 무한 홀드 → MAX에서 멈춤")
+	failures += _check(CombatMath.charge_level_for(1.0, 0.0) == 0, "charge_level: step 0(비차지 무기) → 0단계")
+	failures += _check(CombatMath.charge_level_for(NAN, step) == 0, "charge_level: NaN 홀드 → 0단계 (오염 가드)")
+	# 위력 배율 — 0단계는 항등(궁수 화살 동작 불변), 최대 단계는 배율 적용
+	failures += _check(CombatMath.charge_damage(16, 0) == 16, "charge_damage: 0단계 = 항등(비차지 무기 회귀 방어)")
+	failures += _check(CombatMath.charge_damage(16, 3) == int(round(16.0 * CombatMath.CHARGE_DAMAGE_MULT[3])), "charge_damage: 3단계 = 배율 적용")
+	failures += _check(CombatMath.charge_damage(16, 99) == CombatMath.charge_damage(16, CombatMath.MAX_CHARGE_LEVEL), "charge_damage: 과대 레벨 = MAX와 동일(스푸핑 상한)")
+	# 폭발 반경 — 무기 기준 × 레벨 배율, 상한 clamp, 0/비유한이면 폭발 없음(단일 명중)
+	failures += _check(is_equal_approx(CombatMath.charge_blast_radius(28.0, 0), 28.0), "blast_radius: 0단계 = 기준 반경")
+	failures += _check(is_equal_approx(CombatMath.charge_blast_radius(28.0, 3), 28.0 * CombatMath.CHARGE_RADIUS_MULT[3]), "blast_radius: 3단계 = 배율 적용")
+	failures += _check(is_equal_approx(CombatMath.charge_blast_radius(9999.0, 3), CombatMath.MAX_BLAST_RADIUS), "blast_radius: 과대 무기값 → MAX clamp(신뢰 경계)")
+	failures += _check(is_equal_approx(CombatMath.charge_blast_radius(0.0, 3), 0.0), "blast_radius: 기준 0(화살) → 폭발 없음")
+	failures += _check(is_equal_approx(CombatMath.charge_blast_radius(NAN, 2), 0.0), "blast_radius: NaN → 폭발 없음(오염 가드)")
+	# 폭발 명중 — 반경 + 적 body_radius (거대 적 §3 대응), 경계값
+	failures += _check(CombatMath.is_blast_hit(Vector2(40.0, 0.0), Vector2.ZERO, 40.0), "blast_hit: 경계선(40) 적중")
+	failures += _check(not CombatMath.is_blast_hit(Vector2(40.1, 0.0), Vector2.ZERO, 40.0), "blast_hit: 반경 밖(40.1) 빗나감")
+	failures += _check(CombatMath.is_blast_hit(Vector2(54.0, 0.0), Vector2.ZERO, 40.0, 14.0), "blast_hit: 브루트 body14 경계선(40+14) 적중")
+	# 차지 시간 검증 — "그만큼 모을 시간이 있었는가" (연사하며 MAX 주장하는 스푸핑 차단)
+	failures += _check(CombatMath.is_charge_time_ok(1000, 1000, 0, step), "charge_time: 0단계는 언제나 허용(탭 발사)")
+	failures += _check(not CombatMath.is_charge_time_ok(1000, 1100, 3, step), "charge_time: 0.1s 만에 3단계 주장 거부")
+	# 경계 ≈ 3×0.35×0.9 = 945ms. 부동소수 반올림에 테스트가 흔들리지 않게 ±5ms 밖에서 확인한다.
+	failures += _check(not CombatMath.is_charge_time_ok(1000, 1940, 3, step), "charge_time: 3단계 창 직전(940ms) 거부")
+	failures += _check(CombatMath.is_charge_time_ok(1000, 1950, 3, step), "charge_time: 3단계 창 경과(950ms) 허용")
+	failures += _check(CombatMath.is_charge_time_ok(1000, 1320, 1, step), "charge_time: 1단계 창(315ms) 경과 허용")
+	failures += _check(not CombatMath.is_charge_time_ok(1000, 1300, 1, step), "charge_time: 1단계 창 직전(300ms) 거부")
+	failures += _check(not CombatMath.is_charge_time_ok(1000, 9000, 2, 0.0), "charge_time: 비차지 무기(step 0)의 레벨 주장 거부")
+	# 투사체 속도 clamp — 무기별 탄속(느린 마법탄)의 유일한 진입점
+	failures += _check(is_equal_approx(CombatMath.clamp_projectile_speed(0.0), CombatMath.ARROW_SPEED), "proj_speed: 미지정(0) → 기본 화살 속도")
+	failures += _check(is_equal_approx(CombatMath.clamp_projectile_speed(240.0), 240.0), "proj_speed: 정상(240) 통과")
+	failures += _check(is_equal_approx(CombatMath.clamp_projectile_speed(99999.0), CombatMath.MAX_PROJECTILE_SPEED), "proj_speed: 과대 → MAX clamp")
+	failures += _check(is_equal_approx(CombatMath.clamp_projectile_speed(NAN), CombatMath.ARROW_SPEED), "proj_speed: NaN → 기본(오염 가드)")
+	# 수명 = clamp(사거리)/clamp(속도) — 표시(ArrowField)와 호스트 판정이 같은 값을 얻는 결정론 근거
+	failures += _check(is_equal_approx(CombatMath.projectile_lifetime_s(240.0, 240.0), 1.0), "proj_lifetime: 240px/240speed = 1.0s")
+	failures += _check(is_equal_approx(CombatMath.projectile_lifetime_s(240.0, 0.0), 240.0 / CombatMath.ARROW_SPEED), "proj_lifetime: 속도 0 → 기본 속도로 계산")
+	# 터널링 불변식(§3 주석) — 프레임당 전진 < 최소 명중 지름. MAX_PROJECTILE_SPEED를 올리면 여기가 빨개진다.
+	failures += _check(CombatMath.MAX_PROJECTILE_SPEED / 60.0 < 2.0 * (CombatMath.ARROW_HIT_RADIUS + 6.0), "터널링 불변식: 프레임 전진 < 최소 명중 지름(body_radius 6 기준)")
+
 	if failures == 0:
 		print("TEST_OK combat_math")
 		quit(0)

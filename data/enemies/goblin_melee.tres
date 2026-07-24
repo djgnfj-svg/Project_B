@@ -36,6 +36,7 @@ script = ExtResource("1")
 display_name = "고블린 근접병"
 max_hp = 15
 respawns = false
+body_radius = 10.0
 frames = ExtResource("2")
 move_speed = 70.0
 aggro_range = 140.0

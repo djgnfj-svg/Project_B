@@ -26,6 +26,9 @@ const SFX := {
 	"pickup_gold": "pickup_gold",  # 골드 픽업(item_picked kind=gold)
 	"blueprint": "blueprint",    # 도면 신규 언락 팡파레(blueprint_unlocked)
 	"bow_fire": "bow_fire",      # 활 발사(시위 튕김) — 궁수 EquipDef.swing_sfx (player_shoot). 명중음은 combat_impact "hit"이 담당
+	"charge_step": "charge_step",  # 차지 단계 상승 "띵" — 법사 EquipDef.charge_sfx (로컬 입력·원격 G_POS "c" 상승 시)
+	"staff_fire": "staff_fire",  # 지팡이 마법탄 발사 — 법사 EquipDef.swing_sfx
+	"blast": "blast",            # 차지 착탄 폭발 — EquipDef.blast_sfx (ArrowField가 weapon_impact로 발화, 각 클라 로컬)
 }
 
 var _players: Array[AudioStreamPlayer] = []

@@ -35,6 +35,13 @@ const ENEMY_BODY_MASK := 1 << 2  # 물리 레이어 3 enemy_body — rules §5 �
 const MUZZLE_OFFSET := 26.0          # 발사 원점 = 몸 중심 → 조준 방향 이만큼 앞. 화살 길이 18(반9)+몸 반경 16 → 26이면 화살 뒤끝(17)이 몸 밖 (겹침 방지). SHOT_ORIGIN_TOL이 이 값+지연을 수용
 const RECOIL_DIST := 4.0             # 발사 시 활을 뒤로 당기는 거리(px) — 반동 손맛
 const RECOIL_TIME := 0.14            # 반동 복귀 시간(s)
+# 차지 발사(charge 무기 = 법사 지팡이) — 표시 연출값(§0 예외, 사용자 튜닝).
+# 단계 수·위력/반경 배율은 CombatMath.CHARGE_*(§3 단일 소스), 단계 시간은 무기별(EquipDef.charge_step_time).
+const CHARGE_MOVE_MULT := 0.5        # 기 모으는 동안 걷기 속도 배율 (모으는 대가 — 구르기로 취소 가능)
+const ORB_LERP := 14.0               # 차지 오브 크기 보간 속도
+const ORB_POP := 0.55                # 단계 상승 순간 확대 비율
+const ORB_POP_TIME := 0.16           # 그 팝이 가라앉는 시간(s)
+const REMOTE_CHARGE_SFX_MIN_MS := 250  # 원격 차지음 최소 간격 — G_POS "c"를 0↔2로 진동시켜 소리를 도배하는 그리핑 차단 (play_roll_fx 창-잠금 미러). 정직한 단계 상승은 350ms 간격이라 안 걸린다
 
 @export var job: JobDef
 
@@ -61,7 +68,10 @@ var _swing_arc: float = SWING_HALF_ARC
 var _swing_time: float = ATTACK_ANIM_TIME
 var _swing_lunge: float = LUNGE_DIST
 var _hold_dist: float = HOLD_DIST       # 몸 중심 → 무기 그립 거리 (무기별 = EquipDef.weapon_hold_dist, 대검 8·활 20)
-var _arrow_range: float = 360.0         # shoot 무기 화살 사거리 (무기별 = EquipDef.arrow_range) — _fire_arrow가 G_SHOOT로 전송
+var _arrow_range: float = 360.0         # shoot/charge 무기 투사체 사거리 (무기별 = EquipDef.arrow_range) — 발사 시 G_SHOOT로 전송
+var _weapon_id: String = ""             # 착용 무기 id — G_SHOOT "w"(수신 측이 탄 겉모습/속도/폭발 반경을 allowlist 리졸브)
+var _charge_step_time: float = 0.0      # charge 무기: 한 단계 모으는 시간(s). 0 = 차지 무기 아님
+var _charge_sfx: String = "charge_step"  # 단계 상승 효과음 id (무기별 = EquipDef.charge_sfx)
 
 var _remote_target: Vector2 = Vector2.ZERO
 var _remote_flip: bool = false
@@ -74,8 +84,15 @@ var _fx_left: float = 0.0
 var _fx_delay_left: float = 0.0
 var _fx_dir: Vector2 = Vector2.RIGHT
 var _attack_queued: bool = false
-var _shot_seq: int = 0          # 로컬 발사 카운터 — 화살 고유 id "my_id:seq" 생성 (shoot 무기)
+var _shot_seq: int = 0          # 로컬 발사 카운터 — 투사체 고유 id "my_id:seq" 생성 (shoot/charge 무기)
 var _recoil_left: float = 0.0   # 발사 반동 잔여(s) — _update_weapon이 활을 뒤로 당김 (로컬·원격 공용 연출)
+# 차지(charge 무기) — 로컬은 입력에서, 원격은 G_POS "c"에서. 레벨 자체는 표시용이고 실제 발사 레벨은 호스트가 재검증(§3).
+var _charging: bool = false
+var _charge_held: float = 0.0     # 누른 시간(s) — 레벨 = CombatMath.charge_level_for(held, step)
+var _charge_level: int = 0
+var _remote_charge: int = -1      # 원격 피어의 차지 레벨(-1 = 차지 중 아님) — G_POS "c" 디코드(표시 전용)
+var _orb_pop_left: float = 0.0    # 단계 상승 팝 잔여(s)
+var _remote_charge_sfx_msec: int = -1000000000  # 원격 차지음 스팸 게이트 앵커
 var _last_remote_msec: int = -1
 var _alive: bool = true
 var _saved_layer: int = 0
@@ -97,6 +114,7 @@ var _prev_hp: int = 0  # 피격 손맛(combat_impact 감소량) 계산용 — hp
 @onready var _camera: Camera2D = $Camera
 @onready var _shadow: Sprite2D = $Shadow
 @onready var _dust: CPUParticles2D = $Dust
+@onready var _charge_orb: Sprite2D = $ChargeOrb
 
 
 func _ready() -> void:
@@ -110,6 +128,9 @@ func _ready() -> void:
 	if job != null:
 		_health.setup(job.max_hp)
 		_prev_hp = job.max_hp
+	# @onready 자식에 의존하는 무기 표시값(차지 오브 텍스처) 재적용 — set_weapon_visual이 _ready 전에
+	# 불리는 경로가 생겨도 오브가 조용히 무텍스처로 남지 않게 (현 호출 경로는 전부 ready 이후, 심층 방어)
+	_apply_weapon_feel(_weapon_override)
 
 
 func setup(p_peer_id: int, p_is_local: bool, spawn_pos: Vector2, p_scene_id: String) -> void:
@@ -187,7 +208,20 @@ func _apply_weapon_feel(equip: EquipDef) -> void:
 	_swing_time = equip.swing_time if equip != null else ATTACK_ANIM_TIME
 	_swing_lunge = equip.swing_lunge if equip != null else LUNGE_DIST
 	_hold_dist = equip.weapon_hold_dist if equip != null else HOLD_DIST  # 큰 무기(활)는 멀리 잡아 몸과 안 겹침
-	_arrow_range = equip.arrow_range if equip != null else CombatMath.DEFAULT_ARROW_RANGE  # shoot 무기 사거리
+	_arrow_range = equip.arrow_range if equip != null else CombatMath.DEFAULT_ARROW_RANGE  # shoot/charge 사거리
+	_weapon_id = equip.id if equip != null else ""  # G_SHOOT "w" — 수신 측 탄 겉모습/속도/폭발 반경 리졸브 키
+	# 차지(charge 무기) — 무기가 바뀌면 모으던 것도 취소한다(무장 해제·교체 중 유령 오브 방지)
+	var is_charge := equip != null and equip.motion_type == "charge"
+	_charge_step_time = equip.charge_step_time if is_charge else 0.0
+	_charge_sfx = equip.charge_sfx if (is_charge and not equip.charge_sfx.is_empty()) else "charge_step"
+	if is_node_ready():
+		# 차지 오브 = 그 무기의 투사체 텍스처(표시 전용) — 모으는 탄과 날아가는 탄이 같은 그림.
+		# ⚠ 틴트 없음(항등 흰색): 탄 텍스처는 이미 제 색을 갖고 있어 swing_color를 곱하면 탁해진다.
+		#   swing_color는 **중립(흰색) 폭발 텍스처를 원소색으로 물들이는 용도**다 (불=주황, 이후 얼음=파랑).
+		_charge_orb.texture = equip.projectile_texture if is_charge else null
+		_charge_orb.modulate = Color(1, 1, 1, 1)
+	if not is_charge:
+		_cancel_charge()
 
 
 # 궤적 페이드 색 — 무기 틴트 rgb 유지, 알파만 페이드로 구동
@@ -287,6 +321,9 @@ func _update_life_state(p_hp: int) -> void:
 		_roll_time_left = 0.0
 		_remote_roll_left = 0.0
 		_attack_anim_left = 0.0  # 사망 직전 발동한 공격 스윙이 고스트에 남지 않게
+		_cancel_charge()         # 모으던 차지도 소멸 — 고스트가 기를 모으고 있지 않게
+		_remote_charge = -1      # 원격 아바타의 차지 오브도 즉시 정리(사망 시 마지막 c가 남아 떠 있지 않게)
+		_charge_orb.visible = false
 		if is_local:
 			_sprite.modulate.a = GHOST_ALPHA
 		else:
@@ -297,7 +334,7 @@ func _physics_process(delta: float) -> void:
 	_tick_timers(delta)
 	if is_local:
 		_local_move(delta)
-		_local_combat()
+		_local_combat(delta)
 		_send_pos(delta)
 	else:
 		_remote_moving = global_position.distance_to(_remote_target) > 1.0
@@ -305,6 +342,7 @@ func _physics_process(delta: float) -> void:
 		_sprite.flip_h = _remote_flip
 	_update_anim()
 	_update_weapon(delta)
+	_update_charge_orb(delta)
 	_update_dust()
 
 
@@ -320,6 +358,7 @@ func _tick_timers(delta: float) -> void:
 	_remote_roll_left = maxf(0.0, _remote_roll_left - delta)
 	_attack_anim_left = maxf(0.0, _attack_anim_left - delta)
 	_recoil_left = maxf(0.0, _recoil_left - delta)
+	_orb_pop_left = maxf(0.0, _orb_pop_left - delta)
 	if _fx_delay_left > 0.0:
 		_fx_delay_left -= delta
 		if _fx_delay_left <= 0.0:
@@ -395,6 +434,29 @@ func _update_weapon(delta: float) -> void:
 	_weapon_pivot.visible = _alive and _roll_time_left <= 0.0 and _remote_roll_left <= 0.0
 
 
+# 차지 오브 표시 — 지팡이 끝(= 발사 원점)에서 단계별로 커지는 마법구. 전부 표시 전용(판정 무관).
+# 로컬은 내 차지 상태, 원격은 G_POS "c"(차지 중이면 레벨+1, 아니면 0으로 인코딩)에서 온다.
+# 사망·구르기·무장 해제·비차지 무기면 숨긴다(유령 오브 방지).
+func _update_charge_orb(delta: float) -> void:
+	var lv := -1
+	if is_local:
+		if _charging:
+			lv = _charge_level
+	else:
+		lv = _remote_charge
+	if lv < 0 or not _alive or _charge_orb.texture == null \
+			or _roll_time_left > 0.0 or _remote_roll_left > 0.0:
+		_charge_orb.visible = false
+		_charge_orb.scale = Vector2.ONE * 0.1  # 다음 차지는 다시 작게 시작 (자라나는 느낌)
+		return
+	_charge_orb.visible = true
+	_charge_orb.position = Vector2(MUZZLE_OFFSET, 0.0).rotated(_aim_angle)
+	var pop := 1.0 + ORB_POP * (_orb_pop_left / ORB_POP_TIME)  # 단계 상승 순간 부풀었다 가라앉음
+	var target := CombatMath.CHARGE_ORB_SCALE[CombatMath.clamp_charge_level(lv)] * pop
+	_charge_orb.scale = _charge_orb.scale.lerp(Vector2.ONE * target, minf(1.0, ORB_LERP * delta))
+	_charge_orb.rotation += 5.0 * delta  # 자전 — 에너지가 도는 느낌
+
+
 func _local_move(delta: float) -> void:
 	var dir := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	if seated:
@@ -409,7 +471,9 @@ func _local_move(delta: float) -> void:
 		_roll_time_left -= delta
 		velocity = _roll_dir * job.move_speed * ROLL_SPEED_MULT  # 구르기는 늪 슬로우 예외 — 늪 탈출 수단
 	else:
-		velocity = dir * job.move_speed * _swamp_mult()  # 걷기만 늪 배율 적용
+		# 걷기만 늪 배율 적용. 기 모으는 중(charge 무기)이면 추가로 느려진다 — 모으는 대가(사용자 확정)
+		var charge_mult := CHARGE_MOVE_MULT if _charging else 1.0
+		velocity = dir * job.move_speed * _swamp_mult() * charge_mult
 		if _alive and Input.is_action_just_pressed("roll") and _roll_cd_left <= 0.0:
 			_roll_dir = dir if dir != Vector2.ZERO else _aim_dir()
 			_roll_time_left = CombatMath.ROLL_TIME_S
@@ -432,20 +496,59 @@ func _weapon_motion() -> String:
 	return _weapon_override.motion_type if _weapon_override != null else "swing"
 
 
-func _local_combat() -> void:
+func _local_combat(delta: float) -> void:
 	var want := _attack_queued
 	_attack_queued = false
 	if not _alive:
+		_cancel_charge()  # 사망 = 모으던 것 소멸 (고스트가 계속 모으지 않게)
 		return
 	# 무장 해제(무기 미착용) = 공격 불가 — 판정·궤적·소리 전부 안 나간다. 무기가 곧 공격 수단.
+	var motion := _weapon_motion()
+	if motion == "charge" and _is_armed():
+		_tick_charge(delta, want)  # 누르고 있는 동안 모으고, 떼면 발사 (쿨다운 게이트는 안에서)
+		return
 	if want and _attack_cd_left <= 0.0 and _roll_time_left <= 0.0 and _is_armed():
 		_attack_cd_left = job.attack_cooldown
 		var dir := _aim_dir()
-		# 모션 타입 분기 (§2 게이트): shoot = 원거리 발사(화살), 그 외 = 근접 호 스윙. thrust는 예약.
-		if _weapon_motion() == "shoot":
-			_fire_arrow(dir)
+		# 모션 타입 분기 (§2 게이트): shoot = 원거리 발사(화살), charge = 위에서 처리, 그 외 = 근접 호 스윙.
+		if motion == "shoot":
+			_fire_projectile(dir, 0)
 		else:
 			_swing_attack(dir)
+
+
+# 차지 발사(charge 무기) — 누른 순간 모으기 시작, 단계는 홀드 시간에서 리졸브(CombatMath 단일 소스),
+# 떼면 그 단계로 발사. 구르기·사망·무기 교체는 취소. 모으는 동안 이동은 CHARGE_MOVE_MULT로 느려진다.
+# ⚠ 시작은 _unhandled_input(UI가 소비한 클릭은 안 옴)이지만 유지·해제는 폴링이다 —
+#   UI 위에서 버튼을 떼도 발사가 되도록(안 그러면 영구 차지 상태로 잠긴다).
+func _tick_charge(delta: float, want: bool) -> void:
+	if _roll_time_left > 0.0:
+		_cancel_charge()  # 구르기로 취소 (사용자 확정: 모으는 중 위험하면 굴러서 뺀다)
+		return
+	if not _charging:
+		if want and _attack_cd_left <= 0.0:
+			_charging = true
+			_charge_held = 0.0
+			_charge_level = 0
+		return
+	if Input.is_action_pressed("attack"):
+		_charge_held += delta
+		var lv := CombatMath.charge_level_for(_charge_held, _charge_step_time)
+		if lv > _charge_level:
+			_charge_level = lv
+			_orb_pop_left = ORB_POP_TIME
+			EventBus.player_swing.emit(global_position, _charge_sfx)  # 단계 상승 "딸깍" (로컬)
+		return
+	var level := _charge_level
+	_cancel_charge()
+	_attack_cd_left = job.attack_cooldown
+	_fire_projectile(_aim_dir(), level)
+
+
+func _cancel_charge() -> void:
+	_charging = false
+	_charge_held = 0.0
+	_charge_level = 0
 
 
 # 근접 호 스윙 — 로컬 원형 질의 판정(즉시, 프레임 지연 없음). 확정은 호스트(attack_hit → CombatAuthority).
@@ -476,18 +579,20 @@ func _swing_attack(dir: Vector2) -> void:
 		EventBus.weapon_impact.emit(center, _hit_sfx, _hit_shake)
 
 
-# 원거리 발사(shoot 무기 = 활) — 표시 화살 스폰(로컬)·G_SHOOT 송신(원격 표시)·(호스트) 권한 화살 등록.
-# 명중 판정·데미지는 호스트 CombatAuthority가 화살을 추적해 확정한다 (근접의 로컬 원형 질의 대신). 여기선 판정 없음.
-func _fire_arrow(dir: Vector2) -> void:
+# 원거리 발사(shoot = 활 · charge = 지팡이) — 표시 투사체 스폰(로컬)·G_SHOOT 송신(원격 표시)·(호스트) 권한 투사체 등록.
+# 명중·폭발 판정과 데미지는 호스트 CombatAuthority가 투사체를 추적해 확정한다 (근접의 로컬 원형 질의 대신). 여기선 판정 없음.
+# charge = 차지 레벨(0~3, 비차지 무기는 0) — 호스트가 clamp + 차지 시간 재검증(§3 신뢰 경계).
+func _fire_projectile(dir: Vector2, charge: int) -> void:
 	var origin := global_position + dir * MUZZLE_OFFSET
 	_shot_seq += 1
 	var aid := str(Net.my_id) + ":" + str(_shot_seq)
-	_recoil_left = RECOIL_TIME  # 활 반동 연출
-	# player_shoot: ArrowField가 표시 화살 스폰 + (호스트 자신이면) CombatAuthority가 권한 화살 등록
-	EventBus.player_shoot.emit(Net.my_id, origin, dir, aid, _arrow_range)
+	_recoil_left = RECOIL_TIME  # 활 반동/지팡이 반동 연출
+	# player_shoot: ArrowField가 표시 투사체 스폰 + (호스트 자신이면) CombatAuthority가 권한 투사체 등록
+	EventBus.player_shoot.emit(Net.my_id, origin, dir, aid, _arrow_range, _weapon_id, charge)
 	EventBus.player_swing.emit(global_position, _swing_sfx)  # 발사 SFX (swing_sfx 재활용 = 시위·발사음)
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_SHOOT, "ox": origin.x, "oy": origin.y,
-		"dx": dir.x, "dy": dir.y, "aid": aid, "r": _arrow_range})
+		"dx": dir.x, "dy": dir.y, "aid": aid, "r": _arrow_range,
+		"w": _weapon_id, "c": charge})
 
 
 func _aim_dir() -> Vector2:
@@ -550,16 +655,30 @@ func _send_pos(delta: float) -> void:
 			"y": global_position.y,
 			"f": _sprite.flip_h,
 			"a": snappedf(_aim_angle, 0.01),  # 조준각 — 원격 무기 표시 전용 (판정 아님)
+			# 차지 상태 — 0 = 안 모으는 중, 그 외 = 레벨+1 (0단계 차지와 비차지를 구분하려는 인코딩).
+			# 표시 전용이다: 실제 발사 레벨은 G_SHOOT "c"를 호스트가 차지 시간으로 재검증한다 (§3).
+			"c": (_charge_level + 1) if _charging else 0,
 		})
 
 
 # 원격 위치 반영 — 메시지 간 변위를 최대 이동 속도로 클램프한다.
 # 호스트의 사거리 검증(§3)이 이 표시 좌표를 기준으로 하므로, 클램프 없이는 순간이동 스푸핑으로 검증이 무력화된다.
-func apply_remote_pos(pos: Vector2, flip: bool, aim: float) -> void:
+func apply_remote_pos(pos: Vector2, flip: bool, aim: float, charge_code: int = 0) -> void:
 	# Inf/NaN 주입 가드 — JSON은 1e999 같은 오버플로를 Inf로 파싱한다. lerp_angle(유한, INF)=NaN이
 	# 한 발로 _aim_angle을 영구 오염시키고, pos 쪽은 net_anchor()를 타 호스트 판정까지 닿는다 (리뷰 Important).
 	if is_finite(aim):
 		_remote_aim = wrapf(aim, -PI, PI)
+	# 원격 차지 표시 — 0 = 안 모으는 중, 그 외 = 레벨+1. clamp로 범위 밖 값은 무해화(표시 전용, 판정 아님).
+	var new_charge := clampi(charge_code, 0, CombatMath.MAX_CHARGE_LEVEL + 1) - 1
+	if new_charge > _remote_charge and new_charge > 0:
+		_orb_pop_left = ORB_POP_TIME
+		# 상대가 단계를 올리는 "딸깍". ⚠ "직전보다 높으면"만으로는 못 막는다 — c를 0↔2로 진동시키면
+		# 매 G_POS(15Hz)마다 상승으로 보인다 → 최소 간격 게이트로 도배 차단 (play_roll_fx 창-잠금과 같은 이유).
+		var now_sfx := Time.get_ticks_msec()
+		if now_sfx - _remote_charge_sfx_msec >= REMOTE_CHARGE_SFX_MIN_MS:
+			_remote_charge_sfx_msec = now_sfx
+			EventBus.player_swing.emit(global_position, _charge_sfx)
+	_remote_charge = new_charge
 	if not (is_finite(pos.x) and is_finite(pos.y)):
 		return  # 무효 좌표는 통째로 무시 — 이전 앵커 유지
 	var now := Time.get_ticks_msec()
