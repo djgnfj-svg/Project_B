@@ -46,9 +46,12 @@ signal stage_wiped
 signal combat_impact(kind: String, world_pos: Vector2, amount: int)
 signal screen_shake(strength: float)  # 명시적 셰이크 트리거 (사망·보스 슬램 등) — 카메라가 소비
 # 소리/연출 트리거 (표시·소리 전용, 각 클라 로컬) — Audio가 SFX로, 필요시 연출이 구독.
-signal player_swing(world_pos: Vector2)   # 플레이어 공격 스윙(로컬·원격 연출 시점)
+signal player_swing(world_pos: Vector2, sfx: String)   # 플레이어 공격 스윙(로컬·원격 연출 시점) — sfx = 무기 스윙음 id(EquipDef.swing_sfx)
 signal player_roll(world_pos: Vector2)    # 플레이어 구르기 시작
 signal entity_died(kind: String, world_pos: Vector2)  # kind = "enemy"|"player" — 사망 확정 표시
+# 내 무기가 적중(공격자 로컬 예측 — 호스트 확정 전 즉발). 무기별 타격 손맛: Audio가 sfx(비면 무음),
+# 카메라가 shake. 범용 "피격" 연출(플래시·데미지 숫자·범용 히트음)은 combat_impact가 별도로 담당한다.
+signal weapon_impact(world_pos: Vector2, sfx: String, shake: float)
 
 # --- 드랍/인벤 (드랍·제작 2026-07-23) ---
 signal enemy_killed(eid: String, def: EnemyDef, world_pos: Vector2)  # 호스트 전용 emit(CombatAuthority, hp<=0 확정) — DropAuthority가 드랍 롤 트리거

@@ -180,6 +180,38 @@ def pickup_gold():
         out.append((0.4*math.sin(ph) + 0.18*math.sin(2*ph)) * e * 0.5)
     return out
 
+# 11. swing_heavy — 무거운 대검 스워시(swing보다 낮고 길고 묵직, 저역 바람 whoomph)
+def swing_heavy():
+    total = n(0.24)
+    raw = [(random.random()*2-1) for _ in range(total)]
+    lp = lowpass(raw, 0.5)
+    hp = [raw[i] - lp[i] for i in range(total)]
+    body = lowpass(hp, 0.55)          # 고역을 더 눌러 저역 바람 성분 강조
+    low = lowpass(raw, 0.12)          # 저음 whoomph 층
+    out = []
+    dur = total / SR
+    for i in range(total):
+        t = i / SR
+        # swing보다 느린 상승·긴 하강 = 무겁게 지나가는 큰 검
+        e = (t / 0.035) if t < 0.035 else max(0.0, 1.0 - (t - 0.035) / (dur - 0.035))
+        out.append((body[i]*0.32 + low[i]*0.5) * e * 0.5)
+    return out
+
+# 12. thud — 대검 적중 묵직한 쿵(hit보다 낮고 무거운 저역 사인 + 짧은 노이즈 딱)
+def thud():
+    total = n(0.15)
+    out = []
+    ph = 0.0
+    for i in range(total):
+        e = env_ad(i, total, 0.002, 0.13)
+        t = i / SR
+        f = 110 - 45*(t/(total/SR))   # 낮은 저역, 살짝 하강
+        ph += 2*math.pi*f/SR
+        tone = 0.7 * math.sin(ph) + 0.2*square(ph)
+        trans = 0.8 * (random.random()*2-1) * math.exp(-t*70)  # 초반 임팩트 딱
+        out.append((tone*0.75 + trans) * e * 0.85)
+    return lowpass(out, 0.55)
+
 # 10. blueprint — 도면 획득 팡파레(상승 아르페지오 C-E-G-C)
 def blueprint():
     total = n(0.42)
@@ -206,4 +238,6 @@ write_wav("drop", drop())
 write_wav("pickup_item", pickup_item())
 write_wav("pickup_gold", pickup_gold())
 write_wav("blueprint", blueprint())
+write_wav("swing_heavy", swing_heavy())
+write_wav("thud", thud())
 print("done")

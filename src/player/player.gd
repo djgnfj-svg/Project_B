@@ -8,6 +8,7 @@ const HealthComponent := preload("res://src/combat/health_component.gd")
 const HitStop := preload("res://src/feel/hit_stop.gd")
 const HitFlash := preload("res://src/feel/hit_flash.gd")
 const Flinch := preload("res://src/feel/flinch.gd")
+const DEFAULT_SWOOSH := preload("res://assets/sprites/fx/swoosh_arc.png")  # 무기가 궤적을 안 지정할 때 폴백
 
 # 연출값 (rules §0 예외 — 사용자가 플레이하며 조인다)
 # ⚠ 구르기 시간·쿨다운은 여기 없다 — CombatMath.ROLL_TIME_S/ROLL_COOLDOWN_S(§3 단일 소스,
@@ -43,6 +44,13 @@ var equip_hp_bonus: int = 0   # 착용 장비 체력 보너스 — max_hp = job.
 # _weapon_grip은 _update_weapon이 매 프레임 참조 → 착용/직업에 따라 바뀌므로 멤버로 보관(job.weapon_grip 직참 금지).
 var _weapon_grip: Vector2 = Vector2(4.0, 8.0)
 var _weapon_override: EquipDef = null       # 마지막 착용 무기 — set_job 재호출(재공지/재합류) 시 겉모습 유지용 보관. null = 무장 해제
+
+# 무기 손맛 — set_weapon_visual이 착용 무기(EquipDef)에서 세팅, 미착용/미지정이면 기본값 폴백. 전부 표시 전용(네트워크 0).
+var _swoosh_radius: float = SWOOSH_TEX_RADIUS  # 현재 궤적 텍스처의 바깥 반지름 — FX 스케일 정합(§3)
+var _swing_color: Color = Color(1, 1, 1, 1)    # 궤적 틴트(페이드 알파와 곱해 적용)
+var _swing_sfx: String = "swing"               # 스윙(휘두름) 효과음 id
+var _hit_sfx: String = ""                       # 적중 시 무기 고유 타격음 id (비면 무음)
+var _hit_shake: float = 1.5                     # 적중 시 스크린셰이크 강도
 
 var _remote_target: Vector2 = Vector2.ZERO
 var _remote_flip: bool = false
@@ -144,6 +152,28 @@ func set_weapon_visual(equip: EquipDef) -> void:
 	_weapon_grip = grip
 	_weapon.position = -grip + Vector2(HOLD_DIST, 0.0)
 	_weapon_pivot.visible = tex != null
+	_apply_weapon_feel(equip)
+
+
+# 무기 손맛(궤적 텍스처·반지름·색·SFX·타격 셰이크) 반영 — 착용 무기가 지정하면 그 값, 아니면 기본 swoosh.
+# set_weapon_visual이 로컬·원격 모두 부르므로 무기 교체 시 손맛도 자동으로 갈린다 (표시 전용, 판정 무관).
+func _apply_weapon_feel(equip: EquipDef) -> void:
+	if equip != null and equip.swing_texture != null:
+		_attack_fx.texture = equip.swing_texture
+		_swoosh_radius = maxf(1.0, equip.swing_tex_radius)
+		_swing_color = equip.swing_color
+	else:
+		_attack_fx.texture = DEFAULT_SWOOSH
+		_swoosh_radius = SWOOSH_TEX_RADIUS
+		_swing_color = Color(1, 1, 1, 1)
+	_swing_sfx = equip.swing_sfx if equip != null and not equip.swing_sfx.is_empty() else "swing"
+	_hit_sfx = equip.hit_sfx if equip != null else ""
+	_hit_shake = equip.hit_shake if equip != null else 1.5
+
+
+# 궤적 페이드 색 — 무기 틴트 rgb 유지, 알파만 페이드로 구동
+func _fx_color(alpha: float) -> Color:
+	return Color(_swing_color.r, _swing_color.g, _swing_color.b, alpha * _swing_color.a)
 
 
 func is_alive() -> bool:
@@ -272,13 +302,13 @@ func _tick_timers(delta: float) -> void:
 			var reach := CombatMath.attack_center_offset(_fx_dir, job).length() + CombatMath.attack_radius(job)
 			_attack_fx.rotation = _fx_dir.angle()
 			_attack_fx.position = Vector2.ZERO
-			_attack_fx.scale = Vector2.ONE * (reach / SWOOSH_TEX_RADIUS)
-			_attack_fx.modulate.a = 1.0
+			_attack_fx.scale = Vector2.ONE * (reach / _swoosh_radius)  # 무기별 궤적 반지름 정합(§3)
+			_attack_fx.modulate = _fx_color(1.0)
 			_attack_fx.visible = true
 			_fx_left = ATTACK_FX_TIME
 	if _fx_left > 0.0:
 		_fx_left -= delta
-		_attack_fx.modulate.a = clampf(_fx_left / ATTACK_FX_TIME, 0.0, 1.0)
+		_attack_fx.modulate = _fx_color(clampf(_fx_left / ATTACK_FX_TIME, 0.0, 1.0))
 		if _fx_left <= 0.0:
 			_attack_fx.visible = false
 
@@ -379,7 +409,7 @@ func _local_combat() -> void:
 		_attack_anim_left = ATTACK_ANIM_TIME
 		var dir := _aim_dir()
 		_show_attack_fx(dir)
-		EventBus.player_swing.emit(global_position)  # 스윙 SFX (로컬)
+		EventBus.player_swing.emit(global_position, _swing_sfx)  # 스윙 SFX (로컬 — 무기별 휘두름음)
 		Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ATK, "dx": dir.x, "dy": dir.y})
 		# 판정: 조준 방향 원형 질의 (Area 노드 대신 즉시 질의 — 프레임 지연 없음)
 		# 기하는 CombatMath 단일 소스 — FX 위치(_show_attack_fx)와 같은 함수라 어긋나지 않는다
@@ -392,10 +422,15 @@ func _local_combat() -> void:
 		params.collision_mask = ENEMY_BODY_MASK
 		params.collide_with_bodies = true
 		var hits := get_world_2d().direct_space_state.intersect_shape(params, 8)
+		var connected := false
 		for hit: Dictionary in hits:
 			var body := hit.get("collider") as Node
 			if body != null and body.is_in_group("enemy"):
 				EventBus.attack_hit.emit(body, job)
+				connected = true
+		if connected:
+			# 공격자 로컬 예측 타격 손맛 — 무기별 셰이크/타격음(호스트 확정 전 즉발, 표시 전용). 스윙당 1회.
+			EventBus.weapon_impact.emit(center, _hit_sfx, _hit_shake)
 
 
 func _aim_dir() -> Vector2:
@@ -424,7 +459,7 @@ func play_attack_fx(dir: Vector2) -> void:
 	if _attack_anim_left <= 0.0:
 		# 애니 창만 재수신 무시(FX·플립은 매번 적용) — G_ATK 스팸으로 애니를 영구 attack으로
 		# 잠그는 그리핑 차단 (정직한 공격은 쿨다운 0.4s > 창 0.25s라 안 걸린다)
-		EventBus.player_swing.emit(global_position)  # 스윙 SFX (원격 — 스팸 게이트 안)
+		EventBus.player_swing.emit(global_position, _swing_sfx)  # 스윙 SFX (원격 — 무기별, 스팸 게이트 안)
 		_attack_anim_left = ATTACK_ANIM_TIME
 
 
