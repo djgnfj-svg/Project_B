@@ -189,6 +189,11 @@ func is_alive() -> bool:
 	return _alive
 
 
+# 무장 상태 — 착용 무기 텍스처가 있으면 무장(공격 가능). 미착용이면 공격·궤적 없음.
+func _is_armed() -> bool:
+	return _weapon.texture != null
+
+
 # 호스트가 자기 로컬 플레이어의 i-frame을 직접 조회 (원격 피어는 G_ROLL 그랜트 창으로 판정)
 func is_rolling() -> bool:
 	return _roll_time_left > 0.0
@@ -413,7 +418,8 @@ func _local_combat() -> void:
 	_attack_queued = false
 	if not _alive:
 		return
-	if want and _attack_cd_left <= 0.0 and _roll_time_left <= 0.0:
+	# 무장 해제(무기 미착용) = 공격 불가 — 판정·궤적·소리 전부 안 나간다. 무기가 곧 공격 수단.
+	if want and _attack_cd_left <= 0.0 and _roll_time_left <= 0.0 and _is_armed():
 		_attack_cd_left = job.attack_cooldown
 		_attack_anim_left = _swing_time  # 무기별 스윙 창 (§3: < attack_cooldown)
 		var dir := _aim_dir()
@@ -461,8 +467,8 @@ func net_anchor() -> Vector2:
 
 # 원격 플레이어의 공격 연출 (stage가 G_ATK 수신 시 호출) — 표시 전용, 판정 아님
 func play_attack_fx(dir: Vector2) -> void:
-	if not _alive:
-		return  # 사망자(조작 클라)의 G_ATK로 시체 위치에 FX가 뜨는 그리핑 차단
+	if not _alive or not _is_armed():
+		return  # 사망자·무장 해제 피어의 G_ATK로 FX가 뜨는 것 차단 (그 피어 무기 = set_weapon_visual 반영)
 	_show_attack_fx(dir)
 	_sprite.flip_h = dir.x < 0.0
 	if _attack_anim_left <= 0.0:
