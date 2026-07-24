@@ -36,6 +36,13 @@ const SLOT_ARMOR := 1
 @export var hit_sfx: String = ""                   # 적중 시 무기 고유 타격음 id (비면 무음 — 범용 피격음은 combat_impact가 별도 재생)
 @export var hit_shake: float = 1.5                 # 적중 시 스크린셰이크 강도 (무기 무게감)
 
+# 스윙 모션(휘두르는 동작) — 무기별로 호 넓이·속도·내지르기를 갈라 무게감을 동작으로 표현. 스윙형 한정.
+# ⚠ swing_time 계약(rules §3): 반드시 착용 직업의 attack_cooldown보다 짧아야 한다 — 원격 스윙 창-잠금
+#   가드(play_attack_fx)가 정당한 연속 공격의 연출을 무시하지 않게. (전사 쿨다운 0.4s)
+@export var swing_arc: float = 1.9                 # 스윙 호 반각(rad) — 조준각 기준 ±이만큼 쓸고 지나감 (클수록 넓게)
+@export var swing_time: float = 0.25              # 스윙 창 길이(s) — 클수록 느리고 묵직 (반드시 < attack_cooldown)
+@export var swing_lunge: float = 5.0             # 스윕 중 앞으로 내지르는 거리(px)
+
 
 func slot() -> int:
 	return SLOT_ARMOR if slot_name == "armor" else SLOT_WEAPON

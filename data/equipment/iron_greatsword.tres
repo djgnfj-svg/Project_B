@@ -23,3 +23,6 @@ swing_texture = ExtResource("3")
 swing_sfx = "swing_heavy"
 hit_sfx = "thud"
 hit_shake = 2.6
+swing_arc = 2.4
+swing_time = 0.34
+swing_lunge = 9.0
