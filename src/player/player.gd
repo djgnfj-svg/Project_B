@@ -8,6 +8,7 @@ const HealthComponent := preload("res://src/combat/health_component.gd")
 const HitStop := preload("res://src/feel/hit_stop.gd")
 const HitFlash := preload("res://src/feel/hit_flash.gd")
 const Flinch := preload("res://src/feel/flinch.gd")
+const DEFAULT_SWOOSH := preload("res://assets/sprites/fx/swoosh_arc.png")  # 무기가 궤적을 안 지정할 때 폴백
 
 # 연출값 (rules §0 예외 — 사용자가 플레이하며 조인다)
 # ⚠ 구르기 시간·쿨다운은 여기 없다 — CombatMath.ROLL_TIME_S/ROLL_COOLDOWN_S(§3 단일 소스,
@@ -20,10 +21,11 @@ const GHOST_ALPHA := 0.4
 const ATTACK_FX_DELAY := 0.07        # 예비동작이 끝나고 스윕이 시작될 때 궤적을 표시
 const ATTACK_FX_TIME := 0.18         # 궤적 잔상 페이드 시간
 const SWOOSH_TEX_RADIUS := 46.0      # swoosh_arc.png의 호 바깥 반지름(px) — FX 스케일 기준 (텍스처와 미러)
-# ⚠ 미러(rules §3): 모든 JobDef.attack_cooldown보다 짧아야 한다 (전사 0.4s > 0.25s) —
+# ⚠ 미러(rules §3): 스윙 창은 모든 JobDef.attack_cooldown보다 짧아야 한다 (전사 0.4s) —
 #   원격 창-잠금 가드(play_attack_fx)가 정당한 연속 공격의 스윙을 무시하지 않으려면.
-const ATTACK_ANIM_TIME := 0.25       # 무기 스윙 창 (공격 연출 길이)
-const SWING_HALF_ARC := 1.9          # 스윙 호 반각(라디안) — 조준각 기준 ±이만큼 쓸고 지나간다
+#   이 3상수는 무장 해제/폴백 기본값이고, 무기별 실값은 EquipDef.swing_time/arc/lunge(→ _swing_*).
+const ATTACK_ANIM_TIME := 0.25       # 스윙 창 기본값(폴백) — 무기별은 EquipDef.swing_time
+const SWING_HALF_ARC := 1.9          # 스윙 호 반각(rad) 기본값(폴백) — 무기별은 EquipDef.swing_arc
 const WEAPON_AIM_LERP := 18.0        # 원격 조준각 보간 속도
 const HOLD_DIST := 8.0               # 몸 중심 → 그립 거리 (몸에 붙지 않게 떨어뜨려 든다)
 const LUNGE_DIST := 5.0              # 스윕 중 앞으로 내지르는 거리
@@ -43,6 +45,17 @@ var equip_hp_bonus: int = 0   # 착용 장비 체력 보너스 — max_hp = job.
 # _weapon_grip은 _update_weapon이 매 프레임 참조 → 착용/직업에 따라 바뀌므로 멤버로 보관(job.weapon_grip 직참 금지).
 var _weapon_grip: Vector2 = Vector2(4.0, 8.0)
 var _weapon_override: EquipDef = null       # 마지막 착용 무기 — set_job 재호출(재공지/재합류) 시 겉모습 유지용 보관. null = 무장 해제
+
+# 무기 손맛 — set_weapon_visual이 착용 무기(EquipDef)에서 세팅, 미착용/미지정이면 기본값 폴백. 전부 표시 전용(네트워크 0).
+var _swoosh_radius: float = SWOOSH_TEX_RADIUS  # 현재 궤적 텍스처의 바깥 반지름 — FX 스케일 정합(§3)
+var _swing_color: Color = Color(1, 1, 1, 1)    # 궤적 틴트(페이드 알파와 곱해 적용)
+var _swing_sfx: String = "swing"               # 스윙(휘두름) 효과음 id
+var _hit_sfx: String = ""                       # 적중 시 무기 고유 타격음 id (비면 무음)
+var _hit_shake: float = 1.5                     # 적중 시 스크린셰이크 강도
+# 스윙 모션(무기별) — 기본값 = 대검 기준(폴백). ⚠ _swing_time < job.attack_cooldown 유지 (rules §3)
+var _swing_arc: float = SWING_HALF_ARC
+var _swing_time: float = ATTACK_ANIM_TIME
+var _swing_lunge: float = LUNGE_DIST
 
 var _remote_target: Vector2 = Vector2.ZERO
 var _remote_flip: bool = false
@@ -144,10 +157,41 @@ func set_weapon_visual(equip: EquipDef) -> void:
 	_weapon_grip = grip
 	_weapon.position = -grip + Vector2(HOLD_DIST, 0.0)
 	_weapon_pivot.visible = tex != null
+	_apply_weapon_feel(equip)
+
+
+# 무기 손맛(궤적 텍스처·반지름·색·SFX·타격 셰이크) 반영 — 착용 무기가 지정하면 그 값, 아니면 기본 swoosh.
+# set_weapon_visual이 로컬·원격 모두 부르므로 무기 교체 시 손맛도 자동으로 갈린다 (표시 전용, 판정 무관).
+func _apply_weapon_feel(equip: EquipDef) -> void:
+	if equip != null and equip.swing_texture != null:
+		_attack_fx.texture = equip.swing_texture
+		_swoosh_radius = maxf(1.0, equip.swing_tex_radius)
+		_swing_color = equip.swing_color
+	else:
+		_attack_fx.texture = DEFAULT_SWOOSH
+		_swoosh_radius = SWOOSH_TEX_RADIUS
+		_swing_color = Color(1, 1, 1, 1)
+	_swing_sfx = equip.swing_sfx if equip != null and not equip.swing_sfx.is_empty() else "swing"
+	_hit_sfx = equip.hit_sfx if equip != null else ""
+	_hit_shake = equip.hit_shake if equip != null else 1.5
+	# 스윙 모션 — 무기 지정값, 미착용이면 대검 기본. swing_time은 §3 미러(< attack_cooldown) 유지.
+	_swing_arc = equip.swing_arc if equip != null else SWING_HALF_ARC
+	_swing_time = equip.swing_time if equip != null else ATTACK_ANIM_TIME
+	_swing_lunge = equip.swing_lunge if equip != null else LUNGE_DIST
+
+
+# 궤적 페이드 색 — 무기 틴트 rgb 유지, 알파만 페이드로 구동
+func _fx_color(alpha: float) -> Color:
+	return Color(_swing_color.r, _swing_color.g, _swing_color.b, alpha * _swing_color.a)
 
 
 func is_alive() -> bool:
 	return _alive
+
+
+# 무장 상태 — 착용 무기 텍스처가 있으면 무장(공격 가능). 미착용이면 공격·궤적 없음.
+func _is_armed() -> bool:
+	return _weapon.texture != null
 
 
 # 호스트가 자기 로컬 플레이어의 i-frame을 직접 조회 (원격 피어는 G_ROLL 그랜트 창으로 판정)
@@ -272,13 +316,13 @@ func _tick_timers(delta: float) -> void:
 			var reach := CombatMath.attack_center_offset(_fx_dir, job).length() + CombatMath.attack_radius(job)
 			_attack_fx.rotation = _fx_dir.angle()
 			_attack_fx.position = Vector2.ZERO
-			_attack_fx.scale = Vector2.ONE * (reach / SWOOSH_TEX_RADIUS)
-			_attack_fx.modulate.a = 1.0
+			_attack_fx.scale = Vector2.ONE * (reach / _swoosh_radius)  # 무기별 궤적 반지름 정합(§3)
+			_attack_fx.modulate = _fx_color(1.0)
 			_attack_fx.visible = true
 			_fx_left = ATTACK_FX_TIME
 	if _fx_left > 0.0:
 		_fx_left -= delta
-		_attack_fx.modulate.a = clampf(_fx_left / ATTACK_FX_TIME, 0.0, 1.0)
+		_attack_fx.modulate = _fx_color(clampf(_fx_left / ATTACK_FX_TIME, 0.0, 1.0))
 		if _fx_left <= 0.0:
 			_attack_fx.visible = false
 
@@ -316,16 +360,16 @@ func _update_weapon(delta: float) -> void:
 	var swing_off := 0.0
 	var lunge := 0.0
 	if _attack_anim_left > 0.0:
-		var t := 1.0 - _attack_anim_left / ATTACK_ANIM_TIME
+		var t := 1.0 - _attack_anim_left / _swing_time  # 무기별 스윙 창으로 정규화
 		if t < 0.28:
-			swing_off = -SWING_HALF_ARC * (t / 0.28)
+			swing_off = -_swing_arc * (t / 0.28)
 		elif t < 0.75:
 			var u := (t - 0.28) / 0.47
 			u = u * u * (3.0 - 2.0 * u)  # smoothstep — 스윕에 가속감
-			swing_off = lerpf(-SWING_HALF_ARC, SWING_HALF_ARC, u)
-			lunge = LUNGE_DIST * sin(u * PI)
+			swing_off = lerpf(-_swing_arc, _swing_arc, u)
+			lunge = _swing_lunge * sin(u * PI)
 		else:
-			swing_off = SWING_HALF_ARC * (1.0 - (t - 0.75) / 0.25)
+			swing_off = _swing_arc * (1.0 - (t - 0.75) / 0.25)
 	var ang := _aim_angle + swing_off
 	_weapon_pivot.rotation = ang
 	_weapon.position = -_weapon_grip + Vector2(HOLD_DIST + lunge, 0.0)
@@ -374,12 +418,13 @@ func _local_combat() -> void:
 	_attack_queued = false
 	if not _alive:
 		return
-	if want and _attack_cd_left <= 0.0 and _roll_time_left <= 0.0:
+	# 무장 해제(무기 미착용) = 공격 불가 — 판정·궤적·소리 전부 안 나간다. 무기가 곧 공격 수단.
+	if want and _attack_cd_left <= 0.0 and _roll_time_left <= 0.0 and _is_armed():
 		_attack_cd_left = job.attack_cooldown
-		_attack_anim_left = ATTACK_ANIM_TIME
+		_attack_anim_left = _swing_time  # 무기별 스윙 창 (§3: < attack_cooldown)
 		var dir := _aim_dir()
 		_show_attack_fx(dir)
-		EventBus.player_swing.emit(global_position)  # 스윙 SFX (로컬)
+		EventBus.player_swing.emit(global_position, _swing_sfx)  # 스윙 SFX (로컬 — 무기별 휘두름음)
 		Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ATK, "dx": dir.x, "dy": dir.y})
 		# 판정: 조준 방향 원형 질의 (Area 노드 대신 즉시 질의 — 프레임 지연 없음)
 		# 기하는 CombatMath 단일 소스 — FX 위치(_show_attack_fx)와 같은 함수라 어긋나지 않는다
@@ -392,10 +437,15 @@ func _local_combat() -> void:
 		params.collision_mask = ENEMY_BODY_MASK
 		params.collide_with_bodies = true
 		var hits := get_world_2d().direct_space_state.intersect_shape(params, 8)
+		var connected := false
 		for hit: Dictionary in hits:
 			var body := hit.get("collider") as Node
 			if body != null and body.is_in_group("enemy"):
 				EventBus.attack_hit.emit(body, job)
+				connected = true
+		if connected:
+			# 공격자 로컬 예측 타격 손맛 — 무기별 셰이크/타격음(호스트 확정 전 즉발, 표시 전용). 스윙당 1회.
+			EventBus.weapon_impact.emit(center, _hit_sfx, _hit_shake)
 
 
 func _aim_dir() -> Vector2:
@@ -417,15 +467,15 @@ func net_anchor() -> Vector2:
 
 # 원격 플레이어의 공격 연출 (stage가 G_ATK 수신 시 호출) — 표시 전용, 판정 아님
 func play_attack_fx(dir: Vector2) -> void:
-	if not _alive:
-		return  # 사망자(조작 클라)의 G_ATK로 시체 위치에 FX가 뜨는 그리핑 차단
+	if not _alive or not _is_armed():
+		return  # 사망자·무장 해제 피어의 G_ATK로 FX가 뜨는 것 차단 (그 피어 무기 = set_weapon_visual 반영)
 	_show_attack_fx(dir)
 	_sprite.flip_h = dir.x < 0.0
 	if _attack_anim_left <= 0.0:
 		# 애니 창만 재수신 무시(FX·플립은 매번 적용) — G_ATK 스팸으로 애니를 영구 attack으로
-		# 잠그는 그리핑 차단 (정직한 공격은 쿨다운 0.4s > 창 0.25s라 안 걸린다)
-		EventBus.player_swing.emit(global_position)  # 스윙 SFX (원격 — 스팸 게이트 안)
-		_attack_anim_left = ATTACK_ANIM_TIME
+		# 잠그는 그리핑 차단 (정직한 공격은 쿨다운 0.4s > 창(≤0.25~0.34)이라 안 걸린다)
+		EventBus.player_swing.emit(global_position, _swing_sfx)  # 스윙 SFX (원격 — 무기별, 스팸 게이트 안)
+		_attack_anim_left = _swing_time  # 원격도 그 피어의 무기 스윙 창(set_weapon_visual로 세팅됨)
 
 
 # 원격 플레이어의 구르기 연출 (peer_sync가 G_ROLL 수신 시 호출) — 표시 전용.

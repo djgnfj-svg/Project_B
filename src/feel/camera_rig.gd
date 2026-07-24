@@ -20,6 +20,8 @@ func _ready() -> void:
 	position_smoothing_speed = SMOOTH_SPEED
 	EventBus.combat_impact.connect(_on_impact)
 	EventBus.screen_shake.connect(add_shake)
+	# 내 무기 적중(공격자 로컬 예측) — 무기 무게감 셰이크. enabled(로컬 카메라)일 때만 흔들린다.
+	EventBus.weapon_impact.connect(func(_pos: Vector2, _sfx: String, shake: float) -> void: add_shake(shake))
 	# 씬 루트가 map_rect 메타를 선언하면 맵 경계로 클램프 — 맵 밖(공허)이 안 보이게.
 	# 각 씬은 _ready에서 set_meta("map_rect", Rect2(...)) 한 줄만 선언한다 (복붙 배선 방지).
 	# ⚠ current_scene은 못 쓴다 — main의 씬 스왑이 수동 add_child라 항상 부팅 씬(Main)이다.
