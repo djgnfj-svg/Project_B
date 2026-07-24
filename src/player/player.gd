@@ -14,7 +14,10 @@ const DEFAULT_SWOOSH := preload("res://assets/sprites/fx/swoosh_arc.png")  # 무
 # ⚠ 구르기 시간·쿨다운은 여기 없다 — CombatMath.ROLL_TIME_S/ROLL_COOLDOWN_S(§3 단일 소스,
 #   호스트 i-frame 검증과 같은 값). 사본을 만들면 무적 창과 이동이 갈라진다.
 const REMOTE_LERP_SPEED := 12.0
-const POS_SEND_RATE := 15.0
+# 위치 송신 빈도(Hz). 이 값이 곧 **호스트가 게스트 위치를 모르고 있는 평균 시간**(1/2주기)이라
+# 지연 보상의 바닥이 된다 — 15Hz면 평균 33ms가 판정에서 그냥 손실이었다(2026-07-24 계측).
+# 30Hz로 올려 17ms로 줄인다. 2인 기준 피어당 ~3.5KB/s라 릴레이 부담은 무시 가능.
+const POS_SEND_RATE := 30.0
 const REMOTE_TINT := Color(1.0, 0.75, 0.75)
 const ROLL_SPEED_MULT := 2.6
 const GHOST_ALPHA := 0.4
@@ -75,6 +78,7 @@ var _charge_sfx: String = "charge_step"  # 단계 상승 효과음 id (무기별
 
 var _remote_target: Vector2 = Vector2.ZERO
 var _remote_flip: bool = false
+var _remote_vel: Vector2 = Vector2.ZERO  # G_POS "vx/vy" — 호스트 지연 보상 외삽의 입력 (§3). 수신 시 이동 상한으로 clamp
 var _send_accum: float = 0.0
 var _attack_cd_left: float = 0.0
 var _roll_time_left: float = 0.0
@@ -608,8 +612,21 @@ func _show_attack_fx(dir: Vector2) -> void:
 
 # 네트워크 검증용 좌표 — 원격은 lerp된 표시 좌표가 아니라 (클램프된) 최신 수신 좌표를 쓴다.
 # 표시 보간 지연 때문에 호스트의 사거리 검증이 정당한 적중을 거부하는 문제 방지 (실기 진단에서 확인).
+# ⚠ 이건 여전히 **과거** 좌표다(편도 지연 + 송신 주기만큼). 피격 판정처럼 "지금 어디 있나"가
+#   중요한 곳은 net_anchor_lead()와 짝지어 쓴다 — CombatMath.is_strike_hit_lagged (§3 지연 보상).
 func net_anchor() -> Vector2:
 	return global_position if is_local else _remote_target
+
+
+# 지연 보상용 추정 좌표 — 마지막 관측 속도로 외삽한 "지금쯤 여기 있을 것" 위치.
+# 로컬 피어는 지연이 없으므로 net_anchor()와 같다(항등 폴백 — 호스트 자신은 보상 대상이 아니다).
+# one_way_ms = 그 피어와의 편도 지연 (Net.one_way_ms). 판정은 반드시 net_anchor()와 **둘 다** 통과해야
+# 확정된다 — 외삽 오차가 방어자에게 유리한 쪽으로만 떨어지게 하는 규약 (CombatMath 주석 참조).
+func net_anchor_lead(one_way_ms: float) -> Vector2:
+	if is_local:
+		return global_position
+	var lead_s := CombatMath.lag_lead_s(_last_remote_msec, Time.get_ticks_msec(), one_way_ms)
+	return CombatMath.extrapolate(_remote_target, _remote_vel, lead_s)
 
 
 # 원격 플레이어의 공격 연출 (stage가 G_ATK 수신 시 호출) — 표시 전용, 판정 아님
@@ -658,12 +675,18 @@ func _send_pos(delta: float) -> void:
 			# 차지 상태 — 0 = 안 모으는 중, 그 외 = 레벨+1 (0단계 차지와 비차지를 구분하려는 인코딩).
 			# 표시 전용이다: 실제 발사 레벨은 G_SHOOT "c"를 호스트가 차지 시간으로 재검증한다 (§3).
 			"c": (_charge_level + 1) if _charging else 0,
+			# 현재 속도 — 호스트가 "지금 내가 어디 있는지"를 추정하는 재료 (지연 보상, §3).
+			# 부풀려 보내도 수신부 clamp + 외삽 거리 상한 + "방어자 우대" 규약 때문에 회피가
+			# 관대해질 뿐 남을 때릴 수는 없다 (판정은 여전히 호스트가 자기 계산으로 확정).
+			"vx": snappedf(velocity.x, 0.1),
+			"vy": snappedf(velocity.y, 0.1),
 		})
 
 
 # 원격 위치 반영 — 메시지 간 변위를 최대 이동 속도로 클램프한다.
 # 호스트의 사거리 검증(§3)이 이 표시 좌표를 기준으로 하므로, 클램프 없이는 순간이동 스푸핑으로 검증이 무력화된다.
-func apply_remote_pos(pos: Vector2, flip: bool, aim: float, charge_code: int = 0) -> void:
+func apply_remote_pos(pos: Vector2, flip: bool, aim: float, charge_code: int = 0,
+		vel: Vector2 = Vector2.ZERO) -> void:
 	# Inf/NaN 주입 가드 — JSON은 1e999 같은 오버플로를 Inf로 파싱한다. lerp_angle(유한, INF)=NaN이
 	# 한 발로 _aim_angle을 영구 오염시키고, pos 쪽은 net_anchor()를 타 호스트 판정까지 닿는다 (리뷰 Important).
 	if is_finite(aim):
@@ -679,6 +702,14 @@ func apply_remote_pos(pos: Vector2, flip: bool, aim: float, charge_code: int = 0
 			_remote_charge_sfx_msec = now_sfx
 			EventBus.player_swing.emit(global_position, _charge_sfx)
 	_remote_charge = new_charge
+	# 속도 반영 — 위치와 같은 신뢰 규율(유한성 + 최고 이동속도 clamp). 외삽 입력이므로 여기서 상한을 건다.
+	# ⚠ 무효값이면 0으로 떨어뜨린다(이전 속도 유지 금지) — 정지한 피어를 계속 미끄러뜨리면
+	#   추정 좌표가 실제와 벌어져 "방어자 우대"가 과하게 관대해진다.
+	if is_finite(vel.x) and is_finite(vel.y):
+		var max_speed := job.move_speed * ROLL_SPEED_MULT if job != null else 0.0
+		_remote_vel = vel.limit_length(max_speed)
+	else:
+		_remote_vel = Vector2.ZERO
 	if not (is_finite(pos.x) and is_finite(pos.y)):
 		return  # 무효 좌표는 통째로 무시 — 이전 앵커 유지
 	var now := Time.get_ticks_msec()

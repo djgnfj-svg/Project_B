@@ -5,6 +5,7 @@ extends CanvasLayer
 const INVITE_FX_TIME := 1.5  # 복사 피드백 표시 시간 (연출값)
 const BLUEPRINT_TOAST_TIME := 2.5  # 도면 획득 토스트 표시 시간 (연출값)
 const PHASE_BANNER_TIME := 2.0  # 페이즈2 배너 표시 시간 (연출값)
+const PING_LABEL_REFRESH_S := 0.5  # 핑 표시 갱신 주기(s) — Net의 측정 주기와 같게 (더 자주 그려도 값이 안 바뀜)
 const INV_ICON_SIZE := 16.0  # 인벤 아이콘 표시 크기(px)
 # UI 오버레이 조합 — HUD가 설정/인벤 패널을 무는 것은 조합(rules §0 예외). class_name 대신 preload(§0).
 const SettingsPanelScene := preload("res://src/ui/settings_panel.tscn")
@@ -15,6 +16,7 @@ var _invite_fx_seq: int = 0  # 복사 연타 시 이전 타이머가 새 피드�
 var _toast_seq: int = 0  # 도면 연속 획득 시 이전 타이머가 새 토스트를 지우지 않게
 var _phase_banner_seq: int = 0  # 페이즈 배너 자동 숨김 타이머 경합 가드 (다른 배너가 덮으면 안 지움)
 var _inv_panel: CanvasLayer = null  # I키 인벤 창 — HUD가 무는 조합(어디서나 열림)
+var _ping_refresh_accum: float = 0.0  # 핑 표시 갱신 누산
 
 @onready var _room_label: Label = $RoomCode
 @onready var _progress: Label = $Progress
@@ -29,8 +31,7 @@ var _inv_panel: CanvasLayer = null  # I키 인벤 창 — HUD가 무는 조합(�
 
 
 func _ready() -> void:
-	_room_label.text = "방 %s · %s" % [
-		Net.room_code, "호스트" if Net.is_host() else "게스트"]
+	_update_room_label()
 	_progress.text = GameState.progress_label()  # 마을(비챕터)은 빈 문자열 = 표시 없음
 	_invite_btn.pressed.connect(_on_invite_pressed)
 	var settings := SettingsPanelScene.instantiate()
@@ -58,6 +59,25 @@ func _ready() -> void:
 	EventBus.stage_cleared.connect(func() -> void: _show_banner(
 		"챕터 클리어! 마을로 귀환합니다" if GameState.is_last_stage() else "스테이지 클리어!"))
 	EventBus.stage_wiped.connect(func() -> void: _show_banner("전멸 — 마을로 귀환합니다 (챕터 처음부터)"))
+
+
+# 방 코드 줄에 왕복 지연(핑)을 같이 띄운다 — 별도 노드를 안 만들어 레이아웃/클릭 리스크가 없다.
+# 핑은 게스트가 겪는 회피 창 손실의 크기와 직결된다(지연 보상 §3) — 렉이 체감될 때 원인을 눈으로 확인하는 창구.
+# 아직 왕복 측정 전이거나 솔로면 생략(0 = 표시 안 함).
+func _update_room_label() -> void:
+	var text := "방 %s · %s" % [Net.room_code, "호스트" if Net.is_host() else "게스트"]
+	var rtt := Net.display_rtt_ms()
+	if rtt > 0.0:
+		text += " · 핑 %dms" % int(roundf(rtt))
+	_room_label.text = text
+
+
+func _process(delta: float) -> void:
+	_ping_refresh_accum += delta
+	if _ping_refresh_accum < PING_LABEL_REFRESH_S:
+		return
+	_ping_refresh_accum = 0.0
+	_update_room_label()
 
 
 # I키로 인벤 창 토글 — HUD가 확실히 소비(패널은 I를 안 먹는다, 중복 방지). Esc 닫기는 패널 자체.

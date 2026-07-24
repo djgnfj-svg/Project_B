@@ -193,6 +193,79 @@ static func is_hit_in_cone(pt: Vector2, apex: Vector2, facing: float, half_angle
 	return absf(angle_difference(facing, to_pt.angle())) <= half_angle
 
 
+# --- 지연 보상 (2026-07-24) — 단일 소스 (§3). "피했는데 맞았다"를 없애는 계약. ---
+#
+# 문제: 호스트 권한 모델에서 게스트만 구조적으로 손해본다 (실측 2026-07-24, RTT 83~207ms).
+#   ⑴ 호스트가 예고를 띄운 순간 → 게스트 화면에 뜨기까지 **편도 지연**만큼 늦다.
+#   ⑵ 호스트가 타격을 판정할 때 아는 게스트 좌표는 **편도 지연 + 송신 주기**만큼 과거다.
+#   합쳐서 게스트의 실효 회피 창 = telegraph_s − (왕복 + 송신주기). RTT 207ms일 때 0.6s → 0.36s(40% 손실).
+#   호스트는 둘 다 0이라 손실이 없다 — 그래서 "호스트는 괜찮은데 게스트만 맞는" 비대칭이 생긴다.
+#
+# 해법 두 축 (둘 다 호스트에서만 계산 — 게스트 코드에 상태 확정은 없다, §1):
+#   ⓐ **STRIKE 지연**(`strike_delay_s`): 예고 타격 시각을 원격 피어 편도 지연만큼 늦춘다 → ⑴ 상쇄.
+#      게스트는 자기 화면 기준 온전한 telegraph_s를 갖고, 호스트는 예고가 그만큼 길어져 공평해진다.
+#   ⓑ **위치 외삽 + 방어자 우대**(`lag_lead_s`·`extrapolate`·`is_strike_hit_lagged`): 판정 시 게스트의
+#      "지금" 위치를 마지막 관측 속도로 추정하고, **낡은 좌표와 추정 좌표가 둘 다 맞아야** 확정 → ⑵ 상쇄.
+#
+# 🔴 왜 "둘 다"인가 (핵심 설계): 외삽은 방향 전환 순간에 틀린다 — 한쪽만 믿으면 새 오탐이 생긴다.
+#   둘 다 요구하면 오차가 **항상 방어자에게 유리한 쪽**으로만 떨어진다:
+#     빠져나가는 중 → 추정 좌표가 밖 → 안 맞음 (게스트 화면과 일치 = 고치려던 그 버그)
+#     들어오는 중   → 낡은 좌표가 밖 → 안 맞음 (관대 — 협동 게임이라 무해)
+#     계속 안       → 둘 다 안 → 맞음 (정상)
+#   PvP가 생기면 이 관대함이 표면이 된다 → rules §2 4인/PvP 게이트에서 재검토.
+const LAG_MAX_ONE_WAY_MS := 200.0   # 편도 지연 인정 상한 — 조작 피어가 큰 RTT를 주장해 보스 예고를
+                                    # 무한 지연시키거나 외삽을 뻥튀기하는 것 차단 (신뢰 경계 §3)
+const LAG_MAX_LEAD_DIST := 56.0     # 외삽 거리 상한(px) — 지연 스파이크 한 번이 판정을 화면 밖으로
+                                    # 날리지 않게. 최고 이동속도(110×2.6)로도 ~0.2s 분량
+
+# 편도 지연 = RTT의 절반. 음수·NaN·스파이크를 상한으로 눌러 판정에 쓸 수 있는 값으로 정규화한다.
+static func clamp_one_way_ms(one_way_ms: float) -> float:
+	if not is_finite(one_way_ms):
+		return 0.0
+	return clampf(one_way_ms, 0.0, LAG_MAX_ONE_WAY_MS)
+
+
+# 예고 타격을 늦출 시간(초) — 원격 피어 중 **최대** 편도 지연. 가장 느린 피어도 온전한 예고 창을 갖는다.
+# 솔로/호스트뿐이면 0 = 기존 동작과 완전히 동일(항등 폴백).
+static func strike_delay_s(max_one_way_ms: float) -> float:
+	return clamp_one_way_ms(max_one_way_ms) / 1000.0
+
+
+# 외삽 시간(초) — 마지막 위치 패킷이 담은 시점부터 "지금"까지.
+#   (패킷 수신 후 흐른 시간) + (그 패킷이 날아오는 데 걸린 편도 지연)
+# 로컬 피어(지연 0·수신 기록 없음)는 0을 넘겨 항등이 되게 한다.
+static func lag_lead_s(last_recv_msec: int, now_msec: int, one_way_ms: float) -> float:
+	if last_recv_msec < 0:
+		return 0.0
+	var since_ms := float(maxi(now_msec - last_recv_msec, 0))
+	return (since_ms + clamp_one_way_ms(one_way_ms)) / 1000.0
+
+
+# 마지막 관측 속도로 추정한 "지금" 위치. 거리 상한(LAG_MAX_LEAD_DIST)으로 폭주를 막는다.
+static func extrapolate(pos: Vector2, vel: Vector2, lead_s: float) -> Vector2:
+	if not (is_finite(vel.x) and is_finite(vel.y)) or lead_s <= 0.0:
+		return pos
+	var offset := vel * lead_s
+	if offset.length() > LAG_MAX_LEAD_DIST:
+		offset = offset.normalized() * LAG_MAX_LEAD_DIST
+	return pos + offset
+
+
+# 지연 보상 원형 타격 판정 — 낡은 좌표와 추정 좌표가 **둘 다** 안일 때만 맞은 것 (방어자 우대, 위 설명).
+# lead_pos == anchor(로컬 피어·속도 0)면 is_strike_hit과 완전히 같다 — 항등 폴백.
+static func is_strike_hit_lagged(anchor: Vector2, lead_pos: Vector2,
+		strike_center: Vector2, strike_radius: float) -> bool:
+	return is_strike_hit(anchor, strike_center, strike_radius) \
+		and is_strike_hit(lead_pos, strike_center, strike_radius)
+
+
+# 지연 보상 부채꼴 판정 — 원형과 같은 규약(둘 다 안일 때만). 보스 평타 등 cone 패턴용.
+static func is_hit_in_cone_lagged(anchor: Vector2, lead_pos: Vector2, apex: Vector2,
+		facing: float, half_angle: float, radius: float) -> bool:
+	return is_hit_in_cone(anchor, apex, facing, half_angle, radius) \
+		and is_hit_in_cone(lead_pos, apex, facing, half_angle, radius)
+
+
 # 인원 스케일링 — 솔로 시 보스 약화 (§3 예약 → 구현, GDD §11·§5 확정). party_size>=2 → base(항등),
 # 1(솔로) → base*solo_factor. max_hp·물 착탄 수·늪 자동 생성 빈도에 곱한다. 호스트가 계산(게스트도
 # 같은 피어 수로 동일 계산 → 표시 일치). solo_factor·적용 대상 수치는 사용자 실기 튜닝.

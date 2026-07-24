@@ -26,7 +26,7 @@ const FAIL_SERVER_FULL := "server_full"  # 서버 전체 방 상한 (Workers 릴
 
 # 게임 페이로드 (data 내부). "k" = 종류.
 const KEY_KIND := "k"
-const G_POS := "pos"                  # {k, s, x, y, f, a, c}  자기 캐릭터 위치+좌우 플립+조준각(a, 라디안 — 무기 표시 전용, 판정 아님) (각자 자기 것만 보낸다). s = 씬 id — 다른 씬 피어의 유령 스폰 방지. c = 현재 차지 레벨(0~3, 법사 지팡이 — 원격 차지 오브 표시 전용, 판정 아님. 실제 발사 레벨은 G_SHOOT "c"를 호스트가 별도 검증)
+const G_POS := "pos"                  # {k, s, x, y, f, a, c, vx, vy}  자기 캐릭터 위치+좌우 플립+조준각(a, 라디안 — 무기 표시 전용, 판정 아님) (각자 자기 것만 보낸다). s = 씬 id — 다른 씬 피어의 유령 스폰 방지. c = 현재 차지 레벨(0~3, 법사 지팡이 — 원격 차지 오브 표시 전용, 판정 아님. 실제 발사 레벨은 G_SHOOT "c"를 호스트가 별도 검증). vx/vy = 현재 속도(px/s) — 호스트가 지연 보상 외삽에 쓴다(CombatMath.extrapolate). 속도는 이동 상한으로 clamp되고 외삽 결과도 거리 상한이 있어, 부풀려 보내도 "방어자 우대" 규약상 회피가 관대해질 뿐 피해를 못 만든다 (§3 지연 보상)
 const G_ATK := "atk"                  # {k, dx, dy}   공격 연출 (방향) — 판정 아님, 원격 표시용
 const G_JOB := "job"                  # {k, job}      직업 공지 (id 문자열) — 스테이지 입장·피어 합류 시. 수신 측은 자기 data/jobs에서 리졸브(모르는 id = 기본 직업)
 const G_STATS := "stats"              # {k, atk, hp, weapon}  장비 총 스탯 + 착용 무기 id 공지. atk/hp = 호스트가 데미지/HP 확정에 사용(트러스트=발신자, clamp). weapon = 원격 무기 겉모습(표시 전용, allowlist 리졸브만). 4인/PvP 전 검증 게이트(rules §2)
@@ -56,6 +56,14 @@ const G_BOSS_ATK := "batk"            # {k, eid, p, x, y, a} 호스트→전원:
 const G_SWAMP := "swamp"              # {k, s, sw}    호스트→전원: 늪 존 스폰. s=stage_token(유령 스폰 차단, G_DROP "s" 미러)·sw=[[sid,x,y,r,ttl,slow], …] sid=늪 고유 id·(x,y)=중심·r=반경·ttl=지속(초, 로컬 despawn)·slow=늪 안 이동 배율
 const G_BOSS_PHASE := "bphase"        # {k, ph}       호스트→전원: 페이즈 전환 표시 큐(연출/배너용). 정본 판정은 호스트 hp — 표시 동기화일 뿐
 const G_BOSS_SPRAY := "bspray"        # {k, eid, p, c} 호스트→전원: 물 뿌리기 N개 원 착탄 예고. p=패턴 id(반경·telegraph_s 로컬 리졸브)·c=[[x,y], …] 착탄 중심들. 판정은 호스트가 착탄점마다 is_strike_hit(표시 전용 메시지)
+
+# 왕복 지연 계측 (2026-07-24) — 지연 보상(§3)의 입력이자 HUD 핑 표시의 출처. Net 오토로드가 자체 처리한다
+# (게임 로직으로 안 올라온다 — net_msg emit 전에 Net이 가로챈다). 각자 상대에게 보내고 상대는 즉시 에코.
+# ⚠ 이름이 "ping"/"pong"이 아니다 — `tests/test_net_room_auto.gd`가 그 두 문자열을 **임의의 게임 메시지**로
+#   이미 쓰고 있어서, 같은 이름을 쓰면 Net이 테스트 메시지를 가로채 왕복 테스트가 조용히 깨진다(실제로 겪음).
+#   Net이 소비하는 메시지에 이름을 붙일 땐 기존 테스트/게임 kind와 겹치지 않는지 먼저 grep해라.
+const G_PING := "nping"               # {k, t}  발신자→상대: t = 발신자의 로컬 usec 타임스탬프(그대로 돌려받을 불투명 값)
+const G_PONG := "npong"               # {k, t}  수신 즉시 에코 — 원 발신자가 (지금 − t)로 RTT를 계산한다. 시계 동기화 불필요(자기 시계만 씀)
 
 # 씬 id — G_SCENE 페이로드·G_POS "s" 필드의 값. main의 씬 매핑·각 씬 PeerSync.scene_id와 짝 (단일 소스)
 const SCENE_VILLAGE := "village"

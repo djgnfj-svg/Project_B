@@ -24,6 +24,8 @@ const G_POS = "pos";
 const G_MOB_POS = "mpos"; // 잔몹 위치 배치 (호스트 10Hz) — pos처럼 로그 제외 (net_schema.gd 미러)
 const G_SHOOT = "shoot"; // 궁수 발사 (연사 ~6.6Hz) — 고빈도라 로그 제외 (net_schema.gd 미러)
 const G_ARROW_HIT = "arrowhit"; // 화살 종료 (명중마다) — 고빈도라 로그 제외 (net_schema.gd 미러)
+const G_PING = "nping"; // 지연 계측 (각 피어 2Hz) — 고빈도라 로그 제외 (net_schema.gd 미러)
+const G_PONG = "npong"; // 지연 계측 에코 (ping과 짝) — 고빈도라 로그 제외 (net_schema.gd 미러)
 const ROOM_CODE_LEN = 4;
 const ROOM_CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // 혼동 문자(I/L/O/0/1) 제외
 const MAX_ROOM_PEERS = 2; // GDD §3: 해커톤 = 2인 협동
@@ -131,8 +133,11 @@ export class RelayHub {
 				if (typeof data !== "object" || data === null || Array.isArray(data)) return;
 				const out = JSON.stringify({ [KEY_TYPE]: S_MSG, from: info.id, data });
 				const kind = String(data[KEY_KIND] ?? "");
-				if (kind !== G_POS && kind !== G_MOB_POS && kind !== G_SHOOT && kind !== G_ARROW_HIT) {
-					// pos(15Hz)·mpos(10Hz)·shoot(연사 6.6Hz)·arrowhit(명중마다)는 고빈도라 제외 — 저빈도 게임 이벤트만 기록
+				if (
+					kind !== G_POS && kind !== G_MOB_POS && kind !== G_SHOOT &&
+					kind !== G_ARROW_HIT && kind !== G_PING && kind !== G_PONG
+				) {
+					// pos(30Hz)·mpos(20Hz)·shoot(연사 6.6Hz)·arrowhit(명중마다)·ping/pong(2Hz)은 고빈도라 제외 — 저빈도 게임 이벤트만 기록
 					console.log(`[relay] ${kind}: ${info.id} -> room ${info.room}: ${JSON.stringify(data)}`);
 				}
 				for (const [pid, peer] of room.peers) {
@@ -279,6 +284,17 @@ export default {
 		// 상한 기준 최악 ~960 msg/s의 2KB JSON 릴레이는 DO 단일 스레드 용량 내).
 		// 확장 필요 시 탈출로: 방 코드를 DO 이름으로(idFromName(code)) 방 단위 샤딩 — create는 DO 내
 		// storage 플래그로 선점 확인. 그 시점엔 접속 URL에 방 코드가 실려야 한다.
+		//
+		// ⚠ **DO 위치 힌트는 시도했고 효과가 없었다 — 다시 하지 마라** (2026-07-24 실측).
+		//   가설: 릴레이는 모든 게임 메시지가 두 번 지나는 지점이라 클라↔DO 거리가 곧 지연이니,
+		//         `locationHint: "apac"` + 새 DO 이름으로 아시아에 앉히면 왕복이 줄 것이다.
+		//   실측: 같은 시간대 교차 측정(구 DO vs apac DO, 각 3회) → 구 207/145/207ms · 신 214/–/152ms.
+		//         **차이 없음.** 릴레이 왕복은 시점에 따라 140~215ms를 오가며, 그 변동 폭이 위치 효과보다 크다.
+		//         (재배치 직후 한때 83ms가 나왔지만 재현되지 않았다 — 경로 운이었다.)
+		//   교훈: 이 워크로드의 지연은 배치로 못 줄인다. **게임 코드의 지연 보상**(CombatMath §3)이
+		//         RTT가 200ms여도 게스트 회피 창을 온전히 돌려주므로, 그쪽이 정답이다.
+		//   ⚠ 부수 함정: DO 이름을 바꾸면 새 인스턴스라 그 순간 살아있던 방이 전부 사라지고,
+		//     최초 생성 중에는 방 생성과 참가가 서로 다른 인스턴스에 붙어 join이 no_room으로 실패한다(실제로 겪음).
 		return env.RELAY_HUB.get(env.RELAY_HUB.idFromName("hub")).fetch(request);
 	},
 };

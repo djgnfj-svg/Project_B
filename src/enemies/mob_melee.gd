@@ -146,9 +146,14 @@ func _host_ai(delta: float) -> void:
 				# 타격점 고정 — 예고를 보고 빠져나갈 수 있어야 한다 (GDD §5 기믹 원칙)
 				_strike_center = anchor
 				_state = State.WINDUP
-				_state_left = def.telegraph_s
+				# 지연 보상(§3): 예고가 게스트 화면에 뜨기까지 편도 지연만큼 늦는다 — 그만큼 타격도 늦춰야
+				# 게스트도 온전한 telegraph_s를 갖는다. 솔로/로컬이면 0이라 기존 동작과 동일(항등).
+				var telegraph_total := def.telegraph_s + CombatMath.strike_delay_s(Net.max_remote_one_way_ms())
+				_state_left = telegraph_total
 				velocity = Vector2.ZERO
-				show_telegraph(_strike_center)
+				# 호스트 화면은 늘어난 시간만큼 예고를 띄운다 — "보이는 예고 = 맞는 타이밍" 유지.
+				# 게스트는 인자 없이 자기 def.telegraph_s를 쓴다(늦게 받아 늦게 시작 → 같은 순간에 끝난다).
+				show_telegraph(_strike_center, telegraph_total)
 				EventBus.mob_telegraph.emit(eid, _strike_center)
 				return
 			velocity = (anchor - global_position).normalized() * def.move_speed
@@ -190,11 +195,16 @@ func apply_remote_pos(pos: Vector2, flip: bool) -> void:
 	_remote_flip = flip
 
 
-# 텔레그래프 표시 — 호스트는 AI가 직접, 게스트는 matk 수신으로. 지속 = def.telegraph_s 로컬 리졸브
-func show_telegraph(center: Vector2) -> void:
+# 텔레그래프 표시 — 호스트는 AI가 직접(지연 보상분 포함한 duration을 넘긴다), 게스트는 matk 수신으로
+# (인자 없이 = def.telegraph_s 로컬 리졸브. 편도 지연만큼 늦게 시작하지만 호스트가 그만큼 타격을
+#  늦추므로 양쪽 예고가 같은 순간에 끝난다 — §3 지연 보상).
+func show_telegraph(center: Vector2, duration: float = -1.0) -> void:
 	_telegraph.global_position = center
 	_telegraph.visible = true
-	_telegraph_left = def.telegraph_s if def != null else 0.6
+	if duration > 0.0:
+		_telegraph_left = duration
+	else:
+		_telegraph_left = def.telegraph_s if def != null else 0.6
 
 
 # --- 애니 표시 경로 (호스트/게스트 공용 — 판정과 무관) ---
