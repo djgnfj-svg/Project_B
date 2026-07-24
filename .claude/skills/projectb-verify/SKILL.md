@@ -16,7 +16,7 @@ description: Project_B(2D Godot) 프로젝트의 검증 규율. Godot 헤드리�
 PowerShell은 자식 프로세스 stdout을 안 보여준다 — **테스트는 Bash 툴로 돌려라.** 실행 파일은 프로젝트 루트의 `Godot_v4.7.1-stable_win64.exe`다.
 
 ```bash
-# CombatMath 단위 (사거리·쿨다운·구르기·잔몹 타격 반경 + 장비 스탯 total_stats/equip_stat_at_level/upgraded_stats/upgrade_cost·calc_damage 보너스 — 신뢰 경계·§3 계약)
+# CombatMath 단위 (사거리·쿨다운·구르기·잔몹 타격 반경·부채꼴·화살 발사율/원점/명중반경/사거리 clamp + 장비 스탯 total_stats/equip_stat_at_level/upgraded_stats/upgrade_cost·calc_damage 보너스 — 신뢰 경계·§3 계약)
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_combat_math_auto.gd
 
 # GameState 리졸버·인벤/제작/강화/저장 (직업·챕터·재료·장비·레시피 스캔 allowlist + 조작 id 거부 + 제작/강화 전이 + to/from_save_dict 라운드트립·조작 세이브 폐기 + 진행 좌표·HP 이월 — 네트워크/저장 신뢰 경계)
