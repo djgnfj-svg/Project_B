@@ -41,6 +41,11 @@ const G_STAGE_CLEAR := "clear"        # {k}           호스트 → 전원: 스�
 const G_WIPE := "wipe"                # {k}           호스트 → 전원: 전멸 (배너 후 호스트가 G_SCENE village 송신)
 const G_SIT := "sit"                  # {k, on}       발신자=본인: 모닥불 앉기 상태 공지 — 표시/회복 힌트일 뿐, 회복 확정은 호스트가 거리·생존 재검증 후 (campfire 씬)
 
+# 투사체 (궁수 활 — 실제 이동 화살, 2026-07-24). 상태 확정 권한 = 호스트 (§1·§3).
+# 결정론적 직선 이동 = 각 클라가 로컬로 표시 화살 시뮬(위치 스트림 불필요, 네트워크 최소). 명중 판정은 호스트만.
+const G_SHOOT := "shoot"              # {k, ox, oy, dx, dy, aid, r} 발신자=본인: 발사 선언. (ox,oy)=원점·(dx,dy)=정규화 방향·aid=화살 고유 id("피어id:seq")·r=사거리(px, 무기 EquipDef.arrow_range). 각 클라가 표시 화살 스폰. 호스트는 발사 쿨다운+원점 근접 검증 후 권한 화살 등록(명중 판정용), r은 MAX로 clamp(§3). 속도는 CombatMath.ARROW_SPEED 공용(결정론). ⚠ 연사(~6.6Hz) 고빈도 → 릴레이 2곳 로그 제외 목록에 등록
+const G_ARROW_HIT := "arrowhit"       # {k, aid, x, y} 호스트→전원: 화살 aid 종료(적중)를 (x,y)에서. 각 클라가 표시 화살 despawn + 임팩트 연출. 데미지 자체는 G_ENEMY_HP 경유. ⚠ 명중마다 고빈도 → 릴레이 2곳 로그 제외 목록에 등록
+
 # 드랍/픽업 (공유 드랍 — 호스트 롤·선착 픽업, 2026-07-23). 상태 확정 권한 = 호스트 (§1·§3).
 const G_DROP := "drop"                # {k, s, d}     호스트→전원: 한 킬의 드랍 묶음. s=stage_token(유령 스폰 차단, G_POS "s" 미러). d=[[did,dk,id,q,x,y,r], …] did=드랍 고유 id·dk=kind(gold/material/blueprint)·id=ref_id·q=수량(gold=금액)·x/y=위치·r=rarity
 const G_PICK_REQ := "pickreq"         # {k, did}      게스트→호스트: 픽업 요청 (선착 — 호스트가 존재·선착 확정)

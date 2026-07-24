@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3]
+[gd_scene load_steps=16 format=3]
 
 [ext_resource type="Script" path="res://src/stage/stage.gd" id="1"]
 [ext_resource type="Texture2D" path="res://assets/sprites/stage/swamp_ground.png" id="2"]
@@ -14,6 +14,7 @@
 [ext_resource type="Script" path="res://src/stage/drop_authority.gd" id="11"]
 [ext_resource type="Script" path="res://src/stage/drop_field.gd" id="12"]
 [ext_resource type="Script" path="res://src/stage/swamp_field.gd" id="13"]
+[ext_resource type="Script" path="res://src/stage/arrow_field.gd" id="15"]
 
 [node name="Stage" type="Node2D"]
 script = ExtResource("1")
@@ -51,6 +52,9 @@ script = ExtResource("11")
 [node name="DropField" type="Node" parent="."]
 script = ExtResource("12")
 drop_authority_path = NodePath("../DropAuthority")
+
+[node name="ArrowField" type="Node" parent="."]
+script = ExtResource("15")
 
 [node name="MobSync" type="Node" parent="."]
 script = ExtResource("7")

@@ -228,6 +228,24 @@ def blueprint():
         out.append((0.35*math.sin(ph) + 0.14*square(ph)) * e * ne * 0.5)
     return out
 
+# 13. bow_fire — 활 발사: 시위 튕김("텅", 급강하 플럭) + 화살 스치는 airy thwip. 짧고 탄력있게.
+def bow_fire():
+    total = n(0.14)
+    raw = [(random.random()*2-1) for _ in range(total)]
+    lp = lowpass(raw, 0.3)
+    hp = [raw[i] - lp[i] for i in range(total)]  # airy 고역 = 화살 스침
+    out = []
+    dur = total / SR
+    ph = 0.0
+    for i in range(total):
+        t = i / SR
+        f = 300*math.exp(-t*22) + 90              # 시위 튕김: 300→~90Hz 급강하
+        ph += 2*math.pi*f/SR
+        twang = 0.5*square(ph)*math.exp(-t*24)    # 짧은 감쇠 플럭
+        thwip = hp[i]*0.25*max(0.0, 1.0 - t/dur)  # airy 스침(하강)
+        out.append(twang + thwip)
+    return lowpass(out, 0.75)
+
 write_wav("swing", swing())
 write_wav("hit", hit())
 write_wav("hurt", hurt())
@@ -240,4 +258,5 @@ write_wav("pickup_gold", pickup_gold())
 write_wav("blueprint", blueprint())
 write_wav("swing_heavy", swing_heavy())
 write_wav("thud", thud())
+write_wav("bow_fire", bow_fire())
 print("done")

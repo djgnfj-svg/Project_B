@@ -11,6 +11,7 @@ display_name = "철 대검"
 description = "묵직한 양손 대검. 느리지만 한 방이 무겁다."
 icon = ExtResource("2")
 slot_name = "weapon"
+job_id = "warrior"
 base_attack = 5
 base_hp = 0
 atk_per_level = 3
