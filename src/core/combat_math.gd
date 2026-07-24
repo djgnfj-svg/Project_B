@@ -88,6 +88,76 @@ static func arrow_lifetime_s(arrow_range: float = DEFAULT_ARROW_RANGE) -> float:
 	return clamp_arrow_range(arrow_range) / ARROW_SPEED
 
 
+# 투사체 속도 clamp — 무기별 탄속(EquipDef.projectile_speed, 0 = 기본 화살 속도)의 유일한 진입점.
+# ⚠ 터널링 불변식(위): 상한을 올리면 프레임당 전진 > 최소 명중 지름이 될 수 있다 — MAX는 그 여유 안에서 고른 값.
+const MIN_PROJECTILE_SPEED := 60.0
+const MAX_PROJECTILE_SPEED := 600.0
+
+
+static func clamp_projectile_speed(speed: float) -> float:
+	if not is_finite(speed) or speed <= 0.0:
+		return ARROW_SPEED  # 미지정(0)·오염값 = 기본 화살 속도
+	return clampf(speed, MIN_PROJECTILE_SPEED, MAX_PROJECTILE_SPEED)
+
+
+# 투사체 수명(s) = clamp(사거리)/clamp(속도). arrow_lifetime_s의 일반화 —
+# 무기별 탄속이 갈리는 charge 무기(느린 마법탄)도 표시·권한이 같은 값을 리졸브해 결정론 유지.
+static func projectile_lifetime_s(travel_range: float, speed: float) -> float:
+	return clamp_arrow_range(travel_range) / clamp_projectile_speed(speed)
+
+
+# --- 차지 발사(법사 지팡이) 단일 소스 (§3, 2026-07-24) ---
+# 마우스를 눌러 모은 단계(0~MAX)만큼 위력·폭발 반경이 커진다. 단계 배율은 여기 공용 상수 —
+# 네트워크로는 "레벨(정수)"만 오가고(G_SHOOT "c"), 실제 수치는 각 클라·호스트가 이 표에서 리졸브한다.
+# (배율 자체를 전송하면 스푸핑 표면이 된다 — 궁수 r clamp 철학과 동일.)
+const MAX_CHARGE_LEVEL := 3
+const CHARGE_DAMAGE_MULT: Array[float] = [1.0, 1.7, 2.5, 3.4]   # 레벨별 데미지 배율 (0 = 탭 발사)
+const CHARGE_RADIUS_MULT: Array[float] = [1.0, 1.45, 1.9, 2.4]  # 레벨별 폭발 반경 배율
+const CHARGE_ORB_SCALE: Array[float] = [0.6, 0.85, 1.1, 1.4]    # 레벨별 탄/차지 오브 표시 스케일 (표시 전용 — 반경 미러 아님)
+const MAX_BLAST_RADIUS := 140.0  # 폭발 반경 상한 — 게스트 주장 무기(w)가 어떤 값이든 이 이상으로는 안 터진다(§3 신뢰 경계)
+
+
+static func clamp_charge_level(level: int) -> int:
+	return clampi(level, 0, MAX_CHARGE_LEVEL)
+
+
+# 홀드 시간 → 차지 레벨. step_time이 0/음수/비유한이면 차지 불가(레벨 0) — 데이터 오염 가드.
+static func charge_level_for(held_s: float, step_time: float) -> int:
+	if not (is_finite(held_s) and is_finite(step_time)) or step_time <= 0.0 or held_s <= 0.0:
+		return 0
+	return clamp_charge_level(int(held_s / step_time))
+
+
+# 차지 데미지 = 기본 데미지(calc_damage) × 레벨 배율. UI 표시와 호스트 확정이 같은 함수.
+static func charge_damage(base_damage: int, level: int) -> int:
+	return int(round(float(base_damage) * CHARGE_DAMAGE_MULT[clamp_charge_level(level)]))
+
+
+# 폭발 반경 = 무기 기준 반경 × 레벨 배율 (상한 clamp). 호스트 판정 반경 = 표시 FX 스케일 기준 —
+# 한쪽만 고치면 "맞는 곳"과 "보이는 곳"이 어긋난다 (§3, is_strike_hit·telegraph와 같은 철학).
+static func charge_blast_radius(base_radius: float, level: int) -> float:
+	if not is_finite(base_radius) or base_radius <= 0.0:
+		return 0.0  # 폭발 없는 무기(일반 화살) — 단일 명중
+	return minf(base_radius * CHARGE_RADIUS_MULT[clamp_charge_level(level)], MAX_BLAST_RADIUS)
+
+
+# 폭발 명중 판정 — 폭발 중심에서 반경 안의 적/대상 전부. is_strike_hit 재사용(같은 거리 질의, 단일 소스).
+static func is_blast_hit(target_pos: Vector2, blast_center: Vector2, radius: float, target_radius: float = 0.0) -> bool:
+	return is_strike_hit(target_pos, blast_center, radius + target_radius)
+
+
+# 호스트의 차지 레벨 검증 — 주장한 레벨만큼 실제로 모을 시간이 있었는가 (마지막 발사 이후 경과 기준).
+# 연사하며 항상 c=MAX를 주장하는 스푸핑을 막는다 (is_fire_rate_ok의 차지 버전 — 지터 여유 0.9배 동일).
+# ⚠ 첫 발사(last_shot 미기록)는 통과 — 입장 후 충분히 모을 시간이 있었다고 본다.
+static func is_charge_time_ok(last_shot_msec: int, now_msec: int, level: int, step_time: float) -> bool:
+	var lv := clamp_charge_level(level)
+	if lv <= 0:
+		return true
+	if not is_finite(step_time) or step_time <= 0.0:
+		return false  # 차지 못 하는 무기인데 레벨을 주장 = 거부
+	return now_msec - last_shot_msec >= int(float(lv) * step_time * 0.9 * 1000.0)
+
+
 # 화살 명중 판정 — 호스트만. 화살 현재 위치와 적 중심 거리 <= 화살굵기+적반경.
 # is_strike_hit 재사용(같은 거리 질의) — 물리 레이어 대신 매 프레임 거리 질의라 물리 레이어 함정(§5) 회피 + 단위 테스트 가능.
 static func is_arrow_hit(arrow_pos: Vector2, enemy_pos: Vector2, enemy_radius: float = 0.0) -> bool:

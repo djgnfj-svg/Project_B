@@ -29,9 +29,24 @@ const SLOT_ARMOR := 1
 
 # 공격 모션 타입 (§2 리팩터 게이트, 2026-07-24) — player.gd _do_attack/_update_weapon이 이 값으로 분기한다.
 #   "swing" = 근접 호 스윙(대검·기본, 로컬 원형 질의 판정) · "shoot" = 원거리 발사(궁수 활, 화살 스폰·호스트 화살 판정)
+#   "charge" = 기 모아 발사(법사 지팡이) — shoot 경로 재사용 + 차지 단계·착탄 폭발(범위). 아래 "차지" 그룹이 수치.
 #   "thrust"(찌르기)는 예약 — 추가 시 여기 enum 확장 + _do_attack 분기. 스윙 손맛 필드(아래)는 swing 한정.
-@export_enum("swing", "shoot", "thrust") var motion_type: String = "swing"
-@export var arrow_range: float = 360.0  # (shoot 무기) 화살 최대 사거리(px) — 이 거리 넘으면 소멸. 발사 시 G_SHOOT로 전송, 호스트가 MAX로 clamp(§3). 속도는 CombatMath.ARROW_SPEED 공용
+@export_enum("swing", "shoot", "charge", "thrust") var motion_type: String = "swing"
+@export var arrow_range: float = 360.0  # (shoot/charge 무기) 투사체 최대 사거리(px) — 이 거리 넘으면 소멸(charge는 그 자리에서 폭발). 호스트가 MAX로 clamp(§3)
+
+# 투사체 겉모습·속도 (shoot/charge 공용) — 발사 시 무기 id(G_SHOOT "w")로 각 클라가 리졸브한다.
+# ⚠ 텍스처 "경로"는 네트워크로 보내지 않는다 (rules §3) — 무기 id allowlist 리졸브만.
+@export var projectile_texture: Texture2D          # 비면 기본 화살 텍스처(arrow.tscn) 사용
+@export var projectile_speed: float = 0.0          # 탄속(px/s). 0 = CombatMath.ARROW_SPEED 기본. 표시·호스트 공용(결정론) — CombatMath가 clamp
+@export var projectile_spin: bool = false          # true = 진행 방향 회전 대신 자전(구형 마법탄). false = 화살처럼 방향 정렬
+
+# 차지 발사 (motion_type="charge" 한정) — 마우스를 눌러 모으고 놓으면 발사, 착탄 지점에서 범위 폭발.
+# 단계별 위력·폭발 반경 배율은 CombatMath.CHARGE_* 공용 상수(§3 단일 소스) — 무기는 "기준값"만 쥔다.
+@export_group("차지")
+@export var charge_step_time: float = 0.35   # 한 단계 모으는 시간(s). 레벨 = floor(홀드/이 값), 최대 CombatMath.MAX_CHARGE_LEVEL. 호스트의 차지 시간 검증 기준이기도 하다(§3)
+@export var blast_radius: float = 0.0        # 0단계 폭발 반경(px). 0 = 폭발 없음(단일 명중 = 화살과 동일). 판정 = 표시 반경 미러(§3)
+@export var charge_sfx: String = "charge_step"  # 단계 상승 시 효과음 id (Audio.SFX 키)
+@export var blast_sfx: String = "blast"      # 폭발 효과음 id
 
 # 무기 손맛 (slot=weapon만) — 무기별 평타 연출. player.set_weapon_visual이 읽어 로컬·원격 모두 반영.
 # ⚠ 손맛 "전역 크기"(셰이크 상한·페이드 시간 등)는 스크립트 const가 정본(rules §0) — 여기 값은

@@ -187,10 +187,22 @@ func equipment_ids() -> Array[String]:
 	return _equipment_ids
 
 
+# ⚠ 캐시 필수(2026-07-24 리뷰): 투사체 파라미터 리졸브가 **발사마다** 이 함수를 탄다
+# (표시 스폰 + 호스트 등록 = 샷당 2회 이상, 궁수 연사 0.15s면 클라당 ~13회/s). 캐시가 없으면
+# 반환 EquipDef의 refcount가 0으로 떨어져 매번 .tres 재파싱 → WASM에서 "쏘는 순간" 프레임 히치.
+# allowlist(equipment_ids) 통과분만 담으므로 조작 id가 캐시에 들어오지 못한다.
+var _equip_cache: Dictionary = {}  # id -> EquipDef
+
+
 func equip_def(id: String) -> EquipDef:
+	if _equip_cache.has(id):
+		return _equip_cache[id] as EquipDef
 	if id not in equipment_ids():
 		return null
-	return load("res://data/equipment/%s.tres" % id) as EquipDef
+	var e := load("res://data/equipment/%s.tres" % id) as EquipDef
+	if e != null:
+		_equip_cache[id] = e
+	return e
 
 
 func recipe_ids() -> Array[String]:
@@ -407,6 +419,32 @@ func equipped_defs() -> Array:
 # 착용 장비 총 스탯 {attack, hp} — HUD·전투(calc_damage/max_hp)가 부른다 (단일 소스 CombatMath)
 func current_stats() -> Dictionary:
 	return CombatMath.total_stats(equipped_defs())
+
+
+# 🔴 투사체 파라미터 리졸브 — 단일 소스 (rules §3, 차지 지팡이 2026-07-24).
+# 표시(ArrowField: 탄 겉모습·속도·수명·폭발 FX 반경)와 판정(CombatAuthority: 호스트 전진·명중·폭발 반경)이
+# 반드시 같은 값을 얻어야 "맞는 곳=보이는 곳"이 유지된다 — 한쪽에서 직접 계산하면 갈라진다.
+# weapon_id = G_SHOOT "w"(발신자 주장) → **allowlist 리졸브만** 한다(모르는 id → null → 기본 화살 폴백,
+# 경로 조작 불가 §3). 리졸브되면 사거리·속도·폭발 반경은 전송값이 아니라 **내 로컬 무기 데이터**에서 나온다
+# (스푸핑 표면 최소화). 리졸브 실패 시에만 전송 사거리(fallback_range)를 clamp해 쓴다(궁수 구경로 호환).
+func projectile_params(weapon_id: String, fallback_range: float, charge: int) -> Dictionary:
+	var e := equip_def(weapon_id)
+	var lv := CombatMath.clamp_charge_level(charge)
+	var is_charge := e != null and e.motion_type == "charge"
+	var speed := CombatMath.clamp_projectile_speed(e.projectile_speed if e != null else 0.0)
+	var travel := e.arrow_range if e != null else fallback_range
+	return {
+		"level": lv if is_charge else 0,  # 비차지 무기에 실린 레벨 주장은 여기서 떨군다(심층 방어 — is_charge_time_ok와 이중)
+		"speed": speed,
+		"life": CombatMath.projectile_lifetime_s(travel, speed),
+		"blast": CombatMath.charge_blast_radius(e.blast_radius if e != null else 0.0, lv),
+		"texture": e.projectile_texture if e != null else null,
+		"spin": e.projectile_spin if e != null else false,
+		"scale": CombatMath.CHARGE_ORB_SCALE[lv] if is_charge else 1.0,
+		"tint": e.swing_color if e != null else Color(1, 1, 1, 1),
+		"blast_sfx": e.blast_sfx if e != null else "",
+		"step_time": e.charge_step_time if is_charge else 0.0,  # 0 = 차지 무기가 아님 → 호스트가 레벨 주장을 거부
+	}
 
 
 # 데이터에서 유도한 이론상 최대 장비 스탯(각 스탯 최대 레벨) — G_STATS 수신 클램프의 현실 상한(심층 방어).

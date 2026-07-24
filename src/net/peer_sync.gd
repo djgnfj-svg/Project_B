@@ -45,6 +45,16 @@ func has_player(peer_id: int) -> bool:
 	return _players.has(peer_id)
 
 
+# 그 피어가 G_STATS로 **공지한** 착용 무기 id (미공지면 ""). 호스트가 G_SHOOT의 무기 주장을 교차검증할 때 쓴다
+# (rules §3 — 발사 메시지의 "w"를 그대로 믿으면 전사가 지팡이를 사칭해 차지 배율·폭발을 얻는다, 2026-07-24 리뷰).
+# 공지 자체는 여전히 발신자 트러스트지만, 장비 스탯(atk/hp)과 **같은 한 장의 공지**로 묶여 표면이 늘지 않는다.
+func peer_weapon_id(peer_id: int) -> String:
+	var st_v: Variant = _peer_stats.get(peer_id)
+	if st_v == null:
+		return ""
+	return str((st_v as Dictionary).get("weapon", ""))
+
+
 func _spawn(peer_id: int, is_local: bool) -> void:
 	if peer_id == 0 or _players.has(peer_id):
 		return
@@ -127,7 +137,8 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			_players[from_id].apply_remote_pos(
 				Vector2(float(data.get("x", 0.0)), float(data.get("y", 0.0))),
 				bool(data.get("f", false)),
-				float(data.get("a", 0.0)))
+				float(data.get("a", 0.0)),
+				int(data.get("c", 0)))  # 차지 상태(법사 지팡이) — 표시 전용, 실제 발사 레벨은 G_SHOOT를 호스트가 재검증
 			if not _pos_seen.has(from_id):
 				# 첫 G_POS = 상대가 같은 씬에서 듣고 있다는 증명 — 씬 전환 중 드랍된 공지를 재전송
 				_pos_seen[from_id] = true
