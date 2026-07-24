@@ -276,7 +276,11 @@ func _on_mob_strike(eid: String, center: Vector2) -> void:
 		var p := node as PlayerActor
 		if p == null or not p.is_alive():
 			continue
-		if not CombatMath.is_strike_hit(p.net_anchor(), center, def.strike_radius):
+		# 지연 보상(§3): 낡은 수신 좌표와 속도로 외삽한 추정 좌표가 **둘 다** 판정 안일 때만 확정.
+		# 호스트 자신은 one_way=0·is_local이라 두 좌표가 같아져 기존 동작과 동일하다(항등 폴백).
+		if not CombatMath.is_strike_hit_lagged(
+				p.net_anchor(), p.net_anchor_lead(Net.one_way_ms(p.peer_id)),
+				center, def.strike_radius):
 			continue
 		if _is_iframe_active(p):
 			continue  # 구르기 무적 (GDD §11 확정 2026-07-22)
@@ -295,12 +299,15 @@ func _on_boss_strike(center: Vector2, angle: float, pattern: BossPatternDef) -> 
 			continue
 		if int(_boss_strike_frame.get(p.peer_id, -1)) == frame:
 			continue  # 이번 STRIKE(프레임)에서 이미 이 플레이어 피격 — 착탄 원 겹침 중복 데미지 차단
+		# 지연 보상(§3) — 잔몹 STRIKE와 같은 규약: 낡은 좌표·추정 좌표가 둘 다 맞아야 확정.
 		var anchor := p.net_anchor()
+		var lead := p.net_anchor_lead(Net.one_way_ms(p.peer_id))
 		var hit := false
 		if pattern.shape == "cone":
-			hit = CombatMath.is_hit_in_cone(anchor, center, angle, pattern.half_angle, pattern.range)
+			hit = CombatMath.is_hit_in_cone_lagged(
+				anchor, lead, center, angle, pattern.half_angle, pattern.range)
 		else:
-			hit = CombatMath.is_strike_hit(anchor, center, pattern.range)
+			hit = CombatMath.is_strike_hit_lagged(anchor, lead, center, pattern.range)
 		if not hit:
 			continue
 		if _is_iframe_active(p):

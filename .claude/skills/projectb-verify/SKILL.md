@@ -42,6 +42,18 @@ wait $GUEST_PID; kill $RELAY_PID
 
 새 테스트를 추가하면 위 목록과 `CLAUDE.md`의 「검증 명령」 절을 **동시에** 갱신해라.
 
+**진단 도구(스위트 아님) — 릴레이 왕복 지연 계측 `tests/measure_latency.gd`:** "렉이 있다·게스트만 맞는다" 류 신고가 오면 추측하지 말고 먼저 재라. 게임과 같은 홉(클라A→릴레이→클라B→릴레이→클라A)을 왕복해 RTT 분포 + 그 지연이 깎아먹는 **회피 창 예산**까지 환산해 찍는다. `_auto`가 아니라 스위트에 안 들어간다(외부 네트워크 의존).
+
+```bash
+CF=/tmp/lat_code.txt; rm -f $CF
+./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/measure_latency.gd -- role=host codefile=$CF url=wss://relay.jachana.com count=40 gap_ms=100 &
+HP=$!; sleep 2
+./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/measure_latency.gd -- role=guest codefile=$CF url=wss://relay.jachana.com > /dev/null 2>&1 &
+wait $HP   # 출력: LATENCY_OK rtt_ms min/p50/p95/max/mean + [budget] 회피 창 환산
+```
+- `url=ws://localhost:9080`으로 로컬 릴레이를 겨누면 **코드 자체의 오버헤드 하한**(실측 14ms)이 나온다 — 배포 릴레이 값에서 이걸 빼면 순수 네트워크분이다.
+- ⚠ **한 번 재고 결론 내지 마라.** 릴레이 왕복은 시점에 따라 140~215ms를 오간다. 변경의 효과를 보려면 **같은 시간대에 A/B를 번갈아** 재라 — 순차 전후 비교는 경로 변동을 개선으로 착각하게 만든다(실제로 겪음, rules §5 DO 배치 항목).
+
 ⚠ **이 목록이 정본과 갈라지면**, 이 스킬을 읽은 에이전트가 "전 스위트를 돌렸다"고 믿으면서 절반만 돌린다. 새 테스트를 더하면 목록도 갱신해라 — **목록에서 빠진 테스트는 낡아 죽는다**(문법이 바뀌어도 아무도 안 돌려서 조용히 깨진 채 방치된다).
 
 ⚠ **세이브를 건드리는 테스트 주의.** `SaveManager`가 부팅 시 저장을 살리는 구조라면, 저장 관련 시그널을 쏘는 테스트는 실제 `user://save`를 덮어쓴다. 테스트 끝의 정리는 지울 뿐 복구가 아니다 — 플레이하던 세이브가 있으면 날아간다. 새 시그널을 쏘는 테스트를 더할 땐 SaveManager가 물려 있는지 먼저 확인해라.

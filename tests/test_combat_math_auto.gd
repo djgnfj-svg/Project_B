@@ -159,6 +159,59 @@ func _initialize() -> void:
 	# 터널링 불변식(§3 주석) — 프레임당 전진 < 최소 명중 지름. MAX_PROJECTILE_SPEED를 올리면 여기가 빨개진다.
 	failures += _check(CombatMath.MAX_PROJECTILE_SPEED / 60.0 < 2.0 * (CombatMath.ARROW_HIT_RADIUS + 6.0), "터널링 불변식: 프레임 전진 < 최소 명중 지름(body_radius 6 기준)")
 
+	# --- 지연 보상 (§3, 2026-07-24) — "피했는데 맞았다"를 없애는 계약 ---
+	# 편도 지연 정규화: 음수·NaN·스파이크를 판정에 쓸 수 있는 값으로
+	failures += _check(is_equal_approx(CombatMath.clamp_one_way_ms(40.0), 40.0), "one_way: 정상(40ms) 통과")
+	failures += _check(is_equal_approx(CombatMath.clamp_one_way_ms(-5.0), 0.0), "one_way: 음수 → 0(보상 없음)")
+	failures += _check(is_equal_approx(CombatMath.clamp_one_way_ms(NAN), 0.0), "one_way: NaN → 0(오염 가드)")
+	failures += _check(is_equal_approx(CombatMath.clamp_one_way_ms(9999.0), CombatMath.LAG_MAX_ONE_WAY_MS),
+		"one_way: 과대 주장 → MAX clamp(예고 무한 지연 차단)")
+
+	# 예고 타격 지연 = 가장 느린 피어의 편도 지연. 솔로(0)면 항등 = 기존 동작 보존
+	failures += _check(is_equal_approx(CombatMath.strike_delay_s(0.0), 0.0), "strike_delay: 솔로/미측정(0) → 지연 0(항등)")
+	failures += _check(is_equal_approx(CombatMath.strike_delay_s(80.0), 0.08), "strike_delay: 편도 80ms → 0.08s")
+	failures += _check(is_equal_approx(CombatMath.strike_delay_s(9999.0), CombatMath.LAG_MAX_ONE_WAY_MS / 1000.0),
+		"strike_delay: 과대 주장 → 상한(보스 예고 무한 지연 차단)")
+
+	# 외삽 시간 = (수신 후 경과) + 편도 지연. 수신 기록이 없으면(로컬 피어) 0
+	failures += _check(is_equal_approx(CombatMath.lag_lead_s(-1, 5000, 50.0), 0.0), "lag_lead: 수신 기록 없음 → 0(로컬 항등)")
+	failures += _check(is_equal_approx(CombatMath.lag_lead_s(1000, 1030, 40.0), 0.07), "lag_lead: 경과 30ms + 편도 40ms = 0.07s")
+	failures += _check(is_equal_approx(CombatMath.lag_lead_s(1000, 900, 0.0), 0.0), "lag_lead: 시계 역행 → 0(음수 외삽 금지)")
+
+	# 위치 외삽 — 마지막 관측 속도로 추정, 거리 상한으로 폭주 차단
+	failures += _check(CombatMath.extrapolate(Vector2.ZERO, Vector2(100.0, 0.0), 0.1).is_equal_approx(Vector2(10.0, 0.0)),
+		"extrapolate: 100px/s × 0.1s = 10px 전진")
+	failures += _check(CombatMath.extrapolate(Vector2(5.0, 5.0), Vector2(100.0, 0.0), 0.0).is_equal_approx(Vector2(5.0, 5.0)),
+		"extrapolate: lead 0 → 항등(로컬 피어)")
+	failures += _check(CombatMath.extrapolate(Vector2.ZERO, Vector2(INF, 0.0), 0.1).is_equal_approx(Vector2.ZERO),
+		"extrapolate: Inf 속도 → 항등(오염 가드)")
+	failures += _check(is_equal_approx(CombatMath.extrapolate(Vector2.ZERO, Vector2(9999.0, 0.0), 1.0).length(),
+		CombatMath.LAG_MAX_LEAD_DIST), "extrapolate: 과대 속도 → 거리 상한으로 잘림")
+
+	# 🔴 방어자 우대 규약 — 낡은 좌표와 추정 좌표가 **둘 다** 안일 때만 적중.
+	# 이 4줄이 "피했는데 맞았다"의 회귀 방지선이다.
+	var c := Vector2.ZERO
+	var r := 20.0
+	failures += _check(CombatMath.is_strike_hit_lagged(Vector2(5.0, 0.0), Vector2(8.0, 0.0), c, r),
+		"lagged: 둘 다 반경 안 → 적중")
+	failures += _check(not CombatMath.is_strike_hit_lagged(Vector2(19.0, 0.0), Vector2(30.0, 0.0), c, r),
+		"lagged: 낡은 좌표는 안이지만 추정은 밖(빠져나가는 중) → 빗나감 ★고치려던 그 버그")
+	failures += _check(not CombatMath.is_strike_hit_lagged(Vector2(30.0, 0.0), Vector2(5.0, 0.0), c, r),
+		"lagged: 들어오는 중 → 빗나감(방어자 우대)")
+	failures += _check(not CombatMath.is_strike_hit_lagged(Vector2(40.0, 0.0), Vector2(50.0, 0.0), c, r),
+		"lagged: 둘 다 밖 → 빗나감")
+	# 항등 폴백 — 호스트 자신(두 좌표 동일)은 기존 is_strike_hit과 완전히 같아야 한다
+	var same := Vector2(19.9, 0.0)
+	failures += _check(CombatMath.is_strike_hit_lagged(same, same, c, r) == CombatMath.is_strike_hit(same, c, r),
+		"lagged: 두 좌표 동일(로컬) → is_strike_hit과 항등")
+
+	# 부채꼴도 같은 규약 (보스 평타)
+	var apex := Vector2.ZERO
+	failures += _check(CombatMath.is_hit_in_cone_lagged(Vector2(10.0, 0.0), Vector2(15.0, 0.0), apex, 0.0, 0.6, 40.0),
+		"cone_lagged: 둘 다 부채꼴 안 → 적중")
+	failures += _check(not CombatMath.is_hit_in_cone_lagged(Vector2(10.0, 0.0), Vector2(0.0, 30.0), apex, 0.0, 0.6, 40.0),
+		"cone_lagged: 추정 좌표가 각 밖(옆으로 빠짐) → 빗나감")
+
 	if failures == 0:
 		print("TEST_OK combat_math")
 		quit(0)
