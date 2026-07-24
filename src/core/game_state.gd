@@ -294,6 +294,9 @@ func can_craft(recipe_id: String) -> bool:
 	var r := recipe_def(recipe_id)
 	if r == null or not has_blueprint(recipe_id):
 		return false
+	# 직업 귀속 — 다른 직업 무기는 제작 불가(재료만 태우고 못 쓰는 걸 차단). equip()과 같은 규칙(can_equip_job).
+	if not can_equip_job(equip_def(r.result_equip_id)):
+		return false
 	# 이미 보유(가방/창고)한 장비는 재제작 불가 — 장비는 id당 1개(중복 제작이 재료만 태우는 걸 차단).
 	if owned_equipment.has(r.result_equip_id) or storage_equipment.has(r.result_equip_id):
 		return false
@@ -350,12 +353,18 @@ func upgrade_equipment(equip_id: String) -> bool:
 	return true
 
 
+# 직업 귀속 판정 단일 소스 — 무기 job_id가 비면 범용, 아니면 현재 선택 직업과 일치해야 착용/제작 가능.
+# equip()·can_craft()가 같은 규칙을 쓴다(전사가 활 못 듦). 방어구는 보통 job_id 비움 = 범용.
+func can_equip_job(e: EquipDef) -> bool:
+	return e != null and (e.job_id.is_empty() or e.job_id == selected_job_id)
+
+
 func equip(equip_id: String) -> void:
 	if equip_level(equip_id) < 0:
 		return
 	var e := equip_def(equip_id)
-	if e == null:
-		return
+	if e == null or not can_equip_job(e):
+		return  # 직업 귀속 위반 = 착용 거부 (전사가 활 등)
 	equipped[e.slot()] = equip_id
 	_notify_inventory()
 

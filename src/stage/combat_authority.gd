@@ -22,6 +22,8 @@ var _roll_grant_msec: Dictionary = {}  # peer_id -> 마지막 구르기 그랜�
 var _pending_php: Dictionary = {}  # peer_id -> hp (게스트 전용) — 스폰 전 도착한 php 보류. 씬 전환 직후 호스트의 이월 HP 확정이 원격 아바타 스폰(첫 G_POS)보다 먼저 오면 유실되던 표시 드리프트 방지 (peer_sync._peer_jobs 보류 패턴 미러)
 var _stage_over: bool = false  # 클리어↔전멸 상호 배제 + 종료 후 판정 중지
 var _boss_strike_frame: Dictionary = {}  # peer_id -> 보스 STRIKE 피격 물리 프레임 — 물뿌리기 원 겹침 시 같은 프레임 중복 확정 방지(per-cast dedup, 보스는 한 프레임에 한 패턴만 발화)
+var _arrows: Array = []  # 호스트 권한 화살(궁수 활): [{aid, pos:Vector2, dir:Vector2, life:float, shooter:int}, …] — _physics_process가 전진·명중 판정
+var _last_shot_msec: Dictionary = {}  # peer_id -> 마지막 발사 msec (호스트 전용 — 발사율 스팸 게이트, _last_hit_msec 미러)
 
 
 func _ready() -> void:
@@ -36,11 +38,13 @@ func _ready() -> void:
 	EventBus.player_hp_confirmed.connect(_on_player_hp_confirmed)
 	EventBus.mob_strike.connect(_on_mob_strike)
 	EventBus.boss_strike.connect(_on_boss_strike)
+	EventBus.player_shoot.connect(_on_player_shoot)
 	for node: Node in get_tree().get_nodes_in_group("enemy"):
 		_register_enemy(node)
 	EventBus.peer_left.connect(func(peer_id: int) -> void:
 		_last_hit_msec.erase(peer_id)
 		_roll_grant_msec.erase(peer_id)
+		_last_shot_msec.erase(peer_id)  # 발사율 게이트 기록 정리 (_last_hit_msec 대칭)
 		_pending_php.erase(peer_id)
 		_boss_strike_frame.erase(peer_id)  # 보스 STRIKE dedup 기록도 대칭 정리 (유한하나 정리 일관성)
 		GameState.drop_party_hp(peer_id))  # 챕터 내 잔류 이월 기록 정리 (재접속 id는 증가라 재사용 없음)
@@ -108,6 +112,84 @@ func _confirm_damage(health: HealthComponent, job: JobDef, attacker_id: int) -> 
 	var atk_p := _peer_sync.player(attacker_id)
 	var bonus := atk_p.equip_atk_bonus if atk_p != null else 0
 	health.apply_damage(CombatMath.calc_damage(job, bonus))
+
+
+# --- 투사체(궁수 활) 호스트 권한 (2026-07-24) — 화살 = 결정론 직선. 표시는 ArrowField(전 클라), 판정은 여기(호스트만) ---
+# 로컬 발사(호스트 자신) — 권한 화살 등록. 자기 발사는 신뢰(로컬 쿨다운이 발사율 제한). 게스트는 여기 안 옴(is_host 가드).
+func _on_player_shoot(shooter_id: int, origin: Vector2, dir: Vector2, aid: String, arrow_range: float) -> void:
+	if not Net.is_host() or _stage_over:
+		return
+	_register_arrow(aid, origin, dir, shooter_id, arrow_range)
+
+
+# arrow_range는 arrow_lifetime_s가 MAX로 clamp한다 (게스트 스푸핑 상한, §3). 호스트 자기 발사는 로컬 무기값이라 안전.
+func _register_arrow(aid: String, origin: Vector2, dir: Vector2, shooter_id: int, arrow_range: float) -> void:
+	# 유한성 가드 — 게스트 발 dx/dy가 INF(JSON 1e999)면 normalized()가 NaN이 되어 == ZERO를 통과한다.
+	# apply_remote_pos의 Inf/NaN 방어와 일관되게 차단 (NaN 화살은 무해하나 리스트를 오염시키지 않게).
+	if aid.is_empty() or not (is_finite(dir.x) and is_finite(dir.y)):
+		return
+	var d := dir.normalized()
+	if d == Vector2.ZERO:
+		return
+	_arrows.append({"aid": aid, "pos": origin, "dir": d,
+		"life": CombatMath.arrow_lifetime_s(arrow_range), "shooter": shooter_id})
+
+
+# 호스트 전용 — 권한 화살 전진 + 명중 판정. 매 프레임 거리 질의(is_arrow_hit)라 물리 레이어 함정(§5) 회피 + 단위 테스트 가능.
+# 첫 적중에서 멈춤(관통 없음). 발사율은 발사 시 is_fire_rate_ok로 이미 강제 — 명중엔 쿨다운 게이트 재적용 안 함(화살 하나=한 발).
+func _physics_process(delta: float) -> void:
+	if not Net.is_host() or _stage_over or _arrows.is_empty():
+		return
+	var step := CombatMath.ARROW_SPEED * delta
+	var survivors: Array = []
+	for a: Dictionary in _arrows:
+		var pos := (a["pos"] as Vector2) + (a["dir"] as Vector2) * step
+		a["pos"] = pos
+		a["life"] = float(a["life"]) - delta
+		var hit_eid := _arrow_probe(pos)
+		if not hit_eid.is_empty():
+			_confirm_arrow_hit(hit_eid, int(a["shooter"]))
+			_terminate_arrow(str(a["aid"]), pos)
+			continue  # 화살 소멸 — survivors에 안 넣음
+		if float(a["life"]) <= 0.0:
+			continue  # 빗나감 — 표시 화살은 각 클라 로컬 수명으로 동시 소멸(브로드캐스트 불필요)
+		survivors.append(a)
+	_arrows = survivors
+
+
+# 화살 현재 위치에 맞는 살아있는 적 eid (첫 적중, 없으면 ""). 판정 반경 = 화살굵기 + 적 body_radius (§3 거대 적 대응).
+func _arrow_probe(pos: Vector2) -> String:
+	for eid: String in _enemies:
+		var entry := _enemies[eid] as Dictionary
+		var health := entry["health"] as HealthComponent
+		if health == null or health.is_dead():
+			continue
+		var root := entry["root"] as Node2D
+		if root == null:
+			continue
+		var def := entry["def"] as EnemyDef
+		var body_r := def.body_radius if def != null else 0.0
+		if CombatMath.is_arrow_hit(pos, root.global_position, body_r):
+			return eid
+	return ""
+
+
+# 호스트 전용 — 화살 명중 데미지 확정. calc_damage 단일 소스(§3), 공격자 job+장비 보너스. 쿨다운 게이트 없음(발사 시 강제).
+func _confirm_arrow_hit(eid: String, shooter_id: int) -> void:
+	var entry_v: Variant = _enemies.get(eid)
+	if entry_v == null:
+		return
+	var atk_p := _peer_sync.player(shooter_id)
+	if atk_p == null or atk_p.job == null:
+		return
+	((entry_v as Dictionary)["health"] as HealthComponent).apply_damage(
+		CombatMath.calc_damage(atk_p.job, atk_p.equip_atk_bonus))
+
+
+# 호스트 전용 — 화살 종료 통지: 게스트는 G_ARROW_HIT로, 호스트 자신은 arrow_gone_local로(릴레이 미에코). ArrowField가 despawn.
+func _terminate_arrow(aid: String, pos: Vector2) -> void:
+	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ARROW_HIT, "aid": aid, "x": pos.x, "y": pos.y})
+	EventBus.arrow_gone_local.emit(aid, pos)
 
 
 # 호스트 전용 수신 경로 — Health 권한 경로(apply_damage/부활)가 확정한 HP를 전원에 브로드캐스트
@@ -249,6 +331,29 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			if CombatMath.is_hit_in_reach(
 					attacker.net_anchor(), (entry["root"] as Node2D).global_position, attacker.job, reach_radius):
 				_confirm_damage(entry["health"] as HealthComponent, attacker.job, from_id)
+		NetSchema.G_SHOOT:
+			if not Net.is_host() or _stage_over:
+				return  # 화살 등록 권한은 호스트만 (게스트도 릴레이 도달하나 무시)
+			var shooter := _peer_sync.player(from_id)
+			if shooter == null or not shooter.is_alive() or shooter.job == null:
+				return  # 사망(관전 고스트)·무스폰 피어의 발사 거부 — G_HIT_REQ 미러 (rules §3)
+			# aid 네임스페이스 검증 — 발신자가 "피어id:seq" 규약을 지키는지. 안 그러면 남의 화살 aid("1:5")를
+			# 위조해 그 화살 종료 시 상대 표시 화살을 조기 despawn시키는 코스메틱 그리핑이 가능(reviewer 2026-07-24).
+			var aid_s := str(data.get("aid", ""))
+			if not aid_s.begins_with(str(from_id) + ":"):
+				return
+			# 신뢰 경계(rules §3): 발사율(job 쿨다운) + 원점 근접 검증. 스팸·순간이동 원점 거부.
+			# 좌표는 net_anchor() — 표시 보간 지연 제외(사거리 검증과 같은 철학).
+			var now_shot := Time.get_ticks_msec()
+			if not CombatMath.is_fire_rate_ok(int(_last_shot_msec.get(from_id, -1000000000)), now_shot, shooter.job):
+				return
+			var origin := Vector2(float(data.get("ox", 0.0)), float(data.get("oy", 0.0)))
+			if not CombatMath.is_shot_origin_ok(shooter.net_anchor(), origin):
+				return
+			_last_shot_msec[from_id] = now_shot
+			_register_arrow(aid_s, origin,
+				Vector2(float(data.get("dx", 1.0)), float(data.get("dy", 0.0))), from_id,
+				float(data.get("r", CombatMath.DEFAULT_ARROW_RANGE)))
 		NetSchema.G_ENEMY_HP:
 			if Net.is_host():
 				return  # 호스트 상태가 원본

@@ -28,6 +28,10 @@ signal player_hp_confirmed(peer_id: int, hp: int)  # 확정 HP 통지 — 호스
 signal mob_telegraph(eid: String, center: Vector2)  # 호스트 전용 emit(잔몹 AI WINDUP) — MobSync가 matk 브로드캐스트
 signal mob_strike(eid: String, center: Vector2)     # 호스트 전용 emit(잔몹 AI STRIKE) — CombatAuthority가 데미지 확정
 
+# --- 투사체 (궁수 활 2026-07-24) — 발사는 로컬 선언, 표시 화살은 각 클라 로컬 시뮬, 명중 확정은 호스트만 ---
+signal player_shoot(shooter_id: int, origin: Vector2, dir: Vector2, aid: String, arrow_range: float)  # 로컬 발사 선언(player emit) — ArrowField가 표시 화살 스폰, CombatAuthority(호스트 자기 발사)가 권한 화살 등록. arrow_range = 무기 사거리(EquipDef.arrow_range). player가 G_SHOOT도 송신(원격 표시용)
+signal arrow_gone_local(aid: String, world_pos: Vector2)  # 호스트 전용 emit(CombatAuthority: 자기 권한 화살 종료 — 적중/사거리 소진) → 호스트 ArrowField가 자기 표시 화살 despawn+임팩트. 호스트는 자기 G_ARROW_HIT를 릴레이로 못 받으므로(drop_pick_local 미러). 게스트는 G_ARROW_HIT 수신으로 처리
+
 # --- boss (보스전 2026-07-23) — 호스트 전용 emit(보스 AI), 표시(telegraph)와 판정(strike) 분리. mob_* 규약 확장 ---
 signal boss_telegraph(eid: String, pattern_id: String, center: Vector2, angle: float)  # 호스트 emit(보스 WINDUP) — MobSync가 G_BOSS_ATK 브로드캐스트(표시). 수신 측은 자기 def에서 패턴 리졸브
 signal boss_strike(center: Vector2, angle: float, pattern: BossPatternDef)  # 호스트 emit(보스 STRIKE) — CombatAuthority가 pattern.shape별(원/부채꼴) 플레이어 피격 판정

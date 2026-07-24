@@ -25,6 +25,7 @@ const SFX := {
 	"pickup_item": "pickup_item",  # 재료/도면 픽업(item_picked)
 	"pickup_gold": "pickup_gold",  # 골드 픽업(item_picked kind=gold)
 	"blueprint": "blueprint",    # 도면 신규 언락 팡파레(blueprint_unlocked)
+	"bow_fire": "bow_fire",      # 활 발사(시위 튕김) — 궁수 EquipDef.swing_sfx (player_shoot). 명중음은 combat_impact "hit"이 담당
 }
 
 var _players: Array[AudioStreamPlayer] = []

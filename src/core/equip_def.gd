@@ -11,6 +11,7 @@ const SLOT_ARMOR := 1
 @export_multiline var description: String = ""  # 아이템 툴팁 설명(선택) — 비면 스탯만 표시 (UI item_ui 헬퍼)
 @export var icon: Texture2D            # 제작/강화 UI·인벤 표시 (도형 금지, rules §0)
 @export_enum("weapon", "armor") var slot_name: String = "weapon"
+@export var job_id: String = ""  # 직업 귀속 — 비면 범용(아무 직업), 값 있으면 그 직업만 착용/제작 가능(전사는 활 못 듦). GameState.can_equip_job 단일 소스
 
 # 기본 수치 + 강화 단계당 증가 (레벨 0 = 미강화). CombatMath.equip_stat_at_level이 base + step*level.
 @export var base_attack: int = 0
@@ -24,6 +25,13 @@ const SLOT_ARMOR := 1
 # 장비 착용 시 player.gd의 WeaponPivot/Weapon 텍스처를 이걸로 교체 (후속 슬라이스).
 @export var weapon_texture: Texture2D
 @export var weapon_grip: Vector2 = Vector2(4, 8)
+@export var weapon_hold_dist: float = 8.0  # 몸 중심 → 무기 그립까지 거리(px). 큰 무기(활 34px)는 크게 잡아 몸과 안 겹치게(대검=8 기본)
+
+# 공격 모션 타입 (§2 리팩터 게이트, 2026-07-24) — player.gd _do_attack/_update_weapon이 이 값으로 분기한다.
+#   "swing" = 근접 호 스윙(대검·기본, 로컬 원형 질의 판정) · "shoot" = 원거리 발사(궁수 활, 화살 스폰·호스트 화살 판정)
+#   "thrust"(찌르기)는 예약 — 추가 시 여기 enum 확장 + _do_attack 분기. 스윙 손맛 필드(아래)는 swing 한정.
+@export_enum("swing", "shoot", "thrust") var motion_type: String = "swing"
+@export var arrow_range: float = 360.0  # (shoot 무기) 화살 최대 사거리(px) — 이 거리 넘으면 소멸. 발사 시 G_SHOOT로 전송, 호스트가 MAX로 clamp(§3). 속도는 CombatMath.ARROW_SPEED 공용
 
 # 무기 손맛 (slot=weapon만) — 무기별 평타 연출. player.set_weapon_visual이 읽어 로컬·원격 모두 반영.
 # ⚠ 손맛 "전역 크기"(셰이크 상한·페이드 시간 등)는 스크립트 const가 정본(rules §0) — 여기 값은

@@ -31,6 +31,10 @@ const HOLD_DIST := 8.0               # 몸 중심 → 그립 거리 (몸에 붙�
 const LUNGE_DIST := 5.0              # 스윕 중 앞으로 내지르는 거리
 const REMOTE_MAX_SPEED_MULT := 1.5  # 원격 변위 클램프 여유 — 순간이동 스푸핑 완화 (rules §3)
 const ENEMY_BODY_MASK := 1 << 2  # 물리 레이어 3 enemy_body — rules §5 배정표가 단일 소스
+# 발사(shoot 무기 = 궁수 활) — 표시 연출값(§0 예외, 사용자 튜닝). 화살 속도/사거리는 CombatMath(결정론 공용).
+const MUZZLE_OFFSET := 26.0          # 발사 원점 = 몸 중심 → 조준 방향 이만큼 앞. 화살 길이 18(반9)+몸 반경 16 → 26이면 화살 뒤끝(17)이 몸 밖 (겹침 방지). SHOT_ORIGIN_TOL이 이 값+지연을 수용
+const RECOIL_DIST := 4.0             # 발사 시 활을 뒤로 당기는 거리(px) — 반동 손맛
+const RECOIL_TIME := 0.14            # 반동 복귀 시간(s)
 
 @export var job: JobDef
 
@@ -56,6 +60,8 @@ var _hit_shake: float = 1.5                     # 적중 시 스크린셰이크 
 var _swing_arc: float = SWING_HALF_ARC
 var _swing_time: float = ATTACK_ANIM_TIME
 var _swing_lunge: float = LUNGE_DIST
+var _hold_dist: float = HOLD_DIST       # 몸 중심 → 무기 그립 거리 (무기별 = EquipDef.weapon_hold_dist, 대검 8·활 20)
+var _arrow_range: float = 360.0         # shoot 무기 화살 사거리 (무기별 = EquipDef.arrow_range) — _fire_arrow가 G_SHOOT로 전송
 
 var _remote_target: Vector2 = Vector2.ZERO
 var _remote_flip: bool = false
@@ -68,6 +74,8 @@ var _fx_left: float = 0.0
 var _fx_delay_left: float = 0.0
 var _fx_dir: Vector2 = Vector2.RIGHT
 var _attack_queued: bool = false
+var _shot_seq: int = 0          # 로컬 발사 카운터 — 화살 고유 id "my_id:seq" 생성 (shoot 무기)
+var _recoil_left: float = 0.0   # 발사 반동 잔여(s) — _update_weapon이 활을 뒤로 당김 (로컬·원격 공용 연출)
 var _last_remote_msec: int = -1
 var _alive: bool = true
 var _saved_layer: int = 0
@@ -155,7 +163,7 @@ func set_weapon_visual(equip: EquipDef) -> void:
 		grip = equip.weapon_grip
 	_weapon.texture = tex
 	_weapon_grip = grip
-	_weapon.position = -grip + Vector2(HOLD_DIST, 0.0)
+	_weapon.position = -grip + Vector2(_hold_dist, 0.0)
 	_weapon_pivot.visible = tex != null
 	_apply_weapon_feel(equip)
 
@@ -178,6 +186,8 @@ func _apply_weapon_feel(equip: EquipDef) -> void:
 	_swing_arc = equip.swing_arc if equip != null else SWING_HALF_ARC
 	_swing_time = equip.swing_time if equip != null else ATTACK_ANIM_TIME
 	_swing_lunge = equip.swing_lunge if equip != null else LUNGE_DIST
+	_hold_dist = equip.weapon_hold_dist if equip != null else HOLD_DIST  # 큰 무기(활)는 멀리 잡아 몸과 안 겹침
+	_arrow_range = equip.arrow_range if equip != null else CombatMath.DEFAULT_ARROW_RANGE  # shoot 무기 사거리
 
 
 # 궤적 페이드 색 — 무기 틴트 rgb 유지, 알파만 페이드로 구동
@@ -309,6 +319,7 @@ func _tick_timers(delta: float) -> void:
 	_roll_cd_left = maxf(0.0, _roll_cd_left - delta)
 	_remote_roll_left = maxf(0.0, _remote_roll_left - delta)
 	_attack_anim_left = maxf(0.0, _attack_anim_left - delta)
+	_recoil_left = maxf(0.0, _recoil_left - delta)
 	if _fx_delay_left > 0.0:
 		_fx_delay_left -= delta
 		if _fx_delay_left <= 0.0:
@@ -359,6 +370,9 @@ func _update_weapon(delta: float) -> void:
 	# 스윙 3박자: 예비(뒤로 젖힘) → 가속 스윕(+내지르기) → 복귀
 	var swing_off := 0.0
 	var lunge := 0.0
+	# 발사 반동(shoot 무기) — 활을 뒤로 당겼다 복귀. shoot는 _attack_anim_left를 안 켜므로 스윙과 상호 배타.
+	if _recoil_left > 0.0:
+		lunge = -RECOIL_DIST * (_recoil_left / RECOIL_TIME)
 	if _attack_anim_left > 0.0:
 		var t := 1.0 - _attack_anim_left / _swing_time  # 무기별 스윙 창으로 정규화
 		if t < 0.28:
@@ -372,7 +386,7 @@ func _update_weapon(delta: float) -> void:
 			swing_off = _swing_arc * (1.0 - (t - 0.75) / 0.25)
 	var ang := _aim_angle + swing_off
 	_weapon_pivot.rotation = ang
-	_weapon.position = -_weapon_grip + Vector2(HOLD_DIST + lunge, 0.0)
+	_weapon.position = -_weapon_grip + Vector2(_hold_dist + lunge, 0.0)
 	# 좌향 조준 시 뒤집기 — 안 하면 검이 거꾸로(날이 아래) 보인다. 기준은 조준각(스윙 중 깜빡임 방지)
 	_weapon.flip_v = absf(wrapf(_aim_angle, -PI, PI)) > PI / 2.0
 	# 위쪽 조준 = 몸 뒤(0), 아래 = 몸 앞(2) — 몸(Sprite z=1) 기준 상대 배치.
@@ -413,6 +427,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		_attack_queued = true
 
 
+# 현재 착용 무기의 공격 모션 (EquipDef.motion_type) — 미착용/미지정이면 "swing" 폴백. _do_attack 분기의 단일 소스.
+func _weapon_motion() -> String:
+	return _weapon_override.motion_type if _weapon_override != null else "swing"
+
+
 func _local_combat() -> void:
 	var want := _attack_queued
 	_attack_queued = false
@@ -421,31 +440,54 @@ func _local_combat() -> void:
 	# 무장 해제(무기 미착용) = 공격 불가 — 판정·궤적·소리 전부 안 나간다. 무기가 곧 공격 수단.
 	if want and _attack_cd_left <= 0.0 and _roll_time_left <= 0.0 and _is_armed():
 		_attack_cd_left = job.attack_cooldown
-		_attack_anim_left = _swing_time  # 무기별 스윙 창 (§3: < attack_cooldown)
 		var dir := _aim_dir()
-		_show_attack_fx(dir)
-		EventBus.player_swing.emit(global_position, _swing_sfx)  # 스윙 SFX (로컬 — 무기별 휘두름음)
-		Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ATK, "dx": dir.x, "dy": dir.y})
-		# 판정: 조준 방향 원형 질의 (Area 노드 대신 즉시 질의 — 프레임 지연 없음)
-		# 기하는 CombatMath 단일 소스 — FX 위치(_show_attack_fx)와 같은 함수라 어긋나지 않는다
-		var center := global_position + CombatMath.attack_center_offset(dir, job)
-		var shape := CircleShape2D.new()
-		shape.radius = CombatMath.attack_radius(job)
-		var params := PhysicsShapeQueryParameters2D.new()
-		params.shape = shape
-		params.transform = Transform2D(0.0, center)
-		params.collision_mask = ENEMY_BODY_MASK
-		params.collide_with_bodies = true
-		var hits := get_world_2d().direct_space_state.intersect_shape(params, 8)
-		var connected := false
-		for hit: Dictionary in hits:
-			var body := hit.get("collider") as Node
-			if body != null and body.is_in_group("enemy"):
-				EventBus.attack_hit.emit(body, job)
-				connected = true
-		if connected:
-			# 공격자 로컬 예측 타격 손맛 — 무기별 셰이크/타격음(호스트 확정 전 즉발, 표시 전용). 스윙당 1회.
-			EventBus.weapon_impact.emit(center, _hit_sfx, _hit_shake)
+		# 모션 타입 분기 (§2 게이트): shoot = 원거리 발사(화살), 그 외 = 근접 호 스윙. thrust는 예약.
+		if _weapon_motion() == "shoot":
+			_fire_arrow(dir)
+		else:
+			_swing_attack(dir)
+
+
+# 근접 호 스윙 — 로컬 원형 질의 판정(즉시, 프레임 지연 없음). 확정은 호스트(attack_hit → CombatAuthority).
+func _swing_attack(dir: Vector2) -> void:
+	_attack_anim_left = _swing_time  # 무기별 스윙 창 (§3: < attack_cooldown)
+	_show_attack_fx(dir)
+	EventBus.player_swing.emit(global_position, _swing_sfx)  # 스윙 SFX (로컬 — 무기별 휘두름음)
+	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ATK, "dx": dir.x, "dy": dir.y})
+	# 판정: 조준 방향 원형 질의 (Area 노드 대신 즉시 질의 — 프레임 지연 없음)
+	# 기하는 CombatMath 단일 소스 — FX 위치(_show_attack_fx)와 같은 함수라 어긋나지 않는다
+	var center := global_position + CombatMath.attack_center_offset(dir, job)
+	var shape := CircleShape2D.new()
+	shape.radius = CombatMath.attack_radius(job)
+	var params := PhysicsShapeQueryParameters2D.new()
+	params.shape = shape
+	params.transform = Transform2D(0.0, center)
+	params.collision_mask = ENEMY_BODY_MASK
+	params.collide_with_bodies = true
+	var hits := get_world_2d().direct_space_state.intersect_shape(params, 8)
+	var connected := false
+	for hit: Dictionary in hits:
+		var body := hit.get("collider") as Node
+		if body != null and body.is_in_group("enemy"):
+			EventBus.attack_hit.emit(body, job)
+			connected = true
+	if connected:
+		# 공격자 로컬 예측 타격 손맛 — 무기별 셰이크/타격음(호스트 확정 전 즉발, 표시 전용). 스윙당 1회.
+		EventBus.weapon_impact.emit(center, _hit_sfx, _hit_shake)
+
+
+# 원거리 발사(shoot 무기 = 활) — 표시 화살 스폰(로컬)·G_SHOOT 송신(원격 표시)·(호스트) 권한 화살 등록.
+# 명중 판정·데미지는 호스트 CombatAuthority가 화살을 추적해 확정한다 (근접의 로컬 원형 질의 대신). 여기선 판정 없음.
+func _fire_arrow(dir: Vector2) -> void:
+	var origin := global_position + dir * MUZZLE_OFFSET
+	_shot_seq += 1
+	var aid := str(Net.my_id) + ":" + str(_shot_seq)
+	_recoil_left = RECOIL_TIME  # 활 반동 연출
+	# player_shoot: ArrowField가 표시 화살 스폰 + (호스트 자신이면) CombatAuthority가 권한 화살 등록
+	EventBus.player_shoot.emit(Net.my_id, origin, dir, aid, _arrow_range)
+	EventBus.player_swing.emit(global_position, _swing_sfx)  # 발사 SFX (swing_sfx 재활용 = 시위·발사음)
+	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_SHOOT, "ox": origin.x, "oy": origin.y,
+		"dx": dir.x, "dy": dir.y, "aid": aid, "r": _arrow_range})
 
 
 func _aim_dir() -> Vector2:
@@ -476,6 +518,14 @@ func play_attack_fx(dir: Vector2) -> void:
 		# 잠그는 그리핑 차단 (정직한 공격은 쿨다운 0.4s > 창(≤0.25~0.34)이라 안 걸린다)
 		EventBus.player_swing.emit(global_position, _swing_sfx)  # 스윙 SFX (원격 — 무기별, 스팸 게이트 안)
 		_attack_anim_left = _swing_time  # 원격도 그 피어의 무기 스윙 창(set_weapon_visual로 세팅됨)
+
+
+# 원격 궁수의 발사 연출 (peer_sync가 G_SHOOT 수신 시 호출) — 활 반동만, 표시 전용. 화살 자체는 ArrowField가 스폰.
+func play_shoot_fx() -> void:
+	if not _alive or not _is_armed():
+		return  # 사망자·무장 해제 피어의 G_SHOOT로 연출이 뜨는 것 차단
+	_recoil_left = RECOIL_TIME
+	EventBus.player_swing.emit(global_position, _swing_sfx)  # 발사 SFX (원격 — swing_sfx 재활용)
 
 
 # 원격 플레이어의 구르기 연출 (peer_sync가 G_ROLL 수신 시 호출) — 표시 전용.

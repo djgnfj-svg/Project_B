@@ -93,6 +93,24 @@ func _initialize() -> void:
 	_check("강화 후 레벨 = 1", gs.equip_level("iron_greatsword") == 1)
 	_check("착용 장비 공격이 현재 스탯에 반영", int(gs.current_stats()["attack"]) > 0)
 
+	# --- 직업 귀속 (전사가 활 못 듦 — can_equip_job 단일 소스, equip·can_craft 공용) ---
+	# 공유 gs 오염 방지로 별도 인스턴스. worn_bow(job_id=archer)를 보유시켜도 전사면 착용 거부.
+	var gsjob := GameStateScript.new() as Node
+	gsjob.selected_job_id = "warrior"
+	gsjob.add_equipment("worn_bow")
+	gsjob.add_equipment("worn_greatsword")
+	gsjob.equip("worn_bow")
+	_check("전사가 활 착용 거부(슬롯 빔)", gsjob.equipped_id(0) == "")
+	_check("can_equip_job: 전사+활 = false", not gsjob.can_equip_job(gsjob.equip_def("worn_bow")))
+	gsjob.equip("worn_greatsword")
+	_check("전사가 대검 착용 성공", gsjob.equipped_id(0) == "worn_greatsword")
+	gsjob.selected_job_id = "archer"  # 직업 바꾸면 귀속 기준도 바뀜(현재 선택 직업)
+	_check("can_equip_job: 궁수+활 = true", gsjob.can_equip_job(gsjob.equip_def("worn_bow")))
+	gsjob.equip("worn_bow")
+	_check("궁수가 활 착용 성공", gsjob.equipped_id(0) == "worn_bow")
+	_check("can_equip_job: 궁수+대검 = false", not gsjob.can_equip_job(gsjob.equip_def("worn_greatsword")))
+	gsjob.free()
+
 	# --- 창고 넣기/빼기 (개인·로컬 보관함, 비네트워크) ---
 	# 재료: 예치→창고 증가·가방 감소, 회수→역. 0이 된 창고 키는 삭제(표시 정돈).
 	gs.deposit_material("goblin_hide", 1)

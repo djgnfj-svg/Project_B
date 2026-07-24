@@ -11,6 +11,7 @@ display_name = "낡은 대검"
 description = "전사가 처음부터 쥔 손때 묻은 대검. 강화하면 쓸 만해진다."
 icon = ExtResource("2")
 slot_name = "weapon"
+job_id = "warrior"
 base_attack = 0
 base_hp = 0
 atk_per_level = 2
