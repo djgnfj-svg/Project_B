@@ -47,7 +47,8 @@ signal stage_wiped
 # HP 감소 표시 경로(Health.hp_changed dropped=true)에서 피격 당사자 글루가 emit — 호스트/게스트
 # 무관하게 각 클라가 자기 화면 연출(플래시·데미지 숫자·셰이크·SFX·히트스톱)을 재생한다.
 # kind = "enemy"|"player" (누가 맞았나), world_pos = 피격 지점, amount = 감소량.
-signal combat_impact(kind: String, world_pos: Vector2, amount: int)
+# crit = 이번 확정이 치명타였나 (표시 강조 전용 — 굴림은 호스트만, 표시 쪽에서 다시 굴리지 않는다 §3).
+signal combat_impact(kind: String, world_pos: Vector2, amount: int, crit: bool)
 signal screen_shake(strength: float)  # 명시적 셰이크 트리거 (사망·보스 슬램 등) — 카메라가 소비
 # 소리/연출 트리거 (표시·소리 전용, 각 클라 로컬) — Audio가 SFX로, 필요시 연출이 구독.
 signal player_swing(world_pos: Vector2, sfx: String)   # 플레이어 공격 스윙(로컬·원격 연출 시점) — sfx = 무기 스윙음 id(EquipDef.swing_sfx). ⚠ 발사(EquipDef.swing_sfx)·**차지 단계 상승(charge_sfx)**도 이 훅을 재사용한다 = "소리 낼 순간" 훅에 가깝다. 여기에 스윙 궤적 같은 **시각** 연출을 매달면 기 모을 때마다 검을 휘두른다 — 시각을 붙일 땐 sfx id로 갈라내거나 별도 시그널을 파라
@@ -66,3 +67,13 @@ signal blueprint_unlocked(recipe_id: String)  # 도면 획득 확정 — "설계
 # feel (표시 전용 — 네트워크 아님, rules §2)
 signal item_dropped(kind: String, rarity: int, world_pos: Vector2)  # 드랍 등장 연출(착지 팝·등급 반짝임)
 signal item_picked(kind: String, rarity: int, world_pos: Vector2)   # 픽업 연출(흡수 팝)
+
+# --- 직업 레벨 성장축 (2026-07-25, GDD v1.8) ---
+# EXP 확정 권한 = 호스트 (§1). 게스트는 G_EXP 수신으로만 적립한다 — 각 클라가 킬을 세면
+# 패킷 유실·씬 전환·관전 타이밍에 따라 레벨이 **조용히** 갈리고, 레벨은 스탯 공지의 근거라
+# 그 발산이 곧 "게스트의 정당한 타격이 간헐 거부됨"으로 나타난다.
+signal exp_granted_local(amount: int)  # ExpAuthority(호스트) → 자기 적립 경로 (호스트는 자기 G_EXP를 릴레이로 못 받는다 — drop_spawn_local 미러)
+signal growth_changed  # 레벨/메인 하위 직업 변동 (GameState emit) — PeerSync 재공지(G_STATS "lv")·HUD·패널 갱신. ⚠ EXP만 오른 킬에는 emit하지 않는다(킬마다 재공지 = 불필요한 트래픽)
+signal exp_changed(cur: int, need: int)  # 매 적립 (GameState emit) — HUD EXP 바 전용, 재공지를 유발하지 않는 가벼운 훅
+signal sub_job_level_up(sub_id: String, level: int)  # 레벨업 확정 — HUD 토스트·레벨업음
+signal sub_job_unlocked(sub_id: String)  # 다음 하위 직업 해금 (blueprint_unlocked 미러) — HUD 토스트·패널 갱신

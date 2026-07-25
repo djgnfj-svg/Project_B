@@ -54,6 +54,10 @@ var scene_id: String = ""  # 소속 씬 (net_schema SCENE_*) — G_POS에 실어
 var seated: bool = false  # 모닥불 앉기 (campfire 씬이 켠다) — 이동·구르기·공격 입력이 들어오면 스스로 풀린다. 공지(G_SIT)는 campfire가 상태 변화를 보고 송신
 var equip_atk_bonus: int = 0  # 착용 장비 공격 보너스 (G_STATS 공지/수신) — 호스트가 calc_damage에 더한다
 var equip_hp_bonus: int = 0   # 착용 장비 체력 보너스 — max_hp = job.max_hp + 이 값 (set_max_hp로 이월 HP 보존)
+# 직업 레벨 5스탯 {crit, crit_dmg, haste, move, leech} (G_STATS "lv" 공지/수신, 성장축 GDD v1.8).
+# 호스트가 치명 굴림·피흡 적립·공속 검증에 **자기가 clamp한 이 값**을 읽는다 (combat_authority).
+# 장비 스탯(위 2개)과 **분리돼 있다** — 축 경계(GDD §6 🔒): 레벨은 공격력·체력을 건드리지 않는다.
+var level_stats: Dictionary = {}
 
 # 무기 겉모습 — 착용 무기(EquipDef.weapon_texture)에서 그린다. 미착용이면 직업 기본 무기로 폴백.
 # _weapon_grip은 _update_weapon이 매 프레임 참조 → 착용/직업에 따라 바뀌므로 멤버로 보관(job.weapon_grip 직참 금지).
@@ -69,11 +73,13 @@ var _hit_shake: float = 1.5                     # 적중 시 스크린셰이크 
 # 스윙 모션(무기별) — 기본값 = 대검 기준(폴백). ⚠ _swing_time < job.attack_cooldown 유지 (rules §3)
 var _swing_arc: float = SWING_HALF_ARC
 var _swing_time: float = ATTACK_ANIM_TIME
+var _swing_time_base: float = ATTACK_ANIM_TIME  # 무기가 준 원본 스윙 창 — _swing_time은 여기에 haste 배율을 곱해 파생한다
 var _swing_lunge: float = LUNGE_DIST
 var _hold_dist: float = HOLD_DIST       # 몸 중심 → 무기 그립 거리 (무기별 = EquipDef.weapon_hold_dist, 대검 8·활 20)
 var _arrow_range: float = 360.0         # shoot/charge 무기 투사체 사거리 (무기별 = EquipDef.arrow_range) — 발사 시 G_SHOOT로 전송
 var _weapon_id: String = ""             # 착용 무기 id — G_SHOOT "w"(수신 측이 탄 겉모습/속도/폭발 반경을 allowlist 리졸브)
 var _charge_step_time: float = 0.0      # charge 무기: 한 단계 모으는 시간(s). 0 = 차지 무기 아님
+var _charge_step_time_base: float = 0.0  # 무기가 준 원본 단계 시간 — _charge_step_time은 haste 배율을 곱해 파생
 var _charge_sfx: String = "charge_step"  # 단계 상승 효과음 id (무기별 = EquipDef.charge_sfx)
 
 var _remote_target: Vector2 = Vector2.ZERO
@@ -177,6 +183,39 @@ func _apply_max_hp() -> void:
 		_health.set_max_hp(job.max_hp + equip_hp_bonus)
 
 
+# 직업 레벨 5스탯 반영 — 로컬은 GameState.current_level_stats(), 원격은 G_STATS "lv" 수신(peer_sync가 부른다).
+# 🔴 여기서 한 번 더 clamp한다(수신부 clamp와 이중): 이 인스턴스의 값이 곧 호스트 판정 입력이라
+#   경로 어디서든 오염값이 새어들면 안 된다. 하드 상한(CombatMath.LEVEL_STAT_MAX)은 항상 적용된다.
+func set_level_stats(stats: Dictionary) -> void:
+	level_stats = CombatMath.clamp_level_stats(stats)
+	_refresh_growth_derived()
+
+
+# 레벨 스탯에서 파생되는 표시/이동 값을 다시 계산한다. 입력이 둘(레벨 스탯 변동·무기 교체)이라
+# 반드시 한 함수로 모은다 — 한쪽에서만 갱신하면 무기를 바꾼 뒤 공속이 사라지는 식으로 조용히 갈라진다.
+# 🔴 스윙 창·차지 스텝에 쿨다운과 **같은 배율**(haste_scale)을 곱하는 것이 §3 계약이다:
+#   그래야 swing_time < attack_cooldown 부등식이 haste 어디서나 보존되고, 원격 창-잠금 가드가
+#   빨라진 피어의 정당한 연속 공격 연출을 삼키지 않는다(원격 인스턴스도 그 피어의 haste로 파생된다).
+func _refresh_growth_derived() -> void:
+	var k := CombatMath.haste_scale(_haste())
+	_swing_time = _swing_time_base * k
+	_charge_step_time = CombatMath.effective_charge_step(_charge_step_time_base, _haste())
+
+
+# 이 아바타의 공속 보너스 (로컬 = 내 레벨, 원격 = 그 피어가 공지한 값 — 둘 다 clamp된 값이다)
+func _haste() -> float:
+	return float(level_stats.get("haste", 0.0))
+
+
+# 이 아바타의 실효 이동속도 — 로컬 이동과 **원격 위치 clamp가 같은 값을 써야 한다**(§3).
+# 원격 clamp만 기본 이속으로 남기면 빨라진 정당 이동이 깎여 외삽이 과소평가되고,
+# 2026-07-24에 고친 "피했는데 맞았다"가 빠른 피어에게 재발한다.
+func _move_speed() -> float:
+	if job == null:
+		return 0.0
+	return CombatMath.effective_move_speed(job.move_speed, float(level_stats.get("move", 0.0)))
+
+
 # 무기 겉모습 적용 — 착용 무기(equip)의 텍스처/그립, 없으면(null·텍스처 없음) 직업 기본 무기로 폴백.
 # 로컬은 peer_sync가 GameState 착용 무기로, 원격은 G_STATS의 weapon id 리졸브로 부른다 (표시 전용, 판정 무관).
 func set_weapon_visual(equip: EquipDef) -> void:
@@ -209,15 +248,16 @@ func _apply_weapon_feel(equip: EquipDef) -> void:
 	_hit_shake = equip.hit_shake if equip != null else 1.5
 	# 스윙 모션 — 무기 지정값, 미착용이면 대검 기본. swing_time은 §3 미러(< attack_cooldown) 유지.
 	_swing_arc = equip.swing_arc if equip != null else SWING_HALF_ARC
-	_swing_time = equip.swing_time if equip != null else ATTACK_ANIM_TIME
+	_swing_time_base = equip.swing_time if equip != null else ATTACK_ANIM_TIME
 	_swing_lunge = equip.swing_lunge if equip != null else LUNGE_DIST
 	_hold_dist = equip.weapon_hold_dist if equip != null else HOLD_DIST  # 큰 무기(활)는 멀리 잡아 몸과 안 겹침
 	_arrow_range = equip.arrow_range if equip != null else CombatMath.DEFAULT_ARROW_RANGE  # shoot/charge 사거리
 	_weapon_id = equip.id if equip != null else ""  # G_SHOOT "w" — 수신 측 탄 겉모습/속도/폭발 반경 리졸브 키
 	# 차지(charge 무기) — 무기가 바뀌면 모으던 것도 취소한다(무장 해제·교체 중 유령 오브 방지)
 	var is_charge := equip != null and equip.motion_type == "charge"
-	_charge_step_time = equip.charge_step_time if is_charge else 0.0
+	_charge_step_time_base = equip.charge_step_time if is_charge else 0.0
 	_charge_sfx = equip.charge_sfx if (is_charge and not equip.charge_sfx.is_empty()) else "charge_step"
+	_refresh_growth_derived()  # 무기 교체도 파생 입력 — 새 base에 현재 haste를 다시 곱한다
 	if is_node_ready():
 		# 차지 오브 = 그 무기의 투사체 텍스처(표시 전용) — 모으는 탄과 날아가는 탄이 같은 그림.
 		# ⚠ 틴트 없음(항등 흰색): 탄 텍스처는 이미 제 색을 갖고 있어 swing_color를 곱하면 탁해진다.
@@ -290,7 +330,8 @@ func _on_hp_changed_feel(new_hp: int, dropped: bool) -> void:
 	_prev_hp = new_hp
 	if not dropped or amount <= 0:
 		return  # 회복·부활·최대치 조정은 손맛 대상 아님
-	EventBus.combat_impact.emit("player", global_position, amount)
+	# 적은 치명타를 굴리지 않는다(GDD 범위) → 플레이어 피격은 항상 crit=false (php에 "cr"이 없는 이유와 짝)
+	EventBus.combat_impact.emit("player", global_position, amount, false)
 	if new_hp > 0:
 		HitStop.punch(_sprite)
 		HitFlash.flash(_sprite)  # 흰색 번쩍
@@ -473,11 +514,11 @@ func _local_move(delta: float) -> void:
 			return
 	if _roll_time_left > 0.0:
 		_roll_time_left -= delta
-		velocity = _roll_dir * job.move_speed * ROLL_SPEED_MULT  # 구르기는 늪 슬로우 예외 — 늪 탈출 수단
+		velocity = _roll_dir * _move_speed() * ROLL_SPEED_MULT  # 구르기는 늪 슬로우 예외(이속 보너스로 거리도 늘어난다, GDD §6)
 	else:
 		# 걷기만 늪 배율 적용. 기 모으는 중(charge 무기)이면 추가로 느려진다 — 모으는 대가(사용자 확정)
 		var charge_mult := CHARGE_MOVE_MULT if _charging else 1.0
-		velocity = dir * job.move_speed * _swamp_mult() * charge_mult
+		velocity = dir * _move_speed() * _swamp_mult() * charge_mult
 		if _alive and Input.is_action_just_pressed("roll") and _roll_cd_left <= 0.0:
 			_roll_dir = dir if dir != Vector2.ZERO else _aim_dir()
 			_roll_time_left = CombatMath.ROLL_TIME_S
@@ -512,7 +553,7 @@ func _local_combat(delta: float) -> void:
 		_tick_charge(delta, want)  # 누르고 있는 동안 모으고, 떼면 발사 (쿨다운 게이트는 안에서)
 		return
 	if want and _attack_cd_left <= 0.0 and _roll_time_left <= 0.0 and _is_armed():
-		_attack_cd_left = job.attack_cooldown
+		_attack_cd_left = CombatMath.effective_cooldown(job, _haste())
 		var dir := _aim_dir()
 		# 모션 타입 분기 (§2 게이트): shoot = 원거리 발사(화살), charge = 위에서 처리, 그 외 = 근접 호 스윙.
 		if motion == "shoot":
@@ -545,7 +586,7 @@ func _tick_charge(delta: float, want: bool) -> void:
 		return
 	var level := _charge_level
 	_cancel_charge()
-	_attack_cd_left = job.attack_cooldown
+	_attack_cd_left = CombatMath.effective_cooldown(job, _haste())
 	_fire_projectile(_aim_dir(), level)
 
 
@@ -706,7 +747,7 @@ func apply_remote_pos(pos: Vector2, flip: bool, aim: float, charge_code: int = 0
 	# ⚠ 무효값이면 0으로 떨어뜨린다(이전 속도 유지 금지) — 정지한 피어를 계속 미끄러뜨리면
 	#   추정 좌표가 실제와 벌어져 "방어자 우대"가 과하게 관대해진다.
 	if is_finite(vel.x) and is_finite(vel.y):
-		var max_speed := job.move_speed * ROLL_SPEED_MULT if job != null else 0.0
+		var max_speed := _move_speed() * ROLL_SPEED_MULT  # 🔴 이속 보너스 반영 — 안 하면 지연 보상이 부분 퇴행한다(§3)
 		_remote_vel = vel.limit_length(max_speed)
 	else:
 		_remote_vel = Vector2.ZERO
@@ -715,7 +756,7 @@ func apply_remote_pos(pos: Vector2, flip: bool, aim: float, charge_code: int = 0
 	var now := Time.get_ticks_msec()
 	if _last_remote_msec >= 0:
 		var dt := maxf(float(now - _last_remote_msec) / 1000.0, 1.0 / POS_SEND_RATE)
-		var max_disp := job.move_speed * ROLL_SPEED_MULT * REMOTE_MAX_SPEED_MULT * dt
+		var max_disp := _move_speed() * ROLL_SPEED_MULT * REMOTE_MAX_SPEED_MULT * dt  # 속도 상한과 같은 유도식(갈라지면 한쪽만 튜닝된다)
 		var delta := pos - _remote_target
 		if delta.length() > max_disp:
 			pos = _remote_target + delta.normalized() * max_disp

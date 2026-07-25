@@ -77,8 +77,8 @@ func play(id: String) -> void:
 	p.play()
 
 
-func _on_impact(kind: String, _pos: Vector2, _amount: int) -> void:
-	play("hit" if kind == "enemy" else "hurt")
+func _on_impact(kind: String, _pos: Vector2, _amount: int, _crit: bool) -> void:
+	play("hit" if kind == "enemy" else "hurt")  # 치명 전용 타격음은 후속(SFX 추가 시 _crit로 분기)
 
 
 # 픽업 SFX — 골드는 코인, 도면은 blueprint_unlocked 팡파레가 담당(무음), 그 외 일반 픽업

@@ -98,6 +98,7 @@ frames = ExtResource("7")
 body_radius = 44.0
 move_speed = 60.0
 aggro_range = 520.0
+exp = 100
 drop_table = SubResource("d_table")
 patterns = Array[BossPatternDef]([SubResource("p_swing"), SubResource("p_slam"), SubResource("p_spray")])
 phase2_hp_ratio = 0.5

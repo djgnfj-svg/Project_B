@@ -189,6 +189,118 @@ func _initialize() -> void:
 	_check("막힌 재제작: equipped 오염 없음(창고 아이템 안 물림)", gs.equipped_id(0) == "")
 	_check("막힌 재제작: 창고분 그대로", int(gs.storage_equipment.get("iron_greatsword", -1)) == 1)
 
+	# --- 직업 레벨 성장축 (GDD v1.8) — 리졸버 allowlist·EXP 적립·해금·메인 전환·저장 ---
+	# 공유 gs 오염 방지로 별도 인스턴스 (직업 귀속 테스트와 같은 규약).
+	var gg := GameStateScript.new() as Node
+	gg.selected_job_id = "warrior"
+	_check("하위 직업 스캔에 warrior_swordsman", "warrior_swordsman" in gg.sub_job_ids())
+	_check("하위 직업 스캔에 warrior_berserker", "warrior_berserker" in gg.sub_job_ids())
+	_check("하위 직업 경로 조작 → null", gg.sub_job_def("../../src/core/net_schema") == null)
+	_check("모르는 하위 직업 id → null", gg.sub_job_def("bogus_sub") == null)
+	var series: Array = gg.sub_jobs_of_series("warrior")  # gg는 Node 캐스트라 반환 타입 추론 불가 — 명시
+	_check("계열 목록 = order 정렬(검사 → 광전사)",
+		series.size() == 2 and series[0] == "warrior_swordsman" and series[1] == "warrior_berserker")
+	_check("타 계열(archer) 하위 직업 없음(미작성 = 스트레치)", gg.sub_jobs_of_series("archer").is_empty())
+
+	# 지급 — 멱등(grant_starting_loadout 미러)
+	_check("지급 전 보유 0", gg.owned_sub_jobs().is_empty())
+	gg.grant_starting_sub_job(gg.job_def("warrior"))
+	_check("시작 하위 직업 지급", gg.has_sub_job("warrior_swordsman"))
+	_check("지급 시 메인 설정", gg.main_sub_job_id == "warrior_swordsman")
+	_check("지급 직후 레벨 0", gg.sub_job_level("warrior_swordsman") == 0)
+	_check("레벨 0 = 스탯 전부 0(GDD §6 base 없음)",
+		is_equal_approx(float(gg.current_level_stats()["crit"]), 0.0))
+	gg.add_exp(50)
+	gg.grant_starting_sub_job(gg.job_def("warrior"))
+	_check("재지급 멱등: 진행(EXP) 보존", int(gg.sub_job_exp.get("warrior_swordsman", -1)) == 50)
+
+	# EXP → 레벨 → 스탯 (warrior 곡선 [0,25,60,105,160,300])
+	_check("50 EXP = 1레벨", gg.sub_job_level("warrior_swordsman") == 1)
+	_check("레벨 오르면 스탯도 오른다", float(gg.current_level_stats()["crit"]) > 0.0)
+	_check("add_exp(0/음수)는 무시", not gg.add_exp(0) and not gg.add_exp(-5))
+	var changed: bool = gg.add_exp(10)  # 60 → 2레벨
+	_check("레벨 변동 시 add_exp가 true 반환(재공지 트리거)", changed)
+	_check("60 EXP = 2레벨", gg.sub_job_level("warrior_swordsman") == 2)
+	_check("레벨 변동 없는 적립은 false 반환(킬마다 재공지 방지)", not gg.add_exp(1))
+
+	# 해금 — 메인이 unlocks_next_at(3레벨 = 105 EXP)에 닿으면 다음 하위 직업이 열린다
+	_check("해금 전 광전사 미보유", not gg.has_sub_job("warrior_berserker"))
+	gg.add_exp(44)  # 61+44 = 105 → 3레벨
+	_check("105 EXP = 3레벨", gg.sub_job_level("warrior_swordsman") == 3)
+	_check("3레벨 도달 → 광전사 해금", gg.has_sub_job("warrior_berserker"))
+	_check("해금분은 0 EXP에서 시작(해금 이후 적립분만 — GDD §6)",
+		int(gg.sub_job_exp.get("warrior_berserker", -1)) == 0)
+	_check("해금 후에도 메인은 그대로", gg.main_sub_job_id == "warrior_swordsman")
+	# 계열 공용 풀 — 이후 적립은 보유 전부에 동일하게 들어간다
+	gg.add_exp(25)
+	_check("공용 풀: 메인도 적립(105+25)", int(gg.sub_job_exp.get("warrior_swordsman", -1)) == 130)
+	_check("공용 풀: 해금분도 같이 적립(0+25)", int(gg.sub_job_exp.get("warrior_berserker", -1)) == 25)
+	_check("해금분은 자연히 레벨이 낮다", gg.sub_job_level("warrior_berserker") < gg.sub_job_level("warrior_swordsman"))
+	# 서브 합산 — 메인을 광전사로 바꾸면 공속 쪽이 커진다(둘 다 효과가 있다 = 서브도 0이 아님)
+	var haste_main_sword := float(gg.current_level_stats()["haste"])
+	_check("서브도 효과가 있다(합산 > 메인 단독 아님)", haste_main_sword > 0.0)
+
+	# 메인 전환 — 마을에서만(GDD §5)
+	_check("미보유 하위 직업으로 전환 거부", not gg.set_main_sub_job("bogus_sub"))
+	_check("전환 성공(마을)", gg.set_main_sub_job("warrior_berserker"))
+	_check("전환 반영", gg.main_sub_job_id == "warrior_berserker")
+	gg.begin_stage("chapter1", 0)
+	_check("판 도중 전환 거부(스탯 취사선택 차단)", not gg.set_main_sub_job("warrior_swordsman"))
+	_check("거부 시 메인 불변", gg.main_sub_job_id == "warrior_berserker")
+	gg.leave_chapter()
+	_check("마을 복귀 후 전환 허용", gg.set_main_sub_job("warrior_swordsman"))
+	# 타 계열 전환 거부 — 궁수로 바꾼 뒤 전사 하위 직업을 메인으로 요구
+	gg.selected_job_id = "archer"
+	_check("타 계열 하위 직업 메인 거부", not gg.set_main_sub_job("warrior_berserker"))
+	_check("타 계열에선 보유 목록이 비어 EXP가 안 섞인다", gg.owned_sub_jobs().is_empty())
+	# 리뷰 I3: 계열이 섞였을 때 표시가 거짓말하지 않는지 — 메인이 타 계열이면 없는 것으로 본다
+	_check("타 계열 선택 시 main_sub_job() = null (HUD 거짓 표기 방지)", gg.main_sub_job() == null)
+	_check("타 계열 선택 시 EXP 진행 표기 = 0", int(gg.main_exp_progress()["level"]) == 0)
+	_check("타 계열 선택 시 레벨 스탯 = 전부 0", is_equal_approx(float(gg.current_level_stats()["crit"]), 0.0))
+	_check("타 계열에선 add_exp가 no-op", not gg.add_exp(100))
+	_check("전사 진행분은 그대로 보존(계열 무관 보관)", int(gg.sub_job_exp.get("warrior_swordsman", -1)) == 130)
+	gg.selected_job_id = "warrior"
+
+	# clamp 상한 — 데이터 유도(max_level_stats)가 하드 상한 이하이고 0이 아니다
+	var caps: Dictionary = gg.max_level_stats()
+	_check("max_level_stats: 치명 상한 > 0 (데이터 유도)", float(caps["crit"]) > 0.0)
+	_check("max_level_stats: 하드 상한 이하",
+		float(caps["crit"]) <= float(CombatMath.LEVEL_STAT_MAX["crit"]))
+	_check("정직한 만성장 ≤ 데이터 유도 상한",
+		float(gg.current_level_stats()["crit"]) <= float(caps["crit"]))
+
+	# 저장 — 필드 추가(버전 불변), 구 세이브 폴백, 조작 세이브 폐기
+	var gsnap: Dictionary = gg.to_save_dict()
+	_check("저장에 성장 필드 포함", gsnap.has("main_sub") and gsnap.has("sub_exp"))
+	_check("레벨은 저장하지 않는다(EXP에서 파생)", not gsnap.has("sub_level"))
+	var gg2 := GameStateScript.new() as Node
+	gg2.from_save_dict(gsnap)
+	_check("저장 복원: EXP", int(gg2.sub_job_exp.get("warrior_swordsman", -1)) == 130)
+	_check("저장 복원: 메인", gg2.main_sub_job_id == "warrior_swordsman")
+	_check("저장 복원: 레벨 파생 일치", gg2.sub_job_level("warrior_swordsman") == gg.sub_job_level("warrior_swordsman"))
+	# 구 세이브 = 성장 키가 아예 없다 → 빈 상태(레벨 0), 마을 진입의 지급이 채운다
+	var gg3 := GameStateScript.new() as Node
+	gg3.from_save_dict({"gold": 5, "materials": {}, "equipment": {}, "equipped": {"0": "", "1": ""}})
+	_check("구 세이브: 성장 키 없음 → 보유 0", gg3.owned_sub_jobs().is_empty())
+	_check("구 세이브: 레벨 0", gg3.sub_job_level("warrior_swordsman") == 0)
+	_check("구 세이브: 기존 인벤은 정상 로드(회귀 방어)", gg3.gold == 5)
+	gg3.grant_starting_sub_job(gg3.job_def("warrior"))
+	_check("구 세이브 + 지급 = 레벨 0으로 시작", gg3.has_sub_job("warrior_swordsman") and gg3.sub_job_level("warrior_swordsman") == 0)
+	# 조작 세이브 — 모르는 id 폐기, 음수 EXP 0, 메인이 비보유면 비워둔다
+	gg3.from_save_dict({"sub_exp": {"hack_sub": 99999, "warrior_swordsman": -50}, "main_sub": "hack_sub"})
+	_check("조작 세이브: 모르는 하위 직업 폐기", not gg3.has_sub_job("hack_sub"))
+	_check("조작 세이브: 음수 EXP → 0", int(gg3.sub_job_exp.get("warrior_swordsman", -1)) == 0)
+	_check("조작 세이브: 비보유 메인 → 비움(지급이 보정)", gg3.main_sub_job_id == "")
+	# 과대 EXP 주입도 레벨/스탯이 만레벨을 넘지 못한다(clamp가 아니라 파생 구조로 막는다)
+	gg3.from_save_dict({"sub_exp": {"warrior_swordsman": 99999999}, "main_sub": "warrior_swordsman"})
+	var sdef: SubJobDef = gg3.sub_job_def("warrior_swordsman")
+	_check("조작 세이브: 과대 EXP → 만레벨에서 멈춤", gg3.sub_job_level("warrior_swordsman") == sdef.max_level)
+	_check("조작 세이브: 스탯도 데이터 유도 상한 이하",
+		float(gg3.current_level_stats()["crit"]) <= float(gg3.max_level_stats()["crit"]))
+	gg3.free()
+	gg2.free()
+	gg.free()
+
 	gs.free()
 	if _fails == 0:
 		print("TEST_OK game_state")

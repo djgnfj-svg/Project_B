@@ -212,6 +212,167 @@ func _initialize() -> void:
 	failures += _check(not CombatMath.is_hit_in_cone_lagged(Vector2(10.0, 0.0), Vector2(0.0, 30.0), apex, 0.0, 0.6, 40.0),
 		"cone_lagged: 추정 좌표가 각 밖(옆으로 빠짐) → 빗나감")
 
+	# --- 직업 레벨 · 캐릭터 스탯 5종 (§3, 성장축 2026-07-25 GDD v1.8) ---
+	# 레벨 스탯 합산 — 메인 온전 + 서브 × SUB_JOB_WEIGHT
+	var sub_a := SubJobDef.new()   # 검사류 (균형)
+	sub_a.max_level = 5
+	sub_a.crit_per_level = 0.02
+	sub_a.haste_per_level = 0.02
+	var sub_b := SubJobDef.new()   # 광전사류 (공격 특화)
+	sub_b.max_level = 5
+	sub_b.crit_per_level = 0.03
+	sub_b.haste_per_level = 0.035
+	var defs := {"a": sub_a, "b": sub_b}
+	var lv_a := CombatMath.level_stats("a", {"a": 5, "b": 5}, defs, 0.4)
+	failures += _check(is_equal_approx(float(lv_a["crit"]), 0.02 * 5 + 0.03 * 5 * 0.4),
+		"level_stats: 메인(a) 온전 + 서브(b) ×0.4 합산")
+	var lv_b := CombatMath.level_stats("b", {"a": 5, "b": 5}, defs, 0.4)
+	failures += _check(float(lv_b["crit"]) > float(lv_a["crit"]),
+		"level_stats: 메인을 특화 쪽(b)으로 바꾸면 그 스탯이 더 오른다")
+	var lv_none := CombatMath.level_stats("", {}, {})
+	failures += _check(is_equal_approx(float(lv_none["crit"]), 0.0) and is_equal_approx(float(lv_none["haste"]), 0.0),
+		"level_stats: 보유 0 = 전부 0 (항등 폴백 — 성장축 도입 전 동작)")
+	failures += _check(CombatMath.level_stats("a", {"a": 5, "zzz": 5}, defs, 0.4).has("crit"),
+		"level_stats: 리졸브 실패 id(zzz)는 조용히 건너뛴다(폐기가 안전한 방향)")
+	failures += _check(is_equal_approx(float(CombatMath.sub_job_stat_at_level(sub_a, 99)["crit"]), 0.02 * 5.0),
+		"sub_job_stat: 과대 레벨(99) → max_level(5)로 clamp")
+
+	# 레벨 스탯 clamp — G_STATS "lv" 수신 신뢰 경계 (뮤테이션: 이 clamp를 지우면 아래 5줄이 빨개진다)
+	failures += _check(is_equal_approx(float(CombatMath.clamp_level_stats({"crit": 9.0})["crit"]), 1.0),
+		"clamp_level: 과대 치명(9.0) → 하드 상한 1.0")
+	failures += _check(is_equal_approx(float(CombatMath.clamp_level_stats({"haste": 9.0})["haste"]), float(CombatMath.LEVEL_STAT_MAX["haste"])),
+		"clamp_level: 과대 공속 → LEVEL_STAT_MAX")
+	failures += _check(is_equal_approx(float(CombatMath.clamp_level_stats({"leech": -1.0})["leech"]), 0.0),
+		"clamp_level: 음수 피흡 → 0 (디버프 주입 차단)")
+	failures += _check(is_equal_approx(float(CombatMath.clamp_level_stats({"crit": NAN})["crit"]), 0.0),
+		"clamp_level: NaN → 0 (오염 가드)")
+	failures += _check(is_equal_approx(float(CombatMath.clamp_level_stats({"move": INF})["move"]), 0.0),
+		"clamp_level: INF → 0 (JSON 1e999 방어)")
+	failures += _check(is_equal_approx(float(CombatMath.clamp_level_stats({"crit": 0.5}, {"crit": 0.2})["crit"]), 0.2),
+		"clamp_level: 데이터 유도 상한(caps 0.2)이 하드 상한보다 우선")
+	var cl := CombatMath.clamp_level_stats({"bogus": 5.0, "crit": 0.1})
+	failures += _check(not cl.has("bogus") and cl.size() == CombatMath.LEVEL_STAT_KEYS.size(),
+		"clamp_level: 모르는 키 폐기 + 빠진 키 0 채움 (payload가 아니라 키 목록을 순회)")
+
+	# 🔴 최종 데미지 단일 소스 — 곱 순서 (기본+장비) × 차지 × 치명, **반올림 1회**
+	var none_lv := CombatMath.empty_level_stats()
+	var r0 := CombatMath.confirm_damage(job, 0, none_lv, 0, 1.0)
+	failures += _check(int(r0["damage"]) == CombatMath.calc_damage(job) and not bool(r0["crit"]),
+		"confirm_damage: 레벨 스탯 0·차지 0 = calc_damage와 항등(회귀 방어)")
+	failures += _check(int(CombatMath.confirm_damage(job, 5, none_lv, 0, 1.0)["damage"]) == 12,
+		"confirm_damage: 장비 보너스(+5) 반영 = 12")
+	failures += _check(int(CombatMath.confirm_damage(job, 0, none_lv, 3, 1.0)["damage"]) == CombatMath.charge_damage(7, 3),
+		"confirm_damage: 차지 3단계 = charge_damage와 일치")
+	var crit_always := {"crit": 1.0, "crit_dmg": 0.5}
+	var rc := CombatMath.confirm_damage(job, 0, crit_always, 0, 0.0)
+	failures += _check(bool(rc["crit"]) and int(rc["damage"]) == 14,
+		"confirm_damage: 치명 확정(배율 1.5+0.5=2.0) → 7×2 = 14")
+	failures += _check(not bool(CombatMath.confirm_damage(job, 0, {"crit": 0.2}, 0, 0.2)["crit"]),
+		"confirm_damage: 굴림이 확률 경계와 같으면(0.2 < 0.2 거짓) 비치명 — 경계 규약")
+	failures += _check(bool(CombatMath.confirm_damage(job, 0, {"crit": 0.2}, 0, 0.199)["crit"]),
+		"confirm_damage: 굴림 < 확률 → 치명")
+	failures += _check(not bool(CombatMath.confirm_damage(job, 0, {"crit": 9.0}, 0, 1.01)["crit"]),
+		"confirm_damage: 부풀린 확률(9.0)도 clamp 1.0 — 굴림 1.01은 여전히 비치명(범위 밖 굴림 방어)")
+	# 🔴 반올림 1회 트립와이어: base 5 × 차지1(1.7) × 치명(1.5) = 12.75 → 13.
+	#    차지에서 먼저 round하면(9) × 1.5 = 13.5 → 14가 되어 빨개진다(이중 반올림 검출).
+	var job5 := JobDef.new()
+	job5.attack_damage = 5
+	job5.attack_cooldown = 0.4
+	failures += _check(int(CombatMath.confirm_damage(job5, 0, {"crit": 1.0, "crit_dmg": 0.0}, 1, 0.0)["damage"]) == 13,
+		"confirm_damage: 반올림 1회(5×1.7×1.5=12.75→13) — 이중 반올림이면 14로 빨개진다")
+
+	# 피흡 — 준 데미지 대비 소수 적립(정수 절삭으로 스탯이 죽지 않게 호출부가 누적)
+	failures += _check(is_equal_approx(CombatMath.leech_gain(10, 0.06), 0.6), "leech_gain: 10뎀 × 6% = 0.6")
+	failures += _check(is_equal_approx(CombatMath.leech_gain(0, 0.5), 0.0), "leech_gain: 0뎀 = 0 (오버킬 클립은 호출부가 실제 깎인 HP를 넘긴다)")
+	failures += _check(is_equal_approx(CombatMath.leech_gain(10, 9.0), 10.0 * float(CombatMath.LEVEL_STAT_MAX["leech"])),
+		"leech_gain: 부풀린 피흡 → 상한 clamp")
+
+	# 공속 — 🔴 같은 배율(haste_scale)을 쿨다운·스윙 창·차지 스텝에 공유하는 것이 계약이다
+	failures += _check(is_equal_approx(CombatMath.haste_scale(0.0), 1.0), "haste_scale: 0 = 1.0 (항등)")
+	failures += _check(is_equal_approx(CombatMath.haste_scale(0.25), 0.8), "haste_scale: +25% → 0.8배 쿨다운")
+	failures += _check(is_equal_approx(CombatMath.haste_scale(9.0), 1.0 / (1.0 + float(CombatMath.LEVEL_STAT_MAX["haste"]))),
+		"haste_scale: 과대 주장 → MAX_HASTE로 clamp (연사 스푸핑 상한)")
+	failures += _check(is_equal_approx(CombatMath.effective_cooldown(job), 0.4), "effective_cooldown: haste 0 = 원래 쿨다운(항등)")
+	failures += _check(is_equal_approx(CombatMath.effective_cooldown(job, 0.25), 0.32), "effective_cooldown: +25% → 0.32s")
+	# 검증 3함수의 haste 버전 — 빨라진 정당 타격이 거부되지 않아야 한다(호스트가 알 채널 = G_STATS "lv")
+	failures += _check(not CombatMath.is_hit_cooldown_ok(1000, 1287, job, 0.25), "cooldown+haste: 창 직전(287ms) 거부")
+	failures += _check(CombatMath.is_hit_cooldown_ok(1000, 1288, job, 0.25), "cooldown+haste: 창 경과(288ms) 허용 ★공속이 실제로 먹는다")
+	failures += _check(not CombatMath.is_hit_cooldown_ok(1000, 1288, job), "cooldown: haste 0이면 288ms는 여전히 거부(항등 보존)")
+	failures += _check(CombatMath.is_fire_rate_ok(1000, 1288, job, 0.25), "fire_rate+haste: 창 경과(288ms) 허용")
+	failures += _check(not CombatMath.is_fire_rate_ok(1000, 1287, job, 0.25), "fire_rate+haste: 창 직전(287ms) 거부")
+	failures += _check(is_equal_approx(CombatMath.effective_charge_step(0.35, 0.25), 0.28), "charge_step+haste: 0.35 → 0.28s")
+	failures += _check(is_equal_approx(CombatMath.effective_charge_step(0.0, 0.25), 0.0), "charge_step: 0(비차지 무기)은 그대로 — '차지 불가' 판정 보존")
+	failures += _check(CombatMath.is_charge_time_ok(1000, 1760, 3, 0.35, 0.25), "charge_time+haste: 3단계 창(756ms) 경과 허용")
+	failures += _check(not CombatMath.is_charge_time_ok(1000, 1750, 3, 0.35, 0.25), "charge_time+haste: 3단계 창 직전(750ms) 거부")
+	failures += _check(not CombatMath.is_charge_time_ok(1000, 1760, 3, 0.35), "charge_time: haste 0이면 760ms는 여전히 거부(항등 보존)")
+
+	# 🔴 스윙 창 계약 데이터 전수 (rules §3) — 모든 무기 × 모든 직업 × haste 전 구간에서
+	#    swing_time < attack_cooldown이 유지되나. 같은 배율을 곱하므로 수학적으로 자동 보존되지만,
+	#    누군가 한쪽만 스케일하도록 고치면 여기가 빨개진다.
+	var swing_ok := true
+	var degenerate_ok := true
+	var lead_ok := true
+	for jf: String in DirAccess.get_files_at("res://data/jobs"):
+		var jbase := jf.trim_suffix(".remap")
+		if jbase.get_extension() != "tres":
+			continue
+		var j := load("res://data/jobs/%s" % jbase) as JobDef
+		if j == null:
+			continue
+		# 🔴 외삽 상한 불변식(리뷰 I1, 2026-07-25): LAG_MAX_LEAD_DIST가 "최고 이속 × 구르기 배율 × 최대 lead"를
+		#   덮어야 한다. 짧으면 추정 좌표가 예고 안에 남아 "둘 다 맞아야 확정" 규약이 **맞는 쪽**으로 기울고,
+		#   빠르게 빠져나가는 피어가 다시 맞는다(2026-07-24에 고친 버그의 퇴행). 이속 상한을 올리면 여기가 빨개진다.
+		#   ROLL_SPEED_MULT(2.6)·POS_SEND_RATE(30Hz)는 player.gd const라 여기 상수로 미러한다.
+		var top_speed := CombatMath.effective_move_speed(j.move_speed, float(CombatMath.LEVEL_STAT_MAX["move"])) * 2.6
+		var max_lead_s := CombatMath.LAG_MAX_ONE_WAY_MS / 1000.0 + 1.0 / 30.0
+		if top_speed * max_lead_s > CombatMath.LAG_MAX_LEAD_DIST:
+			lead_ok = false
+		# 퇴화 트립와이어: 유효 쿨다운 게이트가 SAME_SWING_MS(다중 타격 창)보다 짧아지면 쿨다운 검증이 무의미해진다
+		if CombatMath.effective_cooldown(j, float(CombatMath.LEVEL_STAT_MAX["haste"])) * 0.9 * 1000.0 <= float(CombatMath.SAME_SWING_MS):
+			degenerate_ok = false
+		for ef: String in DirAccess.get_files_at("res://data/equipment"):
+			var ebase := ef.trim_suffix(".remap")
+			if ebase.get_extension() != "tres":
+				continue
+			var e := load("res://data/equipment/%s" % ebase) as EquipDef
+			if e == null or e.motion_type != "swing":
+				continue
+			# 직업 귀속(GameState.can_equip_job 규칙) — 실제로 착용 가능한 조합만 본다.
+			# 계약은 "**착용** 직업의 attack_cooldown"이다(rules §3): 전사 대검(0.34)을 궁수 쿨다운(0.15)과
+			# 비교하면 성립할 수 없는 조합에서 빨개진다. job_id가 비면 범용(아무 직업).
+			if not e.job_id.is_empty() and e.job_id != j.id:
+				continue
+			for h: float in [0.0, 0.25, float(CombatMath.LEVEL_STAT_MAX["haste"])]:
+				if e.swing_time * CombatMath.haste_scale(h) >= CombatMath.effective_cooldown(j, h):
+					swing_ok = false
+	failures += _check(swing_ok, "스윙 창 계약 전수: 모든 무기×직업×haste에서 swing_time < effective_cooldown")
+	failures += _check(degenerate_ok, "퇴화 트립와이어: MAX_HASTE에서도 유효 쿨다운 게이트 > SAME_SWING_MS")
+	failures += _check(lead_ok, "외삽 상한 불변식: LAG_MAX_LEAD_DIST ≥ 최고 이속×구르기×최대 lead (전 직업)")
+
+	# 이동속도 — 로컬 이동과 원격 clamp가 같은 유도식을 쓰는 근거
+	failures += _check(is_equal_approx(CombatMath.effective_move_speed(100.0, 0.0), 100.0), "effective_move: 보너스 0 = 항등")
+	failures += _check(is_equal_approx(CombatMath.effective_move_speed(100.0, 0.15), 115.0), "effective_move: +15% = 115")
+	failures += _check(is_equal_approx(CombatMath.effective_move_speed(100.0, 9.0), 100.0 * (1.0 + float(CombatMath.LEVEL_STAT_MAX["move"]))),
+		"effective_move: 과대 주장 → MAX clamp")
+
+	# EXP → 레벨 파생 (레벨은 저장하지 않는다 — 이 함수가 유일한 진실)
+	var curve := PackedInt32Array([0, 25, 60, 105, 160, 300])
+	failures += _check(CombatMath.level_for_exp(0, curve, 5) == 0, "level_for_exp: 0 EXP = 0레벨")
+	failures += _check(CombatMath.level_for_exp(24, curve, 5) == 0, "level_for_exp: 1레벨 직전(24) = 0")
+	failures += _check(CombatMath.level_for_exp(25, curve, 5) == 1, "level_for_exp: 1레벨 경계(25) = 1")
+	failures += _check(CombatMath.level_for_exp(159, curve, 5) == 3, "level_for_exp: 4레벨 직전(159) = 3")
+	failures += _check(CombatMath.level_for_exp(160, curve, 5) == 4, "level_for_exp: 4레벨 경계(160) = 4")
+	failures += _check(CombatMath.level_for_exp(99999, curve, 5) == 5, "level_for_exp: 과대 EXP → 만레벨에서 멈춤(조작 세이브 방어)")
+	failures += _check(CombatMath.level_for_exp(99999, curve, 3) == 3, "level_for_exp: max_level(3) clamp 우선")
+	failures += _check(CombatMath.level_for_exp(500, PackedInt32Array(), 5) == CombatMath.level_for_exp(500, CombatMath.default_exp_curve(), 5),
+		"level_for_exp: 빈 곡선 → 기본 곡선 폴백")
+	var prog := CombatMath.exp_progress(30, curve, 5)
+	failures += _check(int(prog["level"]) == 1 and int(prog["cur"]) == 5 and int(prog["need"]) == 35,
+		"exp_progress: 30 EXP = 1레벨·구간 5/35")
+	var prog_max := CombatMath.exp_progress(99999, curve, 5)
+	failures += _check(int(prog_max["level"]) == 5 and int(prog_max["need"]) == 0,
+		"exp_progress: 만레벨 = need 0 (잉여 EXP 폐기)")
+
 	if failures == 0:
 		print("TEST_OK combat_math")
 		quit(0)

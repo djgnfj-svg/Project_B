@@ -1,0 +1,18 @@
+[gd_resource type="Resource" script_class="SubJobDef" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/core/sub_job_def.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "warrior_berserker"
+display_name = "광전사"
+description = "몸을 아끼지 않고 몰아친다 — 공격속도와 치명타가 크게 오르지만 몸을 지켜주지는 않는다."
+series_id = "warrior"
+order = 1
+unlocks_next_at = 3
+max_level = 5
+crit_per_level = 0.03
+crit_dmg_per_level = 0.07
+haste_per_level = 0.035
+move_per_level = 0.005
+leech_per_level = 0.002

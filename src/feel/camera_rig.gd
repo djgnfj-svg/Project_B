@@ -11,6 +11,7 @@ const SHAKE_MAX := 7.0      # 오프셋 상한(px) — 640×360이라 과하면 
 const SMOOTH_SPEED := 9.0   # 위치 추적 부드러움
 # combat_impact 종류별 기본 셰이크 강도 (내가 맞으면 더 크게)
 const IMPACT_SHAKE := {"enemy": 1.5, "player": 3.0}
+const CRIT_SHAKE_MULT := 1.6  # 치명타 셰이크 가중 (성장축 2026-07-25 — 연출값, rules §0 예외)
 
 var _shake: float = 0.0
 
@@ -34,8 +35,9 @@ func _ready() -> void:
 		n = n.get_parent()
 
 
-func _on_impact(kind: String, _world_pos: Vector2, _amount: int) -> void:
-	add_shake(float(IMPACT_SHAKE.get(kind, 1.0)))
+func _on_impact(kind: String, _world_pos: Vector2, _amount: int, crit: bool) -> void:
+	var shake := float(IMPACT_SHAKE.get(kind, 1.0))
+	add_shake(shake * CRIT_SHAKE_MULT if crit else shake)  # 치명타는 조금 더 묵직하게(표시 전용)
 
 
 func add_shake(strength: float) -> void:

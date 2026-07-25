@@ -35,9 +35,10 @@ static func attack_radius(job: JobDef) -> float:
 const SAME_SWING_MS := 50
 
 
-static func is_hit_cooldown_ok(last_confirm_msec: int, now_msec: int, job: JobDef) -> bool:
+# haste = 그 피어가 공지한(그리고 호스트가 clamp한) 공격속도 보너스 — 0 = 항등(성장축 도입 전과 동일).
+static func is_hit_cooldown_ok(last_confirm_msec: int, now_msec: int, job: JobDef, haste: float = 0.0) -> bool:
 	var dt := now_msec - last_confirm_msec
-	return dt <= SAME_SWING_MS or dt >= int(job.attack_cooldown * 0.9 * 1000.0)
+	return dt <= SAME_SWING_MS or dt >= int(effective_cooldown(job, haste) * 0.9 * 1000.0)
 
 
 # 구르기 타이밍 — 단일 소스 (§3). 로컬 이동(player)과 호스트 i-frame 검증이 같은 값을 읽는다.
@@ -149,13 +150,17 @@ static func is_blast_hit(target_pos: Vector2, blast_center: Vector2, radius: flo
 # 호스트의 차지 레벨 검증 — 주장한 레벨만큼 실제로 모을 시간이 있었는가 (마지막 발사 이후 경과 기준).
 # 연사하며 항상 c=MAX를 주장하는 스푸핑을 막는다 (is_fire_rate_ok의 차지 버전 — 지터 여유 0.9배 동일).
 # ⚠ 첫 발사(last_shot 미기록)는 통과 — 입장 후 충분히 모을 시간이 있었다고 본다.
-static func is_charge_time_ok(last_shot_msec: int, now_msec: int, level: int, step_time: float) -> bool:
+static func is_charge_time_ok(last_shot_msec: int, now_msec: int, level: int, step_time: float,
+		haste: float = 0.0) -> bool:
 	var lv := clamp_charge_level(level)
 	if lv <= 0:
 		return true
 	if not is_finite(step_time) or step_time <= 0.0:
 		return false  # 차지 못 하는 무기인데 레벨을 주장 = 거부
-	return now_msec - last_shot_msec >= int(float(lv) * step_time * 0.9 * 1000.0)
+	# 차지 단계 시간도 공속으로 짧아진다(사용자 확정 2026-07-25) — 안 그러면 리듬이 차지에 지배되는
+	# 법사에게 공속이 무가치해진다. 검증도 같은 배율을 써야 빨라진 정당 차지가 거부되지 않는다.
+	var step := effective_charge_step(step_time, haste)
+	return now_msec - last_shot_msec >= int(float(lv) * step * 0.9 * 1000.0)
 
 
 # 화살 명중 판정 — 호스트만. 화살 현재 위치와 적 중심 거리 <= 화살굵기+적반경.
@@ -166,8 +171,8 @@ static func is_arrow_hit(arrow_pos: Vector2, enemy_pos: Vector2, enemy_radius: f
 
 # 호스트의 발사 쿨다운 검증 — 발사 간격은 공격자 job 쿨다운(지터 여유 0.9배) 강제. 스팸해도 정직한 발사율 이상 못 얻는다.
 # 근접의 is_hit_cooldown_ok와 달리 SAME_SWING 다중타격 허용이 없다 — 화살 하나=한 발이라 매 발사 독립 게이트.
-static func is_fire_rate_ok(last_shot_msec: int, now_msec: int, job: JobDef) -> bool:
-	return now_msec - last_shot_msec >= int(job.attack_cooldown * 0.9 * 1000.0)
+static func is_fire_rate_ok(last_shot_msec: int, now_msec: int, job: JobDef, haste: float = 0.0) -> bool:
+	return now_msec - last_shot_msec >= int(effective_cooldown(job, haste) * 0.9 * 1000.0)
 
 
 # 호스트의 발사 원점 검증 — 원점이 발사자 net_anchor 근처인가 (순간이동 원점 스푸핑 완화, §3 신뢰 경계).
@@ -215,8 +220,15 @@ static func is_hit_in_cone(pt: Vector2, apex: Vector2, facing: float, half_angle
 #   PvP가 생기면 이 관대함이 표면이 된다 → rules §2 4인/PvP 게이트에서 재검토.
 const LAG_MAX_ONE_WAY_MS := 200.0   # 편도 지연 인정 상한 — 조작 피어가 큰 RTT를 주장해 보스 예고를
                                     # 무한 지연시키거나 외삽을 뻥튀기하는 것 차단 (신뢰 경계 §3)
-const LAG_MAX_LEAD_DIST := 56.0     # 외삽 거리 상한(px) — 지연 스파이크 한 번이 판정을 화면 밖으로
-                                    # 날리지 않게. 최고 이동속도(110×2.6)로도 ~0.2s 분량
+const LAG_MAX_LEAD_DIST := 90.0     # 외삽 거리 상한(px) — 지연 스파이크 한 번이 판정을 화면 밖으로 날리지 않게.
+# 🔴 유도식(성장축 2026-07-25 재산정): 최고 이속 × ROLL_SPEED_MULT × 최대 lead
+#   = (110 × (1+LEVEL_STAT_MAX["move"]=0.3)) × 2.6 × (LAG_MAX_ONE_WAY_MS 0.2s + 송신주기 1/30s) ≈ 87px → 90.
+#   ⚠ 상한을 무한정 키울 수도 없다 — 두 목적이 충돌한다(스파이크 억제는 작기를, 정당 외삽 커버는 크기를 요구).
+#   그래서 이속 하드 상한을 0.3으로 조여 균형을 잡았다.
+#   ⚠ 이 값이 실제 최대 외삽보다 **작으면** 추정 좌표가 예고 안에 남아 "둘 다 맞아야 확정" 규약이
+#   맞는 쪽으로 기운다 → 빠르게 빠져나가는 피어가 다시 맞는다(2026-07-24에 고친 버그의 부분 퇴행).
+#   이속 상한(LEVEL_STAT_MAX["move"])이나 직업 move_speed를 올리면 여기도 재유도해라 —
+#   test_combat_math_auto의 데이터 전수 불변식이 그때 빨개진다.
 
 # 편도 지연 = RTT의 절반. 음수·NaN·스파이크를 상한으로 눌러 판정에 쓸 수 있는 값으로 정규화한다.
 static func clamp_one_way_ms(one_way_ms: float) -> float:
@@ -306,3 +318,184 @@ static func upgraded_stats(equip: EquipDef, from_level: int, to_level: int) -> D
 # 강화 비용(골드). UI 미리보기 = 실제 차감 단일 소스. 곡선 = base * (다음 레벨).
 static func upgrade_cost(equip: EquipDef, current_level: int) -> int:
 	return equip.upgrade_gold_base * (current_level + 1)
+
+
+# --- 직업 레벨 · 캐릭터 스탯 5종 (성장축 2026-07-25, GDD v1.8) — 단일 소스 (§3) ---
+#
+# 🔒 축 경계(GDD §6 확정): 이 절은 **레벨 스탯만** 다룬다. 공격력·체력은 위 장비 절(total_stats)의 몫이다.
+#   두 파이프를 하나로 합치지 마라 — 합치면 data/equipment/*.tres에 "crit"을 적어도 코드가 조용히 받아들인다
+#   (기획 위반이 컴파일도 리뷰도 안 걸리고 통과한다). 분리하면 EquipDef엔 crit 필드가 아예 없다.
+#
+# 와이어 키 = 아래 문자열 **그대로** 쓴다: G_STATS "lv" 페이로드 키 · SubJobDef.step() 키 · clamp 키.
+#   별도 매핑 표를 만들면 그게 두 번째 진실원이 되어 갈라진다.
+const LEVEL_STAT_KEYS: Array[String] = ["crit", "crit_dmg", "haste", "move", "leech"]
+
+# 키별 **하드 상한** — 데이터가 잘못 커지거나 조작 공지가 와도 여기서 잘린다.
+# 데이터 유도 상한(GameState.max_level_stats)과 이중 방어: 정직한 최대치는 데이터 상한이,
+# 데이터 자체의 실수는 이 상수가 잡는다(max_equip_stats + 상한 상수 철학의 미러).
+const LEVEL_STAT_MAX: Dictionary = {
+	"crit": 1.0,      # 확률 — 100% 초과는 무의미
+	"crit_dmg": 3.0,  # 치명 배율 추가분(총 배율 = CRIT_BASE_MULT + 이 값)
+	"haste": 0.5,     # 공속 +50% → 쿨다운 ×1/1.5. ⚠ 퇴화 한계: effective_cooldown*0.9 > SAME_SWING_MS를 지켜야 한다
+	"move": 0.3,      # 이속 +30% — GDD 예산(+15%)의 2배 여유. 🔴 이 값을 올리면 LAG_MAX_LEAD_DIST(외삽 상한)를
+	                  #   같이 재유도해야 한다 — 안 하면 지연 보상이 퇴행한다(테스트 불변식이 그때 빨개진다)
+	"leech": 0.5,     # 피흡 50%
+}
+
+const SUB_JOB_WEIGHT := 0.4  # 서브(비-메인) 하위 직업 기여 배율 — GDD §5 "서브도 효과가 있다" · 값은 §11 실기 TBD
+const CRIT_BASE_MULT := 1.5  # 치명타 기본 배율 (GDD §6 = 150%). 치명 총 배율 = 이 값 + lv_stats.crit_dmg
+
+
+# 레벨 스탯 한 칸 clamp — 유한성 가드 먼저(JSON 1e999 → INF, clamp_arrow_range와 같은 철학).
+# cap = 데이터 유도 상한(없으면 하드 상한만). 음수는 0으로 — 디버프 주입 차단.
+static func clamp_level_stat(key: String, value: float, cap: float = INF) -> float:
+	if not is_finite(value):
+		return 0.0
+	var hard := float(LEVEL_STAT_MAX.get(key, 0.0))
+	var top := hard if not is_finite(cap) else minf(hard, maxf(cap, 0.0))
+	return clampf(value, 0.0, top)
+
+
+# 레벨 스탯 묶음 clamp — 🔴 **payload가 아니라 LEVEL_STAT_KEYS를 순회한다**(allowlist 관용구):
+# 모르는 키는 자동 폐기되고, 빠진 키는 0.0으로 채워져 하류가 항등 폴백을 얻는다.
+static func clamp_level_stats(stats: Dictionary, caps: Dictionary = {}) -> Dictionary:
+	var out := {}
+	for key: String in LEVEL_STAT_KEYS:
+		out[key] = clamp_level_stat(key, float(stats.get(key, 0.0)), float(caps.get(key, INF)))
+	return out
+
+
+# 빈 레벨 스탯(전부 0) — 성장축 미도입/미착용 경로의 항등 폴백.
+static func empty_level_stats() -> Dictionary:
+	var out := {}
+	for key: String in LEVEL_STAT_KEYS:
+		out[key] = 0.0
+	return out
+
+
+# 하위 직업 하나의 레벨별 스탯 = step * level (base 없음 — GDD §6).
+static func sub_job_stat_at_level(def: SubJobDef, level: int) -> Dictionary:
+	var out := {}
+	var lv := clampi(level, 0, def.max_level)
+	for key: String in LEVEL_STAT_KEYS:
+		out[key] = def.step(key) * float(lv)
+	return out
+
+
+# 총 레벨 스탯 = 메인 온전 + 서브들 × SUB_JOB_WEIGHT (GDD §5 "메인 1개 + 서브 합산").
+#   levels = {sub_id: level} (보유분) · defs = {sub_id: SubJobDef}
+# ⚠ CombatMath는 오토로드를 참조하지 않는다(-s 테스트 호환, 위 total_stats와 같은 규약) —
+#   id→SubJobDef 리졸브는 부르는 쪽(GameState.current_level_stats)이 한다.
+# 보유 0이면 전부 0 = 항등 폴백.
+static func level_stats(main_id: String, levels: Dictionary, defs: Dictionary,
+		sub_weight: float = SUB_JOB_WEIGHT) -> Dictionary:
+	var out := empty_level_stats()
+	for sid: String in levels:
+		var def := defs.get(sid) as SubJobDef
+		if def == null:
+			continue  # allowlist 밖 / 리졸브 실패 — 조용히 건너뛴다(폐기가 안전한 방향)
+		var w := 1.0 if sid == main_id else maxf(sub_weight, 0.0)
+		var s := sub_job_stat_at_level(def, int(levels[sid]))
+		for key: String in LEVEL_STAT_KEYS:
+			out[key] = float(out[key]) + float(s[key]) * w
+	return clamp_level_stats(out)
+
+
+# 치명타 총 배율. crit_dmg = 레벨 스탯의 배율 **추가분**(0 = 기본 150%).
+static func crit_mult(crit_dmg: float) -> float:
+	return CRIT_BASE_MULT + clamp_level_stat("crit_dmg", crit_dmg)
+
+
+# 🔴 최종 데미지 확정 — 단일 소스 (§3). 근접·투사체·폭발 **3경로 전부** 이 함수만 부른다.
+# 곱 순서 고정: (직업 기본 + 장비 보너스) × 차지 배율 × 치명 배율 → **반올림 1회**.
+#   경로마다 곱 순서나 반올림 횟수가 갈라지면 같은 상황에서 데미지가 달라진다
+#   (charge_damage가 이미 round를 하므로, 치명을 그 밖에서 곱하면 이중 반올림이 된다).
+# 🔴 굴림(crit_roll01)은 **호출부(호스트 RNG)** 가 만든다 — CombatMath가 RNG를 쥐면 테스트가 결정론을 잃는다.
+#   굴림 단위 = 데미지 인스턴스 1회(폭발이 3마리를 때리면 3번 굴린다 — 사용자 확정 2026-07-25).
+# lv_stats 비어 있고 charge 0이면 calc_damage와 **정확히 같은 값**(항등 폴백).
+static func confirm_damage(job: JobDef, bonus_attack: int, lv_stats: Dictionary,
+		charge_level: int, crit_roll01: float) -> Dictionary:
+	var base := float(calc_damage(job, bonus_attack))
+	var mult := CHARGE_DAMAGE_MULT[clamp_charge_level(charge_level)]
+	var chance := clamp_level_stat("crit", float(lv_stats.get("crit", 0.0)))
+	var is_crit := is_finite(crit_roll01) and crit_roll01 >= 0.0 and crit_roll01 < chance
+	var cmult := crit_mult(float(lv_stats.get("crit_dmg", 0.0))) if is_crit else 1.0
+	return {"damage": int(round(base * mult * cmult)), "crit": is_crit}
+
+
+# 피흡 적립량(소수) — 🔴 **실제로 깎인 HP** 기준으로 부른다(오버킬 기준이면 1HP 잔몹을 치명타로 때려
+# 회복을 부풀릴 수 있다). 정수 절삭은 호출부가 소수 잔량을 누적해 처리한다(데미지가 4~34 정수라
+# 매 타격 절삭하면 6% 흡혈이 0이 되어 스탯이 아예 작동하지 않는다 — GDD §6 소수 누적 확정).
+static func leech_gain(applied_damage: int, leech: float) -> float:
+	if applied_damage <= 0:
+		return 0.0
+	return float(applied_damage) * clamp_level_stat("leech", leech)
+
+
+# --- 공격속도 (haste) — 단일 소스 (§3) ---
+#
+# 🔴 **핵심 계약: 쿨다운과 스윙 창(EquipDef.swing_time)·차지 스텝에 같은 배율을 곱한다.**
+#   그러면 rules §3의 스윙 창 부등식(swing_time < attack_cooldown)이 k = haste_scale(h) > 0 어디서나
+#   `swing_time·k < cooldown·k`로 **자동 보존**된다 — 부등식을 haste마다 다시 검사할 필요가 없다.
+#   배율 함수를 공유하는 것 자체가 계약의 증명이다. 각자 1/(1+h)를 다시 쓰면 그 증명이 깨진다.
+static func clamp_haste(haste: float) -> float:
+	return clamp_level_stat("haste", haste)
+
+
+static func haste_scale(haste: float) -> float:
+	return 1.0 / (1.0 + clamp_haste(haste))
+
+
+static func effective_cooldown(job: JobDef, haste: float = 0.0) -> float:
+	return job.attack_cooldown * haste_scale(haste)
+
+
+static func effective_charge_step(step_time: float, haste: float = 0.0) -> float:
+	if not is_finite(step_time) or step_time <= 0.0:
+		return step_time  # 차지 무기가 아님 — 그대로 넘겨 호출부의 "0 = 차지 불가" 판정을 보존
+	return step_time * haste_scale(haste)
+
+
+# --- 이동속도 (move) — 단일 소스 (§3) ---
+# ⚠ 로컬 이동만 고치면 안 된다: 원격 위치 clamp(player.gd)가 job.move_speed를 기준으로 상한을 잡으므로,
+#   빨라진 정당 이동이 깎이면 지연 보상의 외삽이 과소평가되고 "피했는데 맞았다"가 빠른 피어에게 재발한다
+#   (2026-07-24에 고친 그 버그). 두 상한 모두 이 함수로 유도한다.
+static func clamp_move(move: float) -> float:
+	return clamp_level_stat("move", move)
+
+
+static func effective_move_speed(base_speed: float, move: float) -> float:
+	return base_speed * (1.0 + clamp_move(move))
+
+
+# --- EXP · 레벨 파생 (§3) ---
+# 🔴 레벨은 **저장하지 않고 EXP에서 파생**한다 — 둘을 다 저장하면 어긋난 상태(손상·구버전 세이브)가
+#   생기고, 레벨은 스탯 공지의 근거라서 어긋남이 곧 클라 간 스탯 발산이다.
+# 곡선 = 레벨 n 도달에 필요한 **누적** EXP(인덱스 = 레벨, [0] = 0). 데이터 = JobDef.exp_curve.
+static func default_exp_curve() -> PackedInt32Array:
+	return PackedInt32Array([0, 60, 150, 280, 460, 700])
+
+
+# 누적 EXP → 레벨. curve가 비었거나 깨졌으면 기본 곡선. max_level로 clamp(초과분은 폐기 = 만레벨 유지).
+static func level_for_exp(exp: int, curve: PackedInt32Array, max_level: int) -> int:
+	var c := curve if curve.size() >= 2 else default_exp_curve()
+	var top := mini(max_level, c.size() - 1)
+	var lv := 0
+	for n: int in range(1, top + 1):
+		if exp >= c[n]:
+			lv = n
+		else:
+			break
+	return lv
+
+
+# UI 진행 바용 — {"level", "cur"(현 레벨 구간 진행량), "need"(구간 총량, 만레벨 = 0)}.
+# 레벨업 판정과 바 표시가 같은 함수를 지난다(갈라짐 방지).
+static func exp_progress(exp: int, curve: PackedInt32Array, max_level: int) -> Dictionary:
+	var c := curve if curve.size() >= 2 else default_exp_curve()
+	var lv := level_for_exp(exp, c, max_level)
+	var top := mini(max_level, c.size() - 1)
+	if lv >= top:
+		return {"level": lv, "cur": 0, "need": 0}  # 만레벨 = 바 없음(잉여 EXP는 폐기, GDD §11)
+	var floor_exp := c[lv]
+	return {"level": lv, "cur": exp - floor_exp, "need": c[lv + 1] - floor_exp}

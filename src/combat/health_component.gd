@@ -15,6 +15,12 @@ var _respawns: bool = false
 var _respawn_delay: float = 0.0
 var _respawn_left: float = 0.0  # apply_damage(권한 경로)만 arm한다
 
+# 마지막 HP 변동이 치명타였나 — 피격 글루가 hp_changed 직후 읽어 combat_impact로 올린다 (성장축 2026-07-25).
+# 🔴 사이드채널이다: **emit 직전에 반드시 덮어써야** 한다(비-치명 경로는 false로). 안 덮으면 다음 평타가
+#   이전 치명 강조를 물려받는다 — 에러 없이 화면만 거짓말한다(rules §5). hp_changed 시그니처를 늘리지
+#   않는 이유 = 리스너 5곳(적·잔몹·보스·플레이어·테스트)을 건드리지 않기 위해.
+var last_crit: bool = false
+
 
 func setup(p_max_hp: int, p_respawns: bool = false, p_respawn_delay: float = 0.0) -> void:
 	max_hp = p_max_hp
@@ -44,9 +50,10 @@ func set_max_hp(p_max: int) -> void:
 
 # 호스트 권한 경로 전용 — 데미지 확정. 사망 + respawns면 부활 타이머 arm.
 # 음수 dmg 방어: 힐 경로가 아니다 — 회복은 confirm_hp로 (공용 컴포넌트 방어선)
-func apply_damage(dmg: int) -> void:
+func apply_damage(dmg: int, crit: bool = false) -> void:
 	if hp <= 0 or dmg <= 0:
 		return
+	last_crit = crit  # emit 직전 덮어쓰기 (평타가 이전 치명 강조를 물려받지 않게)
 	hp = maxi(0, hp - dmg)
 	hp_changed.emit(hp, true)
 	hp_confirmed.emit(hp)
@@ -57,6 +64,7 @@ func apply_damage(dmg: int) -> void:
 # 호스트 전용 — HP 확정 (부활 등). 대기 중인 부활 타이머는 해제한다.
 func confirm_hp(new_hp: int) -> void:
 	_respawn_left = 0.0
+	last_crit = false  # 확정/회복(부활·피흡·모닥불)은 치명타가 아니다 — 스테일 플래그 제거
 	var dropped := new_hp < hp
 	hp = new_hp
 	hp_changed.emit(hp, dropped)
@@ -64,7 +72,8 @@ func confirm_hp(new_hp: int) -> void:
 
 
 # 게스트 표시 전용 — 호스트가 확정한 HP 반영. 타이머 arm·hp_confirmed 절대 없음.
-func set_hp_display(new_hp: int) -> void:
+func set_hp_display(new_hp: int, crit: bool = false) -> void:
+	last_crit = crit  # 게스트는 ehp "cr"로만 치명을 안다 — 권한 경로와 같은 규약(emit 직전 덮어쓰기)
 	var dropped := new_hp < hp
 	hp = new_hp
 	hp_changed.emit(hp, dropped)

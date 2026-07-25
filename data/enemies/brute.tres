@@ -43,4 +43,5 @@ strike_radius = 32.0
 attack_damage = 12
 telegraph_s = 0.9
 attack_cooldown_s = 1.8
+exp = 30
 drop_table = SubResource("d_table")

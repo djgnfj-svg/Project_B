@@ -24,6 +24,8 @@ var _stage_over: bool = false  # 클리어↔전멸 상호 배제 + 종료 후 �
 var _boss_strike_frame: Dictionary = {}  # peer_id -> 보스 STRIKE 피격 물리 프레임 — 물뿌리기 원 겹침 시 같은 프레임 중복 확정 방지(per-cast dedup, 보스는 한 프레임에 한 패턴만 발화)
 var _arrows: Array = []  # 호스트 권한 화살(궁수 활): [{aid, pos:Vector2, dir:Vector2, life:float, shooter:int}, …] — _physics_process가 전진·명중 판정
 var _last_shot_msec: Dictionary = {}  # peer_id -> 마지막 발사 msec (호스트 전용 — 발사율 스팸 게이트, _last_hit_msec 미러)
+var _rng := RandomNumberGenerator.new()  # 치명타 굴림 — 호스트만 (DropAuthority._rng 관용구). 게스트는 굴리지 않는다(§1)
+var _leech_frac: Dictionary = {}  # peer_id -> 피흡 소수 잔량(호스트 전용). 데미지가 4~34 정수라 매 타격 절삭하면 6% 흡혈이 0이 된다 → 1 이상 쌓이면 회복(§3)
 
 
 func _ready() -> void:
@@ -31,6 +33,8 @@ func _ready() -> void:
 	if _peer_sync == null:
 		push_error("[CombatAuthority] peer_sync_path 미배선 — 전투 확정 불능")
 		return
+	if Net.is_host():
+		_rng.randomize()  # 치명 굴림은 호스트 전용 — 게스트는 rng를 쓰지 않는다
 	EventBus.net_msg.connect(_on_net_msg)
 	EventBus.player_spawned.connect(_on_player_spawned)
 	EventBus.attack_hit.connect(_on_attack_hit)
@@ -45,6 +49,7 @@ func _ready() -> void:
 		_last_hit_msec.erase(peer_id)
 		_roll_grant_msec.erase(peer_id)
 		_last_shot_msec.erase(peer_id)  # 발사율 게이트 기록 정리 (_last_hit_msec 대칭)
+		_leech_frac.erase(peer_id)  # 피흡 잔량도 대칭 정리 (이탈 피어 잔류 방지)
 		_pending_php.erase(peer_id)
 		_boss_strike_frame.erase(peer_id)  # 보스 STRIKE dedup 기록도 대칭 정리 (유한하나 정리 일관성)
 		GameState.drop_party_hp(peer_id))  # 챕터 내 잔류 이월 기록 정리 (재접속 id는 증가라 재사용 없음)
@@ -104,14 +109,59 @@ func _on_attack_hit(enemy: Node, job: JobDef) -> void:
 func _confirm_damage(health: HealthComponent, job: JobDef, attacker_id: int) -> void:
 	var now := Time.get_ticks_msec()
 	var last := int(_last_hit_msec.get(attacker_id, -1000000000))
-	if not CombatMath.is_hit_cooldown_ok(last, now, job):
+	# 🔴 공속 반영 — 공격자 아바타의 level_stats에서 읽는다. **치명·피흡(_apply_confirmed)과 같은 소스**여야 한다:
+	#   peer_level_stats()는 G_STATS **수신** 기록이라 로컬(호스트 자신) 항목이 영원히 없다(Net에 루프백 없음 —
+	#   drop_spawn_local이 존재하는 그 이유). 그걸 게이트에 쓰면 호스트 자기 공속이 0으로 검증돼,
+	#   로컬 간격 1/(1+h)가 게이트 0.9배보다 짧아지는 h>0.111부터 **자기 타격이 한 번 걸러 무피해**가 된다
+	#   (에러 0·로그 0, 2026-07-25 리뷰 C1). 아바타 값은 로컬=내 레벨·원격=수신 clamp분이라 신뢰 경계는 그대로다
+	#   (player.set_level_stats가 하드 상한으로 한 번 더 clamp).
+	var haste_p := _peer_sync.player(attacker_id)
+	var atk_haste := float(haste_p.level_stats.get("haste", 0.0)) if haste_p != null else 0.0
+	if not CombatMath.is_hit_cooldown_ok(last, now, job, atk_haste):
 		return
 	if now - last > CombatMath.SAME_SWING_MS:
 		_last_hit_msec[attacker_id] = now  # 새 스윙 앵커 — 매 확정마다 갱신하면 창이 미끄러진다
-	# 착용 장비 공격 보너스 = 공격자 아바타(G_STATS로 반영). 미착용/미상 = 0 (항등 폴백).
+	_apply_confirmed(health, job, attacker_id, 0)  # 데미지 산출·치명·피흡은 공용 경로(아래) — 3경로 공통
+
+
+# 🔴 호스트 전용 — 데미지 확정의 **단일 경로** (근접·투사체·폭발 공통, rules §3).
+# 곱 순서·반올림·치명 판정은 전부 CombatMath.confirm_damage가 전담한다(경로마다 갈라지면 같은
+# 상황에서 데미지가 달라진다 — charge_damage가 이미 round를 하므로 치명을 밖에서 곱하면 이중 반올림).
+# 여기서 얹는 것은 ⑴ 공격자 보너스·레벨 스탯 조회 ⑵ 피흡 적립뿐이다.
+# 치명 굴림 단위 = 데미지 인스턴스 1회 — 폭발이 3마리를 때리면 이 함수가 3번 불려 각각 굴린다(사용자 확정).
+func _apply_confirmed(health: HealthComponent, job: JobDef, attacker_id: int, charge_level: int) -> void:
 	var atk_p := _peer_sync.player(attacker_id)
+	# 착용 장비 공격 보너스·레벨 5스탯 = 공격자 아바타(G_STATS로 반영). 미착용/미상 = 0·빈 dict (항등 폴백).
 	var bonus := atk_p.equip_atk_bonus if atk_p != null else 0
-	health.apply_damage(CombatMath.calc_damage(job, bonus))
+	var lv_stats: Dictionary = atk_p.level_stats if atk_p != null else {}
+	var res := CombatMath.confirm_damage(job, bonus, lv_stats, charge_level, _rng.randf())
+	var dmg := int(res["damage"])
+	if dmg <= 0:
+		return
+	var before := health.hp
+	health.apply_damage(dmg, bool(res["crit"]))  # crit은 Health.last_crit으로 표시 경로에 전달(§3)
+	_accrue_leech(attacker_id, before - health.hp, lv_stats)  # 🔴 실제로 깎인 HP 기준 = 오버킬 클립
+
+
+# 호스트 전용 — 피흡 적립·회복. 소수를 누적해 1 이상이면 confirm_hp로 확정한다(새 메시지 0개 —
+# php 브로드캐스트가 기존 경로로 전원에 전파). 잔량은 호스트만 갖는다: 게스트가 자기 잔량을 들면
+# 회복 확정이 두 곳이 되어 §1 위반이다.
+func _accrue_leech(attacker_id: int, applied_damage: int, lv_stats: Dictionary) -> void:
+	var gain := CombatMath.leech_gain(applied_damage, float(lv_stats.get("leech", 0.0)))
+	if gain <= 0.0:
+		return
+	var acc := float(_leech_frac.get(attacker_id, 0.0)) + gain
+	var whole := int(floor(acc))
+	_leech_frac[attacker_id] = acc - float(whole)
+	if whole <= 0:
+		return
+	var p := _peer_sync.player(attacker_id)
+	if p == null or not p.is_alive():
+		return  # 사망자는 회복하지 않는다 (hit_req·G_SHOOT 사망 거부와 같은 규율)
+	var h := p.get_node_or_null("Health") as HealthComponent
+	if h == null or h.hp >= h.max_hp:
+		return  # max_hp 상한 — 넘겨 회복하지 않는다
+	h.confirm_hp(mini(h.max_hp, h.hp + whole))  # dropped=false라 거짓 피격 손맛이 안 뜬다
 
 
 # --- 투사체(궁수 활·법사 차지 지팡이) 호스트 권한 (2026-07-24) — 결정론 직선. 표시는 ArrowField(전 클라), 판정은 여기(호스트만) ---
@@ -187,34 +237,25 @@ func _arrow_probe(pos: Vector2) -> String:
 	return ""
 
 
-# 호스트 전용 — 투사체 데미지. calc_damage 단일 소스(§3, 공격자 job+장비 보너스) × 차지 배율(charge_damage).
-# 비차지(level 0)는 배율 1.0 = 항등이라 궁수 화살 동작이 그대로다. 발사자 이탈/무직업이면 0(무피해).
-func _projectile_damage(a: Dictionary) -> int:
-	var atk_p := _peer_sync.player(int(a["shooter"]))
-	if atk_p == null or atk_p.job == null:
-		return 0
-	return CombatMath.charge_damage(
-		CombatMath.calc_damage(atk_p.job, atk_p.equip_atk_bonus), int(a["level"]))
-
-
 # 호스트 전용 — 단일 명중(화살) 데미지 확정. 쿨다운 게이트 없음(발사 시 강제).
 func _confirm_arrow_hit(eid: String, a: Dictionary) -> void:
 	var entry_v: Variant = _enemies.get(eid)
 	if entry_v == null:
 		return
-	var dmg := _projectile_damage(a)
-	if dmg <= 0:
-		return
-	((entry_v as Dictionary)["health"] as HealthComponent).apply_damage(dmg)
+	var shooter := _peer_sync.player(int(a["shooter"]))
+	if shooter == null or shooter.job == null:
+		return  # 발사자 이탈/무직업 = 무피해 (기존 동작 보존)
+	_apply_confirmed((entry_v as Dictionary)["health"] as HealthComponent,
+		shooter.job, int(a["shooter"]), int(a["level"]))
 
 
 # 호스트 전용 — 폭발 확정(차지 무기): 반경 안 살아있는 적 전원에게 같은 데미지 1회.
 # 판정 반경 = 표시 폭발 FX 반경(둘 다 GameState.projectile_params → charge_blast_radius) — "맞는 곳=보이는 곳"(§3).
 # ⚠ 현재는 적만 친다 — 아군 오사(플레이어 피격)는 협동 설계상 없음(GDD §5 2인 협동). 넣으려면 여기에 플레이어 루프 추가.
 func _confirm_blast(a: Dictionary, center: Vector2) -> void:
-	var dmg := _projectile_damage(a)
-	if dmg <= 0:
-		return
+	var shooter := _peer_sync.player(int(a["shooter"]))
+	if shooter == null or shooter.job == null:
+		return  # 발사자 이탈/무직업 = 무피해
 	var radius := float(a["blast"])
 	for eid: String in _enemies:
 		var entry := _enemies[eid] as Dictionary
@@ -227,7 +268,8 @@ func _confirm_blast(a: Dictionary, center: Vector2) -> void:
 		var def := entry["def"] as EnemyDef
 		var body_r := def.body_radius if def != null else 0.0
 		if CombatMath.is_blast_hit(root.global_position, center, radius, body_r):
-			health.apply_damage(dmg)
+			# 대상별로 따로 확정 = 치명 굴림도 대상별 1회 (사용자 확정 2026-07-25)
+			_apply_confirmed(health, shooter.job, int(a["shooter"]), int(a["level"]))
 
 
 # 호스트 전용 — 화살 종료 통지: 게스트는 G_ARROW_HIT로, 호스트 자신은 arrow_gone_local로(릴레이 미에코). ArrowField가 despawn.
@@ -238,7 +280,14 @@ func _terminate_arrow(aid: String, pos: Vector2) -> void:
 
 # 호스트 전용 수신 경로 — Health 권한 경로(apply_damage/부활)가 확정한 HP를 전원에 브로드캐스트
 func _on_enemy_hp_confirmed(eid: String, hp: int) -> void:
-	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ENEMY_HP, "eid": eid, "hp": hp})
+	# 치명 여부는 Health가 확정 직전에 세팅한 last_crit에서 읽는다(표시 강조 전용 — 굴림은 이미 끝났다).
+	var crit := false
+	var ehp_entry: Variant = _enemies.get(eid)
+	if ehp_entry != null:
+		var eh := (ehp_entry as Dictionary)["health"] as HealthComponent
+		crit = eh != null and eh.last_crit
+	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ENEMY_HP, "eid": eid, "hp": hp,
+		"cr": 1 if crit else 0})
 	if hp <= 0:
 		# 드랍 롤 트리거 (호스트 전용 경로) — 죽는 순간 좌표에서 떨어지도록 clear 판정 전에 쏜다.
 		# 실제 롤·산개·브로드캐스트는 DropAuthority가 받는다 (rules §2 책임 분리, §1 호스트 권한).
@@ -397,7 +446,10 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			# 좌표는 net_anchor() — 표시 보간 지연 제외(사거리 검증과 같은 철학).
 			var now_shot := Time.get_ticks_msec()
 			var last_shot := int(_last_shot_msec.get(from_id, -1000000000))
-			if not CombatMath.is_fire_rate_ok(last_shot, now_shot, shooter.job):
+			# 발사율·차지 시간도 공속 반영 — 근접과 **같은 소스**(공격자 아바타). peer_level_stats를 쓰면
+			# 호스트 자신에게 값이 없다(위 _confirm_damage 주석 참조).
+			var shoot_haste := float(shooter.level_stats.get("haste", 0.0))
+			if not CombatMath.is_fire_rate_ok(last_shot, now_shot, shooter.job, shoot_haste):
 				return
 			var origin := Vector2(float(data.get("ox", 0.0)), float(data.get("oy", 0.0)))
 			if not CombatMath.is_shot_origin_ok(shooter.net_anchor(), origin):
@@ -411,7 +463,7 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			var weapon_id := _peer_sync.peer_weapon_id(from_id)
 			var charge := CombatMath.clamp_charge_level(int(data.get("c", 0)))
 			var step_time := float(GameState.projectile_params(weapon_id, 0.0, charge)["step_time"])
-			if not CombatMath.is_charge_time_ok(last_shot, now_shot, charge, step_time):
+			if not CombatMath.is_charge_time_ok(last_shot, now_shot, charge, step_time, shoot_haste):
 				return
 			_last_shot_msec[from_id] = now_shot
 			_register_arrow(aid_s, origin,
@@ -424,7 +476,8 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 				return  # 권한 스푸핑 차단 — HP 확정은 호스트 발신만 신뢰 (from은 릴레이가 찍음)
 			var entry_hp: Variant = _enemies.get(str(data.get("eid", "")))
 			if entry_hp != null:
-				((entry_hp as Dictionary)["health"] as HealthComponent).set_hp_display(int(data.get("hp", 0)))
+				((entry_hp as Dictionary)["health"] as HealthComponent).set_hp_display(
+					int(data.get("hp", 0)), int(data.get("cr", 0)) == 1)
 		NetSchema.G_ROLL:
 			if not Net.is_host():
 				return  # 그랜트 권한은 호스트만
