@@ -37,7 +37,7 @@ func _on_hp_changed(new_hp: int, dropped: bool) -> void:
 	if dropped:
 		var amount := _prev_hp - new_hp
 		_prev_hp = new_hp
-		EventBus.combat_impact.emit("enemy", global_position, maxi(amount, 0))  # 손맛 공용 훅
+		EventBus.combat_impact.emit("enemy", global_position, maxi(amount, 0), _health.last_crit)  # 손맛 공용 훅 (crit = 표시 강조)
 		if new_hp <= 0:
 			EventBus.entity_died.emit("enemy", global_position)  # 사망 SFX
 			visible = false

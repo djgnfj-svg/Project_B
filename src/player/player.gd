@@ -290,7 +290,8 @@ func _on_hp_changed_feel(new_hp: int, dropped: bool) -> void:
 	_prev_hp = new_hp
 	if not dropped or amount <= 0:
 		return  # 회복·부활·최대치 조정은 손맛 대상 아님
-	EventBus.combat_impact.emit("player", global_position, amount)
+	# 적은 치명타를 굴리지 않는다(GDD 범위) → 플레이어 피격은 항상 crit=false (php에 "cr"이 없는 이유와 짝)
+	EventBus.combat_impact.emit("player", global_position, amount, false)
 	if new_hp > 0:
 		HitStop.punch(_sprite)
 		HitFlash.flash(_sprite)  # 흰색 번쩍

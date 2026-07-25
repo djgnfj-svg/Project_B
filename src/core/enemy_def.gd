@@ -24,3 +24,7 @@ extends Resource
 
 # 드랍 테이블 (골드·일반/핵심 재료·도면) — 없으면 드랍 없음. 호스트만 롤 (rules §1·§3). "새 적 = 파일 한 장" (§4)
 @export var drop_table: DropTable
+
+# 처치 시 파티 전원에게 주는 EXP (GDD §6 v1.8). 0 = EXP 없음. BossDef가 상속한다.
+# ⚠ respawns=true(허수아비)는 EXP를 주지 않는다 — 값이 아니라 **코드**로 차단한다(ExpAuthority, rules §5 무한 파밍 함정).
+@export var exp: int = 0

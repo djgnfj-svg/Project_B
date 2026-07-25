@@ -11,28 +11,33 @@ const SPREAD := 9.0       # 겹친 타격이 안 포개지게 좌우 랜덤(px)
 const BOX_W := 48.0       # 라벨 폭(중앙 정렬 기준)
 const POP_SCALE := 1.45   # 등장 스케일 팝
 const COLORS := {"enemy": Color(1.0, 1.0, 1.0), "player": Color(1.0, 0.42, 0.36)}
+# 치명타 강조 (성장축 2026-07-25) — 색·크기·접미로만 구분한다. 굴림은 호스트가 이미 확정했고
+# 여기서 다시 굴리는 코드는 없다(§3 — 표시가 판정과 갈라질 경로를 만들지 않는다).
+const CRIT_COLOR := Color(1.0, 0.86, 0.35)  # 금색
+const CRIT_POP_SCALE := 1.9                 # 등장 스케일(평타 1.45보다 크게)
+const CRIT_SUFFIX := "!"
 
 
 func _ready() -> void:
 	EventBus.combat_impact.connect(_on_impact)
 
 
-func _on_impact(kind: String, world_pos: Vector2, amount: int) -> void:
+func _on_impact(kind: String, world_pos: Vector2, amount: int, crit: bool) -> void:
 	if amount <= 0:
 		return
 	var lbl := Label.new()
-	lbl.text = str(amount)
+	lbl.text = str(amount) + (CRIT_SUFFIX if crit else "")
 	lbl.z_index = 100
 	lbl.size = Vector2(BOX_W, 16.0)
 	lbl.pivot_offset = Vector2(BOX_W * 0.5, 8.0)
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl.modulate = COLORS.get(kind, Color.WHITE)
+	lbl.modulate = CRIT_COLOR if crit else COLORS.get(kind, Color.WHITE)
 	lbl.add_theme_constant_override(&"outline_size", 4)
 	lbl.add_theme_color_override(&"font_outline_color", Color(0.0, 0.0, 0.0, 0.85))
 	add_child(lbl)
 	var start := world_pos + Vector2(randf_range(-SPREAD, SPREAD) - BOX_W * 0.5, -10.0)
 	lbl.position = start
-	lbl.scale = Vector2.ONE * POP_SCALE
+	lbl.scale = Vector2.ONE * (CRIT_POP_SCALE if crit else POP_SCALE)
 	var tw := lbl.create_tween()
 	tw.tween_property(lbl, "position:y", start.y - RISE, LIFE) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
