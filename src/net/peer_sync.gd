@@ -15,7 +15,7 @@ const PlayerActor := preload("res://src/player/player.gd")
 var _players: Dictionary = {}  # peer_id -> PlayerActor
 var _peer_jobs: Dictionary = {}  # peer_id -> 잠긴 직업 id — "시작 시 선택·이후 고정"(GDD §5) 강제
 var _pos_seen: Dictionary = {}  # peer_id -> true — 첫 G_POS 수신 시 재공지 트리거 (공지 유실 경합 복구)
-var _peer_stats: Dictionary = {}  # peer_id -> {atk, hp} — 장비 스탯 공지(G_STATS). 스폰 전 도착 시 버퍼링(_peer_jobs 미러)
+var _peer_stats: Dictionary = {}  # peer_id -> {atk, hp, weapon, lv} — 장비 스탯 + 레벨 5스탯 공지(G_STATS). 스폰 전 도착 시 버퍼링(_peer_jobs 미러)
 
 
 func _ready() -> void:
@@ -23,6 +23,9 @@ func _ready() -> void:
 	EventBus.peer_left.connect(_on_peer_left)
 	EventBus.net_msg.connect(_on_net_msg)
 	EventBus.inventory_changed.connect(_on_inventory_changed)  # 로컬 장비 변동 → 스탯 재공지+반영
+	# 레벨/메인 하위 직업 변동 → 같은 경로로 재공지 (성장축 GDD v1.8). EXP만 오른 킬에는 오지 않는다
+	# (GameState.add_exp가 레벨 변동 시에만 emit) — 킬마다 G_STATS를 쏘지 않기 위한 분리.
+	EventBus.growth_changed.connect(_on_inventory_changed)
 	# ⚠ _ready 시점 부모는 아직 자식 셋업 중 — 여기서 get_parent().add_child 하면
 	# "busy setting up children"으로 스폰이 조용히 실패한다 (웹 실기에서 확인) → 한 프레임 미룬다.
 	_initial_spawn.call_deferred()
@@ -55,6 +58,19 @@ func peer_weapon_id(peer_id: int) -> String:
 	return str((st_v as Dictionary).get("weapon", ""))
 
 
+# 그 피어가 G_STATS로 공지한(그리고 수신부가 clamp한) 레벨 5스탯. 미공지면 전부 0(항등 폴백).
+# 호스트가 공속 검증(is_hit_cooldown_ok 등)에 쓴다 — **발신자 주장이 아니라 자기가 clamp한 값**을
+# 게이트에 넣는 것이 규약이다(peer_weapon_id와 같은 철학, rules §3).
+func peer_level_stats(peer_id: int) -> Dictionary:
+	var st_v: Variant = _peer_stats.get(peer_id)
+	if st_v == null:
+		return CombatMath.empty_level_stats()
+	var lv_v: Variant = (st_v as Dictionary).get("lv")
+	if lv_v == null:
+		return CombatMath.empty_level_stats()
+	return lv_v as Dictionary
+
+
 func _spawn(peer_id: int, is_local: bool) -> void:
 	if peer_id == 0 or _players.has(peer_id):
 		return
@@ -75,6 +91,7 @@ func _spawn(peer_id: int, is_local: bool) -> void:
 	if _peer_stats.has(peer_id):
 		var st := _peer_stats[peer_id] as Dictionary
 		p.set_equip_stats(int(st.get("atk", 0)), int(st.get("hp", 0)))
+		p.set_level_stats(st.get("lv", {}) as Dictionary)  # 레벨 5스탯도 같은 버퍼에서(공짜)
 		# 무기 겉모습(표시용) — id는 allowlist 리졸브(모르면 null→직업 기본 무기 폴백)
 		p.set_weapon_visual(GameState.equip_def(str(st.get("weapon", ""))))
 	_players[peer_id] = p
@@ -93,7 +110,8 @@ func _announce_stats() -> void:
 	var s := GameState.current_stats()
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_STATS,
 		"atk": int(s["attack"]), "hp": int(s["hp"]),
-		"weapon": GameState.equipped_id(EquipDef.SLOT_WEAPON)})  # 착용 무기 id (표시용, 원격 겉모습)
+		"weapon": GameState.equipped_id(EquipDef.SLOT_WEAPON),  # 착용 무기 id (표시용, 원격 겉모습)
+		"lv": GameState.current_level_stats()})  # 직업 레벨 5스탯 (호스트가 치명/피흡/공속 확정에 사용)
 
 
 # 로컬 장비 스탯을 내 플레이어에 반영(max_hp) + 공지. 스폰·인벤 변동 시.
@@ -102,6 +120,7 @@ func _apply_local_stats() -> void:
 	var lp := player(Net.my_id)
 	if lp != null:
 		lp.set_equip_stats(int(s["attack"]), int(s["hp"]))
+		lp.set_level_stats(GameState.current_level_stats())  # 내 레벨 스탯 반영(호스트면 자기 판정 입력)
 		# 로컬 무기 겉모습 = 내가 착용한 무기 (미착용이면 null → 직업 기본)
 		lp.set_weapon_visual(GameState.equip_def(GameState.equipped_id(EquipDef.SLOT_WEAPON)))
 	_announce_stats()
@@ -163,9 +182,16 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			var hp := clampi(int(data.get("hp", 0)), 0, int(cap["hp"]))
 			# 무기 id는 표시 전용 — allowlist 리졸브만 하면 안전(모르는 id→null→직업 기본, 경로 조작 불가)
 			var wid := str(data.get("weapon", ""))
-			_peer_stats[from_id] = {"atk": atk, "hp": hp, "weapon": wid}
+			# 레벨 5스탯 — atk/hp와 같은 규약(발신자 트러스트 + 데이터 유도 상한 clamp).
+			# clamp_level_stats가 payload가 아니라 LEVEL_STAT_KEYS를 순회하므로 모르는 키는 자동 폐기되고
+			# 빠진 키는 0으로 채워진다(하류 항등 폴백). Dictionary가 아닌 오염 페이로드도 여기서 걸린다.
+			var lv_raw: Variant = data.get("lv", {})
+			var lv := CombatMath.clamp_level_stats(
+				(lv_raw as Dictionary) if lv_raw is Dictionary else {}, GameState.max_level_stats())
+			_peer_stats[from_id] = {"atk": atk, "hp": hp, "weapon": wid, "lv": lv}
 			if _players.has(from_id):
 				_players[from_id].set_equip_stats(atk, hp)
+				_players[from_id].set_level_stats(lv)
 				_players[from_id].set_weapon_visual(GameState.equip_def(wid))
 		NetSchema.G_ATK:
 			if _players.has(from_id):
