@@ -220,8 +220,15 @@ static func is_hit_in_cone(pt: Vector2, apex: Vector2, facing: float, half_angle
 #   PvP가 생기면 이 관대함이 표면이 된다 → rules §2 4인/PvP 게이트에서 재검토.
 const LAG_MAX_ONE_WAY_MS := 200.0   # 편도 지연 인정 상한 — 조작 피어가 큰 RTT를 주장해 보스 예고를
                                     # 무한 지연시키거나 외삽을 뻥튀기하는 것 차단 (신뢰 경계 §3)
-const LAG_MAX_LEAD_DIST := 56.0     # 외삽 거리 상한(px) — 지연 스파이크 한 번이 판정을 화면 밖으로
-                                    # 날리지 않게. 최고 이동속도(110×2.6)로도 ~0.2s 분량
+const LAG_MAX_LEAD_DIST := 90.0     # 외삽 거리 상한(px) — 지연 스파이크 한 번이 판정을 화면 밖으로 날리지 않게.
+# 🔴 유도식(성장축 2026-07-25 재산정): 최고 이속 × ROLL_SPEED_MULT × 최대 lead
+#   = (110 × (1+LEVEL_STAT_MAX["move"]=0.3)) × 2.6 × (LAG_MAX_ONE_WAY_MS 0.2s + 송신주기 1/30s) ≈ 87px → 90.
+#   ⚠ 상한을 무한정 키울 수도 없다 — 두 목적이 충돌한다(스파이크 억제는 작기를, 정당 외삽 커버는 크기를 요구).
+#   그래서 이속 하드 상한을 0.3으로 조여 균형을 잡았다.
+#   ⚠ 이 값이 실제 최대 외삽보다 **작으면** 추정 좌표가 예고 안에 남아 "둘 다 맞아야 확정" 규약이
+#   맞는 쪽으로 기운다 → 빠르게 빠져나가는 피어가 다시 맞는다(2026-07-24에 고친 버그의 부분 퇴행).
+#   이속 상한(LEVEL_STAT_MAX["move"])이나 직업 move_speed를 올리면 여기도 재유도해라 —
+#   test_combat_math_auto의 데이터 전수 불변식이 그때 빨개진다.
 
 # 편도 지연 = RTT의 절반. 음수·NaN·스파이크를 상한으로 눌러 판정에 쓸 수 있는 값으로 정규화한다.
 static func clamp_one_way_ms(one_way_ms: float) -> float:
@@ -330,7 +337,8 @@ const LEVEL_STAT_MAX: Dictionary = {
 	"crit": 1.0,      # 확률 — 100% 초과는 무의미
 	"crit_dmg": 3.0,  # 치명 배율 추가분(총 배율 = CRIT_BASE_MULT + 이 값)
 	"haste": 0.5,     # 공속 +50% → 쿨다운 ×1/1.5. ⚠ 퇴화 한계: effective_cooldown*0.9 > SAME_SWING_MS를 지켜야 한다
-	"move": 0.5,      # 이속 +50% — 원격 위치 clamp 유도식이 이 상한을 전제로 여유를 잡는다(player.gd)
+	"move": 0.3,      # 이속 +30% — GDD 예산(+15%)의 2배 여유. 🔴 이 값을 올리면 LAG_MAX_LEAD_DIST(외삽 상한)를
+	                  #   같이 재유도해야 한다 — 안 하면 지연 보상이 퇴행한다(테스트 불변식이 그때 빨개진다)
 	"leech": 0.5,     # 피흡 50%
 }
 

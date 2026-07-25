@@ -109,9 +109,14 @@ func _on_attack_hit(enemy: Node, job: JobDef) -> void:
 func _confirm_damage(health: HealthComponent, job: JobDef, attacker_id: int) -> void:
 	var now := Time.get_ticks_msec()
 	var last := int(_last_hit_msec.get(attacker_id, -1000000000))
-	# 🔴 공속 반영 — 발신자 주장이 아니라 **내가 clamp한 값**을 게이트에 넣는다(peer_weapon_id 철학).
-	#   안 하면 공속이 오른 게스트가 정당하게 때려도 호스트가 더 긴 쿨다운으로 거부한다(GDD §6 미러 주의).
-	var atk_haste := float(_peer_sync.peer_level_stats(attacker_id).get("haste", 0.0))
+	# 🔴 공속 반영 — 공격자 아바타의 level_stats에서 읽는다. **치명·피흡(_apply_confirmed)과 같은 소스**여야 한다:
+	#   peer_level_stats()는 G_STATS **수신** 기록이라 로컬(호스트 자신) 항목이 영원히 없다(Net에 루프백 없음 —
+	#   drop_spawn_local이 존재하는 그 이유). 그걸 게이트에 쓰면 호스트 자기 공속이 0으로 검증돼,
+	#   로컬 간격 1/(1+h)가 게이트 0.9배보다 짧아지는 h>0.111부터 **자기 타격이 한 번 걸러 무피해**가 된다
+	#   (에러 0·로그 0, 2026-07-25 리뷰 C1). 아바타 값은 로컬=내 레벨·원격=수신 clamp분이라 신뢰 경계는 그대로다
+	#   (player.set_level_stats가 하드 상한으로 한 번 더 clamp).
+	var haste_p := _peer_sync.player(attacker_id)
+	var atk_haste := float(haste_p.level_stats.get("haste", 0.0)) if haste_p != null else 0.0
 	if not CombatMath.is_hit_cooldown_ok(last, now, job, atk_haste):
 		return
 	if now - last > CombatMath.SAME_SWING_MS:
@@ -441,8 +446,9 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			# 좌표는 net_anchor() — 표시 보간 지연 제외(사거리 검증과 같은 철학).
 			var now_shot := Time.get_ticks_msec()
 			var last_shot := int(_last_shot_msec.get(from_id, -1000000000))
-			# 발사율·차지 시간도 공속 반영 (근접과 같은 규율 — 빨라진 정당 발사를 거부하지 않는다)
-			var shoot_haste := float(_peer_sync.peer_level_stats(from_id).get("haste", 0.0))
+			# 발사율·차지 시간도 공속 반영 — 근접과 **같은 소스**(공격자 아바타). peer_level_stats를 쓰면
+			# 호스트 자신에게 값이 없다(위 _confirm_damage 주석 참조).
+			var shoot_haste := float(shooter.level_stats.get("haste", 0.0))
 			if not CombatMath.is_fire_rate_ok(last_shot, now_shot, shooter.job, shoot_haste):
 				return
 			var origin := Vector2(float(data.get("ox", 0.0)), float(data.get("oy", 0.0)))

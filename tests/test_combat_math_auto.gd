@@ -311,6 +311,7 @@ func _initialize() -> void:
 	#    누군가 한쪽만 스케일하도록 고치면 여기가 빨개진다.
 	var swing_ok := true
 	var degenerate_ok := true
+	var lead_ok := true
 	for jf: String in DirAccess.get_files_at("res://data/jobs"):
 		var jbase := jf.trim_suffix(".remap")
 		if jbase.get_extension() != "tres":
@@ -318,6 +319,14 @@ func _initialize() -> void:
 		var j := load("res://data/jobs/%s" % jbase) as JobDef
 		if j == null:
 			continue
+		# 🔴 외삽 상한 불변식(리뷰 I1, 2026-07-25): LAG_MAX_LEAD_DIST가 "최고 이속 × 구르기 배율 × 최대 lead"를
+		#   덮어야 한다. 짧으면 추정 좌표가 예고 안에 남아 "둘 다 맞아야 확정" 규약이 **맞는 쪽**으로 기울고,
+		#   빠르게 빠져나가는 피어가 다시 맞는다(2026-07-24에 고친 버그의 퇴행). 이속 상한을 올리면 여기가 빨개진다.
+		#   ROLL_SPEED_MULT(2.6)·POS_SEND_RATE(30Hz)는 player.gd const라 여기 상수로 미러한다.
+		var top_speed := CombatMath.effective_move_speed(j.move_speed, float(CombatMath.LEVEL_STAT_MAX["move"])) * 2.6
+		var max_lead_s := CombatMath.LAG_MAX_ONE_WAY_MS / 1000.0 + 1.0 / 30.0
+		if top_speed * max_lead_s > CombatMath.LAG_MAX_LEAD_DIST:
+			lead_ok = false
 		# 퇴화 트립와이어: 유효 쿨다운 게이트가 SAME_SWING_MS(다중 타격 창)보다 짧아지면 쿨다운 검증이 무의미해진다
 		if CombatMath.effective_cooldown(j, float(CombatMath.LEVEL_STAT_MAX["haste"])) * 0.9 * 1000.0 <= float(CombatMath.SAME_SWING_MS):
 			degenerate_ok = false
@@ -338,6 +347,7 @@ func _initialize() -> void:
 					swing_ok = false
 	failures += _check(swing_ok, "스윙 창 계약 전수: 모든 무기×직업×haste에서 swing_time < effective_cooldown")
 	failures += _check(degenerate_ok, "퇴화 트립와이어: MAX_HASTE에서도 유효 쿨다운 게이트 > SAME_SWING_MS")
+	failures += _check(lead_ok, "외삽 상한 불변식: LAG_MAX_LEAD_DIST ≥ 최고 이속×구르기×최대 lead (전 직업)")
 
 	# 이동속도 — 로컬 이동과 원격 clamp가 같은 유도식을 쓰는 근거
 	failures += _check(is_equal_approx(CombatMath.effective_move_speed(100.0, 0.0), 100.0), "effective_move: 보너스 0 = 항등")

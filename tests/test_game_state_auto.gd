@@ -253,6 +253,10 @@ func _initialize() -> void:
 	gg.selected_job_id = "archer"
 	_check("타 계열 하위 직업 메인 거부", not gg.set_main_sub_job("warrior_berserker"))
 	_check("타 계열에선 보유 목록이 비어 EXP가 안 섞인다", gg.owned_sub_jobs().is_empty())
+	# 리뷰 I3: 계열이 섞였을 때 표시가 거짓말하지 않는지 — 메인이 타 계열이면 없는 것으로 본다
+	_check("타 계열 선택 시 main_sub_job() = null (HUD 거짓 표기 방지)", gg.main_sub_job() == null)
+	_check("타 계열 선택 시 EXP 진행 표기 = 0", int(gg.main_exp_progress()["level"]) == 0)
+	_check("타 계열 선택 시 레벨 스탯 = 전부 0", is_equal_approx(float(gg.current_level_stats()["crit"]), 0.0))
 	_check("타 계열에선 add_exp가 no-op", not gg.add_exp(100))
 	_check("전사 진행분은 그대로 보존(계열 무관 보관)", int(gg.sub_job_exp.get("warrior_swordsman", -1)) == 130)
 	gg.selected_job_id = "warrior"

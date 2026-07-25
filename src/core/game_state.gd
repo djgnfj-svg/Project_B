@@ -515,9 +515,12 @@ func owned_sub_jobs(series_id: String = "") -> Array[String]:
 	return out
 
 
-# 현재 계열의 EXP 곡선 (JobDef.exp_curve, 비면 CombatMath 기본) — 레벨 파생·HUD 바 공용.
-func exp_curve() -> PackedInt32Array:
-	var j := selected_job()
+# 계열의 EXP 곡선 (JobDef.exp_curve, 비면 CombatMath 기본) — 레벨 파생·HUD 바 공용.
+# ⚠ series_id를 비우면 **현재 선택 계열**이다. 하위 직업의 레벨을 구할 때는 반드시 그 하위 직업의
+#   계열을 넘겨라 — 선택 직업 기준으로 계산하면 계열이 섞인 상태에서 표시 레벨이 거짓말한다
+#   (전사로 키운 뒤 궁수를 골라도 HUD가 "검사 LvN"을 띄우던 문제, 2026-07-25 리뷰 I3).
+func exp_curve(series_id: String = "") -> PackedInt32Array:
+	var j := job_def(series_id) if not series_id.is_empty() else selected_job()
 	if j != null and j.exp_curve.size() >= 2:
 		return j.exp_curve
 	return CombatMath.default_exp_curve()
@@ -533,11 +536,14 @@ func sub_job_level(id: String) -> int:
 	var d := sub_job_def(id)
 	if d == null:
 		return 0
-	return CombatMath.level_for_exp(int(sub_job_exp[id]), exp_curve(), d.max_level)
+	return CombatMath.level_for_exp(int(sub_job_exp[id]), exp_curve(d.series_id), d.max_level)
 
 
 func main_sub_job() -> SubJobDef:
-	return sub_job_def(main_sub_job_id)
+	var d := sub_job_def(main_sub_job_id)
+	if d == null or d.series_id != selected_job_id:
+		return null  # 타 계열 진행분은 이 판에서 없는 것으로 본다 (HUD가 남의 계열 레벨을 띄우지 않게)
+	return d
 
 
 # HUD EXP 바 — 메인 하위 직업의 {level, cur, need}. 미보유 = 0/0/0(표기 없음).
@@ -545,7 +551,7 @@ func main_exp_progress() -> Dictionary:
 	var d := main_sub_job()
 	if d == null:
 		return {"level": 0, "cur": 0, "need": 0}
-	return CombatMath.exp_progress(int(sub_job_exp.get(main_sub_job_id, 0)), exp_curve(), d.max_level)
+	return CombatMath.exp_progress(int(sub_job_exp.get(main_sub_job_id, 0)), exp_curve(d.series_id), d.max_level)
 
 
 func _notify_growth() -> void:
@@ -666,21 +672,31 @@ func current_level_stats() -> Dictionary:
 # 계열별로 "그 계열 하위 직업 전부를 만레벨·전부 메인 취급"한 관대한 합 → 정직한 최대치(서브 가중 < 1)는
 # 절대 안 잘리고, 임의 수 주입만 막는다. 하드 상한(CombatMath.LEVEL_STAT_MAX)과 이중 방어.
 func max_level_stats() -> Dictionary:
-	var per_series := {}
+	var sums := {}   # series -> {key: Σ 만레벨 스텝}
+	var tops := {}   # series -> {key: 단일 최대 만레벨 스텝}
 	for sid: String in sub_job_ids():
 		var d := sub_job_def(sid)
 		if d == null:
 			continue
 		var s := CombatMath.sub_job_stat_at_level(d, d.max_level)
-		var t: Dictionary = per_series.get(d.series_id, {})
+		var sum_t: Dictionary = sums.get(d.series_id, {})
+		var top_t: Dictionary = tops.get(d.series_id, {})
 		for key: String in CombatMath.LEVEL_STAT_KEYS:
-			t[key] = float(t.get(key, 0.0)) + float(s[key])
-		per_series[d.series_id] = t
+			sum_t[key] = float(sum_t.get(key, 0.0)) + float(s[key])
+			top_t[key] = maxf(float(top_t.get(key, 0.0)), float(s[key]))
+		sums[d.series_id] = sum_t
+		tops[d.series_id] = top_t
 	var out := CombatMath.empty_level_stats()
-	for series: String in per_series:
-		var t: Dictionary = per_series[series]
+	var w := CombatMath.SUB_JOB_WEIGHT
+	for series: String in sums:
+		var sum_t: Dictionary = sums[series]
+		var top_t: Dictionary = tops[series]
 		for key: String in CombatMath.LEVEL_STAT_KEYS:
-			out[key] = maxf(float(out[key]), float(t[key]))
+			# 정직한 최대치 = 가장 센 하나를 메인(가중 1) + 나머지 전부 서브(가중 w) = w·Σ + (1-w)·max.
+			#   "전부 메인" 합산으로 잡으면 하위 직업 개수에 비례해 상한이 부풀어, 조작 게스트가 주장할 수
+			#   있는 여유가 콘텐츠와 함께 조용히 넓어진다 (2026-07-25 리뷰 I2).
+			var cap := w * float(sum_t[key]) + (1.0 - w) * float(top_t[key])
+			out[key] = maxf(float(out[key]), cap)
 	return out
 
 
@@ -772,6 +788,7 @@ func clear_inventory() -> void:
 	# 성장축도 함께 리셋 — 파일만 지우고 오토로드 메모리를 안 지우면 옛 진행이 다음 저장에 도로 써진다(rules §5)
 	main_sub_job_id = ""
 	sub_job_exp.clear()
+	_notify_growth()  # 인벤 알림과 대칭 — 안 쏘면 HUD 레벨 표기가 스테일로 남는다
 
 
 func to_save_dict() -> Dictionary:

@@ -12,7 +12,7 @@ extends Resource
 
 # 계열 = 이 직업(GDD §5 v1.8) — 하위 직업(SubJobDef.series_id == 이 id)들이 5스탯 성장을 담당한다.
 @export var starting_sub_job_id: String = ""  # 새 판에 지급할 첫 하위 직업 SubJobDef id (starting_weapon_id 미러). 비면 성장축 없음
-@export var exp_curve: PackedInt32Array = PackedInt32Array()  # 레벨 n 도달에 필요한 **누적** EXP(인덱스 = 레벨). 비면 CombatMath.DEFAULT_EXP_CURVE 폴백 — 계열별 페이싱을 데이터로 조인다 (rules §4)
+@export var exp_curve: PackedInt32Array = PackedInt32Array()  # 레벨 n 도달에 필요한 **누적** EXP(인덱스 = 레벨). 비면 CombatMath.default_exp_curve() 폴백 — 계열별 페이싱을 데이터로 조인다 (rules §4)
 @export var max_hp: int = 100            # 임시값 — 사용자가 플레이하며 조인다
 @export var move_speed: float = 100.0
 @export var attack_damage: int = 10
