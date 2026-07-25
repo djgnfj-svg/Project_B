@@ -28,6 +28,7 @@ func _to_lobby() -> void:
 func _to_village() -> void:
 	GameState.leave_chapter()
 	GameState.grant_starting_loadout(GameState.selected_job())  # 새 판이면 시작 무기 지급·착용(멱등)
+	GameState.grant_starting_sub_job(GameState.selected_job())  # 새 판이면 시작 하위 직업 지급·메인 설정(멱등, GDD v1.8)
 	_swap(VillageScene.instantiate())
 
 

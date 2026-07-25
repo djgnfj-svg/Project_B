@@ -212,7 +212,7 @@ func _initialize() -> void:
 		is_equal_approx(float(gg.current_level_stats()["crit"]), 0.0))
 	gg.add_exp(50)
 	gg.grant_starting_sub_job(gg.job_def("warrior"))
-	_check("재지급 멱등: 진행(EXP) 보존", int(gg.sub_job_exp["warrior_swordsman"]) == 50)
+	_check("재지급 멱등: 진행(EXP) 보존", int(gg.sub_job_exp.get("warrior_swordsman", -1)) == 50)
 
 	# EXP → 레벨 → 스탯 (warrior 곡선 [0,25,60,105,160,300])
 	_check("50 EXP = 1레벨", gg.sub_job_level("warrior_swordsman") == 1)
@@ -229,12 +229,12 @@ func _initialize() -> void:
 	_check("105 EXP = 3레벨", gg.sub_job_level("warrior_swordsman") == 3)
 	_check("3레벨 도달 → 광전사 해금", gg.has_sub_job("warrior_berserker"))
 	_check("해금분은 0 EXP에서 시작(해금 이후 적립분만 — GDD §6)",
-		int(gg.sub_job_exp["warrior_berserker"]) == 0)
+		int(gg.sub_job_exp.get("warrior_berserker", -1)) == 0)
 	_check("해금 후에도 메인은 그대로", gg.main_sub_job_id == "warrior_swordsman")
 	# 계열 공용 풀 — 이후 적립은 보유 전부에 동일하게 들어간다
 	gg.add_exp(25)
-	_check("공용 풀: 메인도 적립(105+25)", int(gg.sub_job_exp["warrior_swordsman"]) == 130)
-	_check("공용 풀: 해금분도 같이 적립(0+25)", int(gg.sub_job_exp["warrior_berserker"]) == 25)
+	_check("공용 풀: 메인도 적립(105+25)", int(gg.sub_job_exp.get("warrior_swordsman", -1)) == 130)
+	_check("공용 풀: 해금분도 같이 적립(0+25)", int(gg.sub_job_exp.get("warrior_berserker", -1)) == 25)
 	_check("해금분은 자연히 레벨이 낮다", gg.sub_job_level("warrior_berserker") < gg.sub_job_level("warrior_swordsman"))
 	# 서브 합산 — 메인을 광전사로 바꾸면 공속 쪽이 커진다(둘 다 효과가 있다 = 서브도 0이 아님)
 	var haste_main_sword := float(gg.current_level_stats()["haste"])
@@ -254,7 +254,7 @@ func _initialize() -> void:
 	_check("타 계열 하위 직업 메인 거부", not gg.set_main_sub_job("warrior_berserker"))
 	_check("타 계열에선 보유 목록이 비어 EXP가 안 섞인다", gg.owned_sub_jobs().is_empty())
 	_check("타 계열에선 add_exp가 no-op", not gg.add_exp(100))
-	_check("전사 진행분은 그대로 보존(계열 무관 보관)", int(gg.sub_job_exp["warrior_swordsman"]) == 130)
+	_check("전사 진행분은 그대로 보존(계열 무관 보관)", int(gg.sub_job_exp.get("warrior_swordsman", -1)) == 130)
 	gg.selected_job_id = "warrior"
 
 	# clamp 상한 — 데이터 유도(max_level_stats)가 하드 상한 이하이고 0이 아니다
@@ -271,7 +271,7 @@ func _initialize() -> void:
 	_check("레벨은 저장하지 않는다(EXP에서 파생)", not gsnap.has("sub_level"))
 	var gg2 := GameStateScript.new() as Node
 	gg2.from_save_dict(gsnap)
-	_check("저장 복원: EXP", int(gg2.sub_job_exp["warrior_swordsman"]) == 130)
+	_check("저장 복원: EXP", int(gg2.sub_job_exp.get("warrior_swordsman", -1)) == 130)
 	_check("저장 복원: 메인", gg2.main_sub_job_id == "warrior_swordsman")
 	_check("저장 복원: 레벨 파생 일치", gg2.sub_job_level("warrior_swordsman") == gg.sub_job_level("warrior_swordsman"))
 	# 구 세이브 = 성장 키가 아예 없다 → 빈 상태(레벨 0), 마을 진입의 지급이 채운다
