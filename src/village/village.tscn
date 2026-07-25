@@ -1,4 +1,4 @@
-[gd_scene load_steps=61 format=3]
+[gd_scene load_steps=64 format=3]
 
 [ext_resource type="Script" path="res://src/village/village.gd" id="1"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/ground/baked_960.png" id="2"]
@@ -6,6 +6,8 @@
 [ext_resource type="Script" path="res://src/net/peer_sync.gd" id="4"]
 [ext_resource type="PackedScene" path="res://src/hud/stage_hud.tscn" id="5"]
 [ext_resource type="PackedScene" path="res://src/ui/craft_panel.tscn" id="59"]
+[ext_resource type="PackedScene" path="res://src/ui/subjob_panel.tscn" id="61"]
+[ext_resource type="Texture2D" path="res://assets/sprites/village/craft_station.png" id="62"]
 [ext_resource type="Script" path="res://src/village/village_ambience.gd" id="60"]
 [ext_resource type="Script" path="res://src/net/scene_flow.gd" id="6"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/buildings/forge_house.png" id="7"]
@@ -53,6 +55,9 @@
 [ext_resource type="Texture2D" path="res://assets/sprites/village/npc/rabbit.png" id="49"]
 
 [sub_resource type="RectangleShape2D" id="shape_craft"]
+size = Vector2(60, 60)
+
+[sub_resource type="RectangleShape2D" id="shape_train"]
 size = Vector2(60, 60)
 
 [sub_resource type="RectangleShape2D" id="shape_gate"]
@@ -585,6 +590,30 @@ offset_right = 80.0
 offset_bottom = -22.0
 horizontal_alignment = 1
 
+[node name="TrainStation" type="Area2D" parent="."]
+y_sort_enabled = true
+position = Vector2(700, 380)
+collision_layer = 64
+collision_mask = 2
+
+[node name="Sprite" type="Sprite2D" parent="TrainStation"]
+texture = ExtResource("62")
+centered = false
+offset = Vector2(-16, -32)
+
+[node name="Collision" type="CollisionShape2D" parent="TrainStation"]
+shape = SubResource("shape_train")
+
+[node name="Hint" type="Label" parent="TrainStation"]
+z_index = 1
+offset_left = -90.0
+offset_top = -56.0
+offset_right = 90.0
+offset_bottom = -38.0
+horizontal_alignment = 1
+
 [node name="HUD" parent="." instance=ExtResource("5")]
 
 [node name="CraftPanel" parent="." instance=ExtResource("59")]
+
+[node name="SubJobPanel" parent="." instance=ExtResource("61")]
