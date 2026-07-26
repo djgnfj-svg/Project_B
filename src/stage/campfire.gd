@@ -95,8 +95,14 @@ func _host_heal_tick(delta: float) -> void:
 		if p.net_anchor().distance_to(_fire.global_position) > def.sit_radius:
 			continue
 		var health := p.get_node("Health") as HealthComponent
-		if health.hp < health.max_hp:
-			health.confirm_hp(mini(health.hp + def.heal_amount, health.max_hp))
+		if health.hp < health.max_hp and def.heal_amount > 0:
+			# 「몸에 밴 검술」(campfire_heal) — 앉은 **그 사람의** 특성만큼 회복량이 는다.
+			# 🔴 특성은 그 아바타에서 읽는다(사거리·공속·구르기와 같은 소스) — 회복 확정은 호스트지만
+			#   값의 출처는 항상 대상 아바타다. 최소 1은 보장 — 반올림으로 0이 되면 스탯이 죽는다.
+			# maxi(1,…)은 heal_amount ≥ 1일 때만 의미가 있다(위 가드) — 회복 없는 모닥불 데이터를 코드가 덮지 않게.
+			var heal := maxi(1, int(round(float(def.heal_amount)
+				* (1.0 + p.trait_value("campfire_heal")))))
+			health.confirm_hp(mini(health.hp + heal, health.max_hp))
 
 
 func _on_net_msg(from_id: int, data: Dictionary) -> void:
