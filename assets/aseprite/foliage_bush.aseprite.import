@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://cvb66ht15jjob"
+path="res://.godot/imported/foliage_bush.aseprite-bcfd0337a4457315719c300440f6d9ff.res"
+
+[deps]
+
+source_file="res://assets/aseprite/foliage_bush.aseprite"
+dest_files=["res://.godot/imported/foliage_bush.aseprite-bcfd0337a4457315719c300440f6d9ff.res"]
+
+[params]
+

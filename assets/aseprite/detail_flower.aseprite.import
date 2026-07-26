@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://bkr15p3uxcpsg"
+path="res://.godot/imported/detail_flower.aseprite-512db10b7d600d1d46466f4b2461e55d.res"
+
+[deps]
+
+source_file="res://assets/aseprite/detail_flower.aseprite"
+dest_files=["res://.godot/imported/detail_flower.aseprite-512db10b7d600d1d46466f4b2461e55d.res"]
+
+[params]
+

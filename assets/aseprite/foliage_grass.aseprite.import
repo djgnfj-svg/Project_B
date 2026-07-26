@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://dui2ssjkc2aky"
+path="res://.godot/imported/foliage_grass.aseprite-7cb3c03d7b1de285cbfbe0a388def0dc.res"
+
+[deps]
+
+source_file="res://assets/aseprite/foliage_grass.aseprite"
+dest_files=["res://.godot/imported/foliage_grass.aseprite-7cb3c03d7b1de285cbfbe0a388def0dc.res"]
+
+[params]
+
