@@ -23,6 +23,9 @@ const LEASH_MULT := 1.5
 # 공격 애니 이름(=BossPatternDef.id 관례). 이 애니가 도는 동안엔 walk/idle로 덮지 않는다.
 const ATTACK_ANIMS: Array[StringName] = [&"swing", &"slam", &"spray"]
 
+# 공격 애니 speed_scale 하한 — 0/음수는 애니를 세우거나 거꾸로 돌린다. 히트스톱 정지(0.0) 판별과도 겹치지 않게.
+const MIN_ANIM_SPEED_SCALE := 0.01
+
 enum State { IDLE, CHASE, WINDUP, RECOVER }
 
 @export var eid: String = ""
@@ -46,6 +49,7 @@ var _telegraph_left: float = 0.0       # 표시용 자동 숨김 타이머(각 �
 # 이번 예고를 띄워둘 시간(초) — 호스트는 지연 보상분이 더해진 값, 게스트는 pat.telegraph_s 그대로.
 # WINDUP 진입/예고 수신 때 한 번 확정해 표시·타격이 같은 값을 쓰게 한다(중간에 RTT가 흔들려도 안 갈라지게).
 var _telegraph_hold_s: float = 0.0
+var _anim_scale: float = 1.0           # 지금 애니에 걸려 있어야 할 speed_scale (공격 애니만 1.0이 아니다)
 
 @onready var _sprite: AnimatedSprite2D = $Sprite
 @onready var _collision: CollisionShape2D = $Collision
@@ -129,6 +133,7 @@ func _physics_process(delta: float) -> void:
 		_telegraph_left -= delta
 		if _telegraph_left <= 0.0:
 			_telegraph.visible = false
+	_apply_anim_scale()
 	if _health.is_dead() or def == null:
 		return
 	if Net.is_host():
@@ -244,7 +249,7 @@ func _begin_windup(pat: BossPatternDef, anchor: Vector2) -> void:
 		# 원: 대상 net_anchor 고정 — 예고를 보고 빠져나갈 수 있게 (GDD §5 기믹 원칙)
 		_strike_center = anchor
 	_show_telegraph_visual(pat, _strike_center, _strike_angle)
-	_play(StringName(pat.id))  # 공격 애니(swing/slam)
+	_play_attack_anim(pat)  # 공격 애니(swing/slam) — 예고 길이에 맞춰 재생 속도를 늘린다
 	if Net.is_host():
 		# MobSync가 G_BOSS_ATK로 브로드캐스트 → 게스트 표시. 판정은 절대 여기서 안 한다.
 		EventBus.boss_telegraph.emit(eid, pat.id, _strike_center, _strike_angle)
@@ -341,7 +346,7 @@ func show_boss_telegraph(pattern_id: String, center: Vector2, angle: float) -> v
 	if pat == null:
 		return  # 모르는 패턴 id = 무시
 	_show_telegraph_visual(pat, center, angle)
-	_play(StringName(pat.id))  # 공격 애니 재생
+	_play_attack_anim(pat)  # 공격 애니 재생 (게스트는 자기 pat.telegraph_s 길이에 맞춘다)
 
 
 # 물뿌리기 N개 원 텔레그래프 + 애니 (표시 전용, 판정 절대 없음 — 그건 CombatAuthority). 호스트/게스트 공용:
@@ -352,7 +357,7 @@ func _on_boss_spray(spray_eid: String, pattern_id: String, centers: Array, _angl
 	var pat := _resolve_pattern(pattern_id)
 	if pat == null:
 		return  # 모르는 패턴 id
-	_play(StringName(pattern_id))  # 물뿌리기 애니
+	_play_attack_anim(pat)  # 물뿌리기 애니
 	if pat.telegraph_tex == null:
 		return  # 아트 대기 — 애니만, 원 표시 생략 (판정 타이밍은 정상 진행)
 	for c: Variant in centers:
@@ -372,8 +377,7 @@ func _spawn_spray_circle(pat: BossPatternDef, center: Vector2) -> void:
 	get_parent().add_child(spr)  # 스테이지 Node2D 자식 (런타임 add_child — _ready 함정 무관, rules §5)
 	spr.global_position = center
 	# 표시 지속 = 호스트는 지연 보상분 포함(_begin_windup 확정), 게스트는 자기 telegraph_s (단일 원과 같은 규약)
-	var hold := _telegraph_hold_s if _telegraph_hold_s > 0.0 else pat.telegraph_s
-	get_tree().create_timer(hold).timeout.connect(
+	get_tree().create_timer(_telegraph_duration(pat)).timeout.connect(
 		func() -> void:
 			if is_instance_valid(spr):
 				spr.queue_free())
@@ -386,6 +390,14 @@ func _resolve_pattern(pattern_id: String) -> BossPatternDef:
 		if p != null and p.id == pattern_id:
 			return p
 	return null
+
+
+# 이번 회차의 예고 지속(초) — 단일 소스. 호스트는 _begin_windup이 지연 보상분을 더해 확정하고
+# (_telegraph_hold_s), 게스트는 그 값이 0이라 자기 pat.telegraph_s를 쓴다(§3 지연 보상).
+# 🔴 예고 표시 지속(단일/N개 원)과 공격 애니 길이가 **전부 이 함수에서 파생돼야** 예고와 동작이
+# 같은 순간에 끝난다 — 식을 복제하면 다음 튜닝에서 표시와 모션이 갈라진다.
+func _telegraph_duration(pat: BossPatternDef) -> float:
+	return _telegraph_hold_s if _telegraph_hold_s > 0.0 else pat.telegraph_s
 
 
 # 텔레그래프 표시 — 형태별 텍스처를 판정 기하(range·angle)에 맞춰 스케일/회전. "맞는 곳=보이는 곳" (§3).
@@ -414,14 +426,87 @@ func _show_telegraph_visual(pat: BossPatternDef, center: Vector2, angle: float) 
 	_telegraph.visible = true
 	# 호스트는 지연 보상분이 더해진 시간(_begin_windup에서 확정), 게스트는 자기 telegraph_s.
 	# 게스트가 편도 지연만큼 늦게 시작하고 호스트가 그만큼 늦게 때리므로 양쪽 예고가 같은 순간에 끝난다.
-	_telegraph_left = _telegraph_hold_s if _telegraph_hold_s > 0.0 else pat.telegraph_s
+	_telegraph_left = _telegraph_duration(pat)
 
 
 # --- 애니 표시 경로 (호스트/게스트 공용 — 판정과 무관) ---
 
-func _play(anim: StringName) -> void:
-	if _has_anim(anim) and _sprite.animation != anim:
+# 애니 재생. 🔴 speed_scale은 **노드 전역**이라 공격 애니에서 늘려둔 배율이 idle/walk/death에 남으면
+# 다음 애니가 느려진 채 굳는다(에러 없음). 진입 경로가 여럿(_ready·_on_hp_changed 2곳·_begin_windup·
+# show_boss_telegraph·_on_boss_spray·_update_move_anim)이라 호출부마다 손으로 맞추면 다음 사람이
+# 빠뜨리므로, **복귀를 이 한 곳으로 모은다** — 기본 인자 1.0이 곧 복귀다(공격 애니만 값을 넘긴다).
+#
+# 🔴 force_restart = "같은 애니여도 처음부터". 평소 가드(`animation != anim`)는 매 프레임 오는
+# _play(&"idle")이 애니를 리스타트하지 않게 막는 것인데, **공격 애니에는 그 가드가 독이다**:
+# animation이 이미 그 패턴 이름으로 남아 있으면 재생이 시작되지 않아 예고 내내 이전 스윙의 마지막
+# 프레임으로 얼어 있는다(에러 없음). 시트에 walk가 없는 보스에서 실제로 도달 가능하다 —
+# 공격 애니가 예고를 꽉 채우게 된 뒤로는 중간에 idle/walk가 끼어들어 이름을 갈아주는 것에
+# 기댈 수 없다(RECOVER의 idle·CHASE의 walk 둘뿐이고, walk가 없는 시트는 early return한다).
+func _play(anim: StringName, speed_scale: float = 1.0, force_restart: bool = false) -> void:
+	if not _has_anim(anim):
+		return  # 없는 애니는 갈아타지 않으므로 배율도 그대로 둔다(현재 애니의 배율이 계속 맞다)
+	_anim_scale = maxf(speed_scale, MIN_ANIM_SPEED_SCALE)
+	if force_restart or _sprite.animation != anim:
 		_sprite.play(anim)
+	if force_restart:
+		# 🔴 play()에만 기대지 않는다: 4.7 실측으로 play()는 **끝나 멈춘** 같은 애니를 프레임 0으로
+		# 되돌리지만, **재생 중인** 같은 애니는 이어서 돈다(그러면 그 회차만 애니가 일찍 끝난다).
+		# 지금은 패턴 cooldown_s가 그 경우를 막고 있을 뿐이라 데이터에 기댄 안전이다 — 명시로 못 박는다.
+		_sprite.set_frame_and_progress(0, 0.0)
+	_apply_anim_scale()
+
+
+# 원하는 배율을 스프라이트에 심는다 — 유일한 speed_scale 대입 지점.
+# ⚠ 히트스톱(src/feel/hit_stop.gd)이 맞은 스프라이트의 speed_scale을 55ms간 0으로 세우고 **무조건
+# 1.0으로** 되돌린다. 그래서 ⑴ 정지(0.0) 중에는 건드리지 않고(덮으면 히트스톱이 사라진다) ⑵ 매
+# 물리 프레임 다시 심는다 — 예고 중 보스를 때리면(= 거의 항상) 늘려둔 배율이 1.0으로 날아가
+# 공격 애니가 다시 일찍 끝나기 때문이다(에러 없음, 화면만 어긋난다).
+# ⚠ **그래서 "애니 종료 = 타격 순간"은 근사만 성립한다** — 전투 중엔 히트스톱 정지분이 누적된다
+# (피격 1회당 약 −44ms. 2인이 1.2s 예고 동안 6타면 약 0.26s 늦게 끝난다). 정지 자체가 "때린 맛"이라
+# 의도된 것이고, 없애려면 매 프레임 `남은 애니분 / 남은 예고시간`으로 배율을 재유도해야 하는데
+# 그러면 피격마다 배속이 눈에 띄게 튄다 — **수락한 부채다**(고치려 하지 마라, 리뷰 판단 2026-07-26).
+func _apply_anim_scale() -> void:
+	if _sprite.speed_scale <= 0.0:
+		return
+	if not is_equal_approx(_sprite.speed_scale, _anim_scale):
+		_sprite.speed_scale = _anim_scale
+
+
+# 공격 애니 재생 — 총 재생 길이를 그 회차 예고 길이(_telegraph_duration)에 맞춘다.
+# 🔴 데이터(.tres speed)로는 원리적으로 못 맞춘다: 호스트의 예고 길이는 지연 보상분
+# (CombatMath.strike_delay_s)이 더해져 **RTT에 따라 가변**이라, 애니를 telegraph_s에 정확히 맞춰
+# 놔도 호스트에선 그 차이만큼 계속 어긋난다. 그래서 매 회차 speed_scale로 늘린다.
+# (§3 "애니 길이 ≈ telegraph_s" 미러 — 안 맞으면 보스가 휘두름을 마치고 idle 자세로 서 있다가 때린다.)
+func _play_attack_anim(pat: BossPatternDef) -> void:
+	var anim := StringName(pat.id)
+	# force_restart = true — 같은 패턴이 연속으로 와도 반드시 처음부터 (위 _play 주석의 "얼음" 방지)
+	_play(anim, _attack_speed_scale(anim, _telegraph_duration(pat)), true)
+
+
+# 목표 길이에 맞춘 speed_scale = 기본 길이 / 목표 길이. 못 구하는 경우(애니 없음·프레임 0·speed 0·
+# 목표 ≤ 0)는 1.0 = 항등 폴백(옛 동작).
+func _attack_speed_scale(anim: StringName, target_s: float) -> float:
+	var base := _anim_base_length(anim)
+	if base <= 0.0 or target_s <= 0.0:
+		return 1.0
+	return base / target_s
+
+
+# 애니 기본 재생 길이(초) = Σ프레임 duration / 애니 speed.
+# ⚠ 프레임 수·speed를 코드에 박지 않는다 — sprite_frames에서 읽으므로 아트가 프레임을 늘리거나
+# speed를 바꿔도 이 계산이 자동으로 따라간다. duration도 프레임별로 다를 수 있어 개수로 가정하지 않고 합산.
+func _anim_base_length(anim: StringName) -> float:
+	var sf := _sprite.sprite_frames
+	if sf == null or not sf.has_animation(anim):
+		return 0.0
+	var speed := sf.get_animation_speed(anim)
+	var count := sf.get_frame_count(anim)
+	if speed <= 0.0 or count <= 0:
+		return 0.0
+	var total := 0.0
+	for i in count:
+		total += sf.get_frame_duration(anim, i)
+	return total / speed
 
 
 func _has_anim(anim: StringName) -> bool:
