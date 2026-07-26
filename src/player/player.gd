@@ -8,6 +8,7 @@ const HealthComponent := preload("res://src/combat/health_component.gd")
 const HitStop := preload("res://src/feel/hit_stop.gd")
 const HitFlash := preload("res://src/feel/hit_flash.gd")
 const Flinch := preload("res://src/feel/flinch.gd")
+const AfterImage := preload("res://src/feel/afterimage.gd")
 const DEFAULT_SWOOSH := preload("res://assets/sprites/fx/swoosh_arc.png")  # 무기가 궤적을 안 지정할 때 폴백
 
 # 연출값 (rules §0 예외 — 사용자가 플레이하며 조인다)
@@ -52,6 +53,41 @@ const ORB_LERP := 14.0               # 차지 오브 크기 보간 속도
 const ORB_POP := 0.55                # 단계 상승 순간 확대 비율
 const ORB_POP_TIME := 0.16           # 그 팝이 가라앉는 시간(s)
 const REMOTE_CHARGE_SFX_MIN_MS := 250  # 원격 차지음 최소 간격 — G_POS "c"를 0↔2로 진동시켜 소리를 도배하는 그리핑 차단 (play_roll_fx 창-잠금 미러). 정직한 단계 상승은 350ms 간격이라 안 걸린다
+
+# --- 4방향(4분면) 표시 (사용자 확정 2026-07-26) ---
+# 애니 이름 규칙 = "<base>_e" / "_s" / "_n" — **서쪽은 동쪽 프레임을 flip_h**로 쓴다(픽셀아트 표준:
+# 좌우가 대칭이라 장수를 반으로 줄인다). SpriteFrames에 방향 애니가 **없으면 기존 2방향으로 폴백**하므로,
+# 4방향 시트가 아직 없는 지금도 동작이 완전히 그대로다 — 아트가 나오면 PNG/.tres 교체만으로 켜진다.
+# 🔴 방향의 단일 소스는 **조준각(_aim_angle)** 이다: 로컬은 마우스, 원격은 G_POS "a"라 **네트워크 필드 0개**로
+#   원격도 같은 방향을 얻는다. flip_h를 여기 말고 다른 곳에서 대입하면 프레임마다 서로 덮어써 깜빡인다.
+const DIR_SUFFIX: Array[String] = ["e", "s", "w", "n"]  # _facing_index 순서와 미러
+# --- 대쉬 손맛 (구르기 = 잔상 대쉬, 사용자 확정 2026-07-26 "연출만") ---
+# 🔴 i-frame·쿨다운·거리는 **그대로다** — CombatMath.ROLL_TIME_S/effective_roll_*(§3 단일 소스,
+#   호스트 검증과 같은 값)를 건드리지 않는다. 바뀐 것은 화면에 보이는 것뿐(잔상·먼지·카메라 킥).
+const DASH_KICK := 2.2          # 대쉬 시작 시 진행 방향 카메라 반동
+const DASH_END_KICK := 1.1      # 대쉬가 끝나며 멈출 때의 되튐(반대 방향)
+# --- 무기 스탠스 (사용자 지적: "검도 idle이 있는건지 캐릭터에 붙어있음") ---
+# 평상시 무기가 조준각에 못 박혀 있으면 몸에 용접된 것처럼 보인다 → 살짝 내려 들고 호흡하듯 흔든다.
+# 전부 표시 전용이다 — 발사 원점(_aim_dir)·판정 기하는 sway를 **안 본다**(§3 "맞는 곳 = 보이는 곳"의
+# 기준은 조준각이지 흔들린 각이 아니다). 스윙·차지·반동 중엔 sway를 끈다(모션끼리 섞이면 지저분해진다).
+const STANCE_DROP := 0.20       # 평상시 무기를 내려 드는 각(rad)
+const IDLE_SWAY_AMP := 0.055    # 정지 중 호흡 흔들림 진폭(rad)
+const IDLE_SWAY_SPEED := 2.6
+const RUN_SWAY_AMP := 0.15      # 이동 중 흔들림 — 걸음에 맞춰 크게
+const RUN_SWAY_SPEED := 7.5
+const STANCE_LERP := 9.0        # 스탠스↔조준 전환 부드러움
+# --- 평타 콤보 (연출 전용, 사용자 확정 2026-07-26) ---
+# 🔴 **데미지·쿨다운·스윙 창은 콤보와 무관하다** — 3타째가 더 아프면 GDD §6 화력 예산 변경이라
+#   planner 승인이 필요하다(그래서 안 했다). 바뀌는 건 휘두르는 궤적의 방향/크기뿐이다.
+# ⚠ _swing_time을 콤보로 늘리지 마라: 스윙 창 < attack_cooldown 미러 계약(§3)이 깨지면 원격
+#   창-잠금 가드가 정당한 연속 공격의 연출을 삼킨다.
+const COMBO_MAX := 3            # 콤보 길이(0→1→2→0)
+const COMBO_WINDOW := 0.55      # 스윙 창이 끝난 뒤 이 시간 안에 다시 치면 다음 타로 이어진다(s)
+const COMBO_FINISH_ARC := 1.25  # 마무리 타의 호 배율 — 크게 휘둘러 "끝났다"가 읽히게
+const COMBO_FINISH_LUNGE := 1.7 # 마무리 타의 내지르기 배율
+const COMBO_FINISH_KICK := 2.6  # 마무리 타의 카메라 반동
+const HIT_KICK := 1.7           # 근접 적중 시 때린 방향 반동 — 셰이크(무작위)와 달리 "밀어냈다"가 읽힌다
+const SHOOT_KICK := 1.5         # 발사 시 **반대** 방향 반동 (총·활의 반동)
 
 @export var job: JobDef
 
@@ -132,6 +168,15 @@ var _attack_anim_left: float = 0.0  # 공격 스윙 창 — 로컬은 공격 발
 var _aim_angle: float = 0.0  # 무기 조준각 — 로컬은 마우스, 원격은 _remote_aim으로 보간
 var _remote_aim: float = 0.0  # G_POS "a" 수신 목표각 (표시 전용, 판정 아님)
 var _remote_moving: bool = false
+var _afterimage_left: float = 0.0   # 다음 잔상까지 남은 시간(s) — 대쉬 중에만 돈다
+var _was_dashing: bool = false      # 직전 프레임 대쉬 여부 — 종료 순간(되튐 킥)을 잡는 엣지 감지
+var _stance_sway: float = 0.0       # 현재 적용 중인 무기 스탠스 각(rad) — 목표로 부드럽게 따라간다
+var _sway_phase: float = 0.0        # 흔들림 위상 — delta로 누적(Time 전역 대신, 일시정지·씬 전환에 안전)
+var _combo_index: int = 0           # 현재 콤보 타수(0..COMBO_MAX-1) — 표시 전용
+var _combo_left: float = 0.0        # 콤보가 이어지는 남은 시간(s)
+var _swing_from: float = 0.0        # 이번 스윙의 시작 각 오프셋(rad) — 콤보 타수에 따라 방향이 뒤집힌다
+var _swing_to: float = 0.0          # 이번 스윙의 끝 각 오프셋(rad)
+var _swing_lunge_mult: float = 1.0  # 이번 스윙의 내지르기 배율(마무리 타만 크게)
 var _swamp_factors: Array[float] = []  # 현재 겹친 늪들의 이동 배율 (SwampZone enter/exit로 추가·제거). 걷기 속도에 min 적용, 구르기 예외
 
 var _prev_hp: int = 0  # 피격 손맛(combat_impact 감소량) 계산용 — hp_changed 표시 경로 추적
@@ -460,6 +505,9 @@ func _update_life_state(p_hp: int) -> void:
 		_wave_left = 0.0      # 날아가던 검기 파형도 정리 (스워시와 같은 이유)
 		_roll_time_left = 0.0
 		_remote_roll_left = 0.0
+		_was_dashing = false     # 사망으로 끊긴 대쉬가 되튐 킥을 남기지 않게(엣지 감지 리셋)
+		_combo_left = 0.0        # 부활 후 첫 스윙이 죽기 전 콤보를 이어받지 않게
+		_combo_index = 0
 		_attack_anim_left = 0.0  # 사망 직전 발동한 공격 스윙이 고스트에 남지 않게
 		_cancel_charge()         # 모으던 차지도 소멸 — 고스트가 기를 모으고 있지 않게
 		_remote_charge = -1      # 원격 아바타의 차지 오브도 즉시 정리(사망 시 마지막 c가 남아 떠 있지 않게)
@@ -479,10 +527,15 @@ func _physics_process(delta: float) -> void:
 	else:
 		_remote_moving = global_position.distance_to(_remote_target) > 1.0
 		global_position = global_position.lerp(_remote_target, minf(1.0, REMOTE_LERP_SPEED * delta))
-		_sprite.flip_h = _remote_flip
+		# ⚠ flip_h는 여기서 안 건드린다 — 방향/뒤집기의 단일 소스는 _play_dir_anim이다(폴백 경로가
+		#   원격일 때 _remote_flip을 읽는다). 두 곳에서 대입하면 프레임마다 서로 덮어쓴다.
+	# 🔴 조준각 갱신이 **맨 앞**이다 — 방향 애니(_update_anim)와 무기 표시(_update_weapon)가 둘 다
+	#   _aim_angle에서 파생하므로, 뒤에서 갱신하면 몸 방향만 한 프레임 늦게 돌아 무기와 어긋난다.
+	_update_aim(delta)
 	_update_anim()
 	_update_weapon(delta)
 	_update_charge_orb(delta)
+	_update_dash_fx(delta)
 	_update_dust()
 
 
@@ -490,6 +543,36 @@ func _physics_process(delta: float) -> void:
 func _update_dust() -> void:
 	var moving := velocity.length() > 8.0 if is_local else _remote_moving
 	_dust.emitting = _alive and moving
+
+
+# 대쉬(구르기) 잔상 — 지나온 자리에 현재 프레임을 떼어 놓는다. 로컬·원격 모두 자기 화면에서 재생하므로
+# **네트워크 메시지 0개**다(rules §2 손맛 계층 규약: 이미 각 클라에 있는 상태에서 파생한다).
+# 대쉬 창은 로컬 _roll_time_left / 원격 _remote_roll_left — i-frame 판정과는 무관한 표시 창이다.
+func _update_dash_fx(delta: float) -> void:
+	var dashing := _alive and (_roll_time_left > 0.0 or _remote_roll_left > 0.0)
+	if dashing:
+		_afterimage_left -= delta
+		if _afterimage_left <= 0.0:
+			_afterimage_left = AfterImage.SPAWN_INTERVAL
+			AfterImage.spawn(_sprite, self)
+	elif _was_dashing:
+		# 멈추는 순간의 되튐 — 진행 방향 반대로 짧게 밀어 "급정거"가 읽히게 (로컬 카메라만)
+		if is_local:
+			EventBus.camera_kick.emit(-_roll_dir, DASH_END_KICK)
+		_afterimage_left = 0.0
+	_was_dashing = dashing
+
+
+# 대쉬 시작 연출 — 로컬(입력)·원격(G_ROLL 수신) 공용. 잔상 첫 장 + 먼지 버스트 + 진행 방향 카메라 반동.
+func _dash_burst(dir: Vector2) -> void:
+	AfterImage.spawn(_sprite, self)  # 출발 프레임을 즉시 한 장 — 첫 간격을 기다리면 시작이 밋밋하다
+	_afterimage_left = AfterImage.SPAWN_INTERVAL
+	_was_dashing = true
+	if _dust != null:
+		_dust.restart()  # 튀어나가는 순간 발밑에서 확 터지게(이후는 _update_dust가 이어 뿜는다)
+		_dust.emitting = true
+	if is_local:
+		EventBus.camera_kick.emit(dir, DASH_KICK)
 
 
 func _tick_timers(delta: float) -> void:
@@ -500,6 +583,7 @@ func _tick_timers(delta: float) -> void:
 	_recoil_left = maxf(0.0, _recoil_left - delta)
 	_kill_move_left = maxf(0.0, _kill_move_left - delta)
 	_orb_pop_left = maxf(0.0, _orb_pop_left - delta)
+	_combo_left = maxf(0.0, _combo_left - delta)
 	if _fx_delay_left > 0.0:
 		_fx_delay_left -= delta
 		if _fx_delay_left <= 0.0:
@@ -533,52 +617,107 @@ func _update_anim() -> void:
 		next = &"attack"
 	elif (is_local and velocity.length_squared() > 1.0) or (not is_local and _remote_moving):
 		next = &"run"
-	if _sprite.animation != next:
-		_sprite.play(next)
+	_play_dir_anim(next)
 
 
-# 현재 미사용(어느 직업도 frames에 attack 없음) — 공격 연출은 무기 스윙(_update_weapon)이 담당.
-# 몸통 attack 애니를 되살리면 애니 길이 ↔ ATTACK_ANIM_TIME 미러(rules §3)도 같이 되살릴 것.
+# 조준각 → 4분면 인덱스 (0=동 1=남 2=서 3=북). Godot는 y+가 아래라 남쪽이 +PI/2다.
+# 경계에서 깜빡이지 않게 각을 45° 돌린 뒤 90°로 나눈다(각 사분면의 중앙이 정면이 된다).
+func _facing_index(angle: float) -> int:
+	if not is_finite(angle):
+		return 0
+	return int(wrapf(angle + PI / 4.0, 0.0, TAU) / (PI / 2.0)) % 4
+
+
+# 방향 애니 재생 + flip_h 대입의 **단일 소스**. 4방향 시트가 있으면 그걸, 없으면 기존 2방향으로 폴백한다.
+# 🔴 flip_h를 여기 밖에서 대입하지 마라 — 매 프레임 이 함수가 다시 쓰기 때문에 다른 대입은
+#   한 프레임만 반영됐다 사라져 "가끔 방향이 튄다"로만 보인다(원인이 화면에 안 드러난다).
+func _play_dir_anim(base: StringName) -> void:
+	var frames := _sprite.sprite_frames
+	if frames == null:
+		return
+	var idx := _facing_index(_aim_angle)
+	# 서(2)는 동(0) 프레임을 뒤집어 쓴다 — 시트 장수를 반으로.
+	var dir_flip := idx == 2
+	var want := StringName(String(base) + "_" + DIR_SUFFIX[0 if dir_flip else idx])
+	if frames.has_animation(want):
+		_sprite.flip_h = dir_flip
+		if _sprite.animation != want:
+			_sprite.play(want)
+		return
+	# --- 폴백: 4방향 시트가 아직 없다 → 도입 전과 **완전히 같은 동작** ---
+	# 기존 규칙은 "왼쪽 반평면이면 뒤집기"였다(4분면 서쪽보다 넓다) — 좁히면 좌상/좌하 조준에서
+	# 캐릭터가 오른쪽을 본 채 왼쪽을 때리는 것처럼 보인다.
+	_sprite.flip_h = (absf(wrapf(_aim_angle, -PI, PI)) > PI / 2.0) if is_local else _remote_flip
+	if frames.has_animation(base) and _sprite.animation != base:
+		_sprite.play(base)
+
+
+# 몸통 공격 애니 보유 여부 — 현재 어느 직업도 없어(공격 연출은 무기 스윙 = _update_weapon 담당) 항상 false다.
+# 4방향 시트가 attack_e/_n/_s를 들고 오면 자동으로 켜진다.
+# 몸통 attack 애니를 되살리면 애니 길이 ↔ _swing_time 미러(rules §3)도 같이 되살릴 것.
 func _has_attack_anim() -> bool:
-	return _sprite.sprite_frames != null and _sprite.sprite_frames.has_animation(&"attack")
+	var f := _sprite.sprite_frames
+	return f != null and (f.has_animation(&"attack") or f.has_animation(&"attack_e"))
 
 
-# 무기 표시 — 조준 방향으로 내밀고, 공격 창 동안 호를 그리며 스윙 (전부 표시 전용, 판정은 별개).
-func _update_weapon(delta: float) -> void:
-	# 조준각은 무기 유무와 무관하게 갱신 — 무기 없는 직업도 "a"를 실제 값으로 송신해야
-	# 나중에 활/지팡이 텍스처가 붙는 순간 원격 표시가 바로 맞는다 (리뷰 Minor)
+# 조준각 갱신 — 몸 방향(4분면 애니·flip)과 무기 표시가 **둘 다** 여기서 파생하는 단일 소스.
+# 무기 유무와 무관하게 돈다: 무장 해제 상태에서도 "a"를 실제 값으로 송신해야 무기를 드는 순간
+# 원격 표시가 바로 맞고(리뷰 Minor), 몸이 향하는 쪽도 무장 여부와 무관해야 한다.
+func _update_aim(delta: float) -> void:
 	if is_local:
 		_aim_angle = _aim_dir().angle()
 	else:
 		_aim_angle = lerp_angle(_aim_angle, _remote_aim, minf(1.0, WEAPON_AIM_LERP * delta))
+
+
+# 무기 표시 — 조준 방향으로 내밀고, 공격 창 동안 호를 그리며 스윙 (전부 표시 전용, 판정은 별개).
+func _update_weapon(delta: float) -> void:
 	if _weapon.texture == null:
 		return
 	# 스윙 3박자: 예비(뒤로 젖힘) → 가속 스윕(+내지르기) → 복귀
 	var swing_off := 0.0
 	var lunge := 0.0
+	var swinging := _attack_anim_left > 0.0
 	# 발사 반동(shoot 무기) — 활을 뒤로 당겼다 복귀. shoot는 _attack_anim_left를 안 켜므로 스윙과 상호 배타.
 	if _recoil_left > 0.0:
 		lunge = -RECOIL_DIST * (_recoil_left / RECOIL_TIME)
-	if _attack_anim_left > 0.0:
+	if swinging:
 		var t := 1.0 - _attack_anim_left / _swing_time  # 무기별 스윙 창으로 정규화
+		# 시작/끝 각은 콤보 타수가 정한다(_begin_swing) — 홀수 타는 반대로 휘둘러 좌우가 번갈아 보인다.
 		if t < 0.28:
-			swing_off = -_swing_arc * (t / 0.28)
+			swing_off = _swing_from * (t / 0.28)
 		elif t < 0.75:
 			var u := (t - 0.28) / 0.47
 			u = u * u * (3.0 - 2.0 * u)  # smoothstep — 스윕에 가속감
-			swing_off = lerpf(-_swing_arc, _swing_arc, u)
-			lunge = _swing_lunge * sin(u * PI)
+			swing_off = lerpf(_swing_from, _swing_to, u)
+			lunge = _swing_lunge * _swing_lunge_mult * sin(u * PI)
 		else:
-			swing_off = _swing_arc * (1.0 - (t - 0.75) / 0.25)
-	var ang := _aim_angle + swing_off
-	_weapon_pivot.rotation = ang
-	_weapon.position = -_weapon_grip + Vector2(_hold_dist + lunge, 0.0)
+			swing_off = _swing_to * (1.0 - (t - 0.75) / 0.25)
 	# 좌향 조준 시 뒤집기 — 안 하면 검이 거꾸로(날이 아래) 보인다. 기준은 조준각(스윙 중 깜빡임 방지)
 	_weapon.flip_v = absf(wrapf(_aim_angle, -PI, PI)) > PI / 2.0
+	# 평상시 스탠스 — 무기를 살짝 내려 들고 호흡/걸음에 맞춰 흔든다. 표시 전용이라 발사 원점·판정
+	# 기하는 이 각을 보지 않는다(그쪽은 _aim_dir). 뒤집힌 쪽에선 부호를 반대로 줘야 양쪽 다 "내려 든" 모습.
+	_tick_stance(delta, swinging)
+	var ang := _aim_angle + swing_off + _stance_sway * (-1.0 if _weapon.flip_v else 1.0)
+	_weapon_pivot.rotation = ang
+	_weapon.position = -_weapon_grip + Vector2(_hold_dist + lunge, 0.0)
 	# 위쪽 조준 = 몸 뒤(0), 아래 = 몸 앞(2) — 몸(Sprite z=1) 기준 상대 배치.
 	# ⚠ 음수 z_index는 배경 타일 밑으로 꺼져 무기가 통째로 사라진다 (실기에서 확인) — 전부 0 이상 유지
 	_weapon_pivot.z_index = 0 if sin(ang) < 0.0 else 2
 	_weapon_pivot.visible = _alive and _roll_time_left <= 0.0 and _remote_roll_left <= 0.0
+
+
+# 무기 스탠스 각 갱신 — 평상시엔 내려 들고 흔들리게, 모션 중(스윙·발사 반동·차지)엔 0으로 되돌린다.
+# 목표로 lerp하므로 모션이 시작/끝날 때 각이 튀지 않는다. 로컬·원격 모두 자기 상태에서 파생(네트워크 0).
+func _tick_stance(delta: float, swinging: bool) -> void:
+	var charging := _charging if is_local else _remote_charge >= 0
+	var target := 0.0
+	if not swinging and _recoil_left <= 0.0 and not charging:
+		var moving := (velocity.length_squared() > 1.0) if is_local else _remote_moving
+		var amp := RUN_SWAY_AMP if moving else IDLE_SWAY_AMP
+		_sway_phase = fmod(_sway_phase + delta * (RUN_SWAY_SPEED if moving else IDLE_SWAY_SPEED), TAU)
+		target = STANCE_DROP + sin(_sway_phase) * amp
+	_stance_sway = lerpf(_stance_sway, target, minf(1.0, STANCE_LERP * delta))
 
 
 # 차지 오브 표시 — 지팡이 끝(= 발사 원점)에서 단계별로 커지는 마법구. 전부 표시 전용(판정 무관).
@@ -616,8 +755,7 @@ func _local_move(delta: float) -> void:
 			seated = false
 		else:
 			velocity = Vector2.ZERO
-			_sprite.flip_h = get_global_mouse_position().x < global_position.x
-			return
+			return  # 뒤집기는 _play_dir_anim이 조준각에서 파생한다(단일 소스)
 	if _roll_time_left > 0.0:
 		_roll_time_left -= delta
 		velocity = _roll_dir * _roll_speed()  # 구르기는 늪 슬로우 예외(이속·roll_dist가 거리를 늘린다, GDD §6)
@@ -632,10 +770,11 @@ func _local_move(delta: float) -> void:
 			#   사본을 만들면 "굴러지는데 무적이 안 걸리는" 상태가 되고 화면에 이유가 안 드러난다.
 			_roll_cd_left = CombatMath.effective_roll_cooldown(trait_value("roll_cd"))
 			EventBus.player_roll.emit(global_position)  # 구르기 SFX (로컬)
+			_dash_burst(_roll_dir)  # 잔상 첫 장·먼지 버스트·진행 방향 카메라 반동 (표시 전용)
 			# 구르기 선언 — 호스트가 쿨다운 검증 후 i-frame 창 부여 (방향은 연출용)
 			Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ROLL, "dx": _roll_dir.x, "dy": _roll_dir.y})
 	move_and_slide()
-	_sprite.flip_h = get_global_mouse_position().x < global_position.x
+	# 뒤집기는 _play_dir_anim이 조준각에서 파생한다(단일 소스) — 여기서 대입하면 서로 덮어쓴다
 
 
 # 공격은 폴링이 아니라 _unhandled_input — UI(Control)가 소비한 클릭은 여기 안 온다 (mouse_filter 존중)
@@ -704,12 +843,34 @@ func _cancel_charge() -> void:
 	_charge_level = 0
 
 
+# 이번 스윙의 궤적을 콤보 타수로 결정한다 — **연출 전용**이다(데미지·쿨다운·스윙 창은 안 바뀐다).
+# 0타 = 우→좌 · 1타 = 좌→우(되돌려 베기) · 2타(마무리) = 같은 방향으로 더 크게 + 깊이 내지른다.
+# 로컬(입력)과 원격(G_ATK "cb") 공용이라 양쪽 화면이 같은 궤적을 그린다.
+func _begin_swing(combo: int) -> void:
+	_combo_index = clampi(combo, 0, COMBO_MAX - 1)
+	var arc := _swing_arc
+	_swing_lunge_mult = 1.0
+	if _combo_index == COMBO_MAX - 1:
+		arc *= COMBO_FINISH_ARC
+		_swing_lunge_mult = COMBO_FINISH_LUNGE
+	# 홀수 타만 반대로 — 매번 같은 방향으로 휘두르면 팔이 순간이동해 되돌아온 것처럼 보인다.
+	_swing_from = arc if _combo_index == 1 else -arc
+	_swing_to = -arc if _combo_index == 1 else arc
+	# 🔴 스윙 창은 콤보와 무관하게 _swing_time 그대로 — §3 미러(swing_time < attack_cooldown) 보존.
+	_attack_anim_left = _swing_time
+
+
 # 근접 호 스윙 — 로컬 원형 질의 판정(즉시, 프레임 지연 없음). 확정은 호스트(attack_hit → CombatAuthority).
 func _swing_attack(dir: Vector2) -> void:
-	_attack_anim_left = _swing_time  # 무기별 스윙 창 (§3: < attack_cooldown)
+	# 콤보 이어가기: 직전 스윙 뒤 COMBO_WINDOW 안이면 다음 타, 아니면 처음부터.
+	_begin_swing((_combo_index + 1) % COMBO_MAX if _combo_left > 0.0 else 0)
+	_combo_left = _swing_time + COMBO_WINDOW
 	_show_attack_fx(dir)
 	EventBus.player_swing.emit(global_position, _swing_sfx)  # 스윙 SFX (로컬 — 무기별 휘두름음)
-	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ATK, "dx": dir.x, "dy": dir.y})
+	if _combo_index == COMBO_MAX - 1:
+		EventBus.camera_kick.emit(dir, COMBO_FINISH_KICK)  # 마무리 타는 헛쳐도 묵직하게
+	# "cb" = 콤보 타수(표시 전용). 수신 측이 clamp하므로 조작해도 궤적만 달라진다 — 판정·데미지 무관.
+	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ATK, "dx": dir.x, "dy": dir.y, "cb": _combo_index})
 	# 판정: 조준 방향 원형 질의 (Area 노드 대신 즉시 질의 — 프레임 지연 없음)
 	# 기하는 CombatMath 단일 소스 — FX 위치(_show_attack_fx)와 같은 함수라 어긋나지 않는다
 	# reach 특성(검기 파형) — 판정도 FX도 같은 값을 받는다(§3 사거리 계약)
@@ -731,6 +892,7 @@ func _swing_attack(dir: Vector2) -> void:
 	if connected:
 		# 공격자 로컬 예측 타격 손맛 — 무기별 셰이크/타격음(호스트 확정 전 즉발, 표시 전용). 스윙당 1회.
 		EventBus.weapon_impact.emit(center, _hit_sfx, _hit_shake)
+		EventBus.camera_kick.emit(dir, HIT_KICK)  # 때린 방향으로 밀림 — 셰이크와 다른 축(방향이 읽힌다)
 
 
 # 원거리 발사(shoot = 활 · charge = 지팡이) — 표시 투사체 스폰(로컬)·G_SHOOT 송신(원격 표시)·(호스트) 권한 투사체 등록.
@@ -741,6 +903,9 @@ func _fire_projectile(dir: Vector2, charge: int) -> void:
 	_shot_seq += 1
 	var aid := str(Net.my_id) + ":" + str(_shot_seq)
 	_recoil_left = RECOIL_TIME  # 활 반동/지팡이 반동 연출
+	# 발사는 **쏜 반대쪽**으로 카메라를 민다(근접 타격과 반대 부호) — 밀려나는 반동이 읽히게.
+	# 차지 무기는 모은 단계만큼 더 세게(0단계도 최소 1배는 나가게 +1).
+	EventBus.camera_kick.emit(-dir, SHOOT_KICK * (1.0 + 0.45 * float(clampi(charge, 0, CombatMath.MAX_CHARGE_LEVEL))))
 	# player_shoot: ArrowField가 표시 투사체 스폰 + (호스트 자신이면) CombatAuthority가 권한 투사체 등록
 	EventBus.player_shoot.emit(Net.my_id, origin, dir, aid, _arrow_range, _weapon_id, charge)
 	EventBus.player_swing.emit(global_position, _swing_sfx)  # 발사 SFX (swing_sfx 재활용 = 시위·발사음)
@@ -811,17 +976,22 @@ func net_anchor_lead(one_way_ms: float) -> Vector2:
 	return CombatMath.extrapolate(_remote_target, _remote_vel, lead_s)
 
 
-# 원격 플레이어의 공격 연출 (stage가 G_ATK 수신 시 호출) — 표시 전용, 판정 아님
-func play_attack_fx(dir: Vector2) -> void:
+# 원격 플레이어의 공격 연출 (stage가 G_ATK 수신 시 호출) — 표시 전용, 판정 아님.
+# combo = G_ATK "cb"(그 피어의 콤보 타수) — 궤적만 정하므로 조작돼도 화면이 달라질 뿐이다(clamp는 _begin_swing).
+func play_attack_fx(dir: Vector2, combo: int = 0) -> void:
 	if not _alive or not _is_armed():
 		return  # 사망자·무장 해제 피어의 G_ATK로 FX가 뜨는 것 차단 (그 피어 무기 = set_weapon_visual 반영)
 	_show_attack_fx(dir)
-	_sprite.flip_h = dir.x < 0.0
+	# 조준각을 즉시 그 방향으로 당긴다 — 다음 G_POS를 기다리면 스윙이 옛 방향으로 한 박자 나간다.
+	# (뒤집기는 _play_dir_anim이 이 각에서 파생한다 — flip_h를 여기서 대입하면 서로 덮어쓴다)
+	if is_finite(dir.x) and is_finite(dir.y) and dir.length_squared() > 0.000001:
+		_remote_aim = dir.angle()
+		_remote_flip = dir.x < 0.0  # 4방향 시트가 없을 때의 폴백 경로가 읽는 값
 	if _attack_anim_left <= 0.0:
-		# 애니 창만 재수신 무시(FX·플립은 매번 적용) — G_ATK 스팸으로 애니를 영구 attack으로
+		# 애니 창만 재수신 무시(FX·방향은 매번 적용) — G_ATK 스팸으로 애니를 영구 attack으로
 		# 잠그는 그리핑 차단 (정직한 공격은 쿨다운 0.4s > 창(≤0.25~0.34)이라 안 걸린다)
 		EventBus.player_swing.emit(global_position, _swing_sfx)  # 스윙 SFX (원격 — 무기별, 스팸 게이트 안)
-		_attack_anim_left = _swing_time  # 원격도 그 피어의 무기 스윙 창(set_weapon_visual로 세팅됨)
+		_begin_swing(combo)  # 원격도 그 피어의 무기 스윙 창 + 같은 콤보 궤적
 
 
 # 원격 궁수의 발사 연출 (peer_sync가 G_SHOOT 수신 시 호출) — 활 반동만, 표시 전용. 화살 자체는 ArrowField가 스폰.
@@ -840,7 +1010,10 @@ func play_roll_fx(dir: Vector2) -> void:
 	_remote_roll_left = CombatMath.ROLL_TIME_S
 	EventBus.player_roll.emit(global_position)  # 구르기 SFX (원격 — 스팸 게이트 뒤)
 	if absf(dir.x) > 0.001:
-		_remote_flip = dir.x < 0.0
+		_remote_flip = dir.x < 0.0  # 4방향 시트가 없을 때의 폴백 경로가 읽는 값
+	if is_finite(dir.x) and is_finite(dir.y):
+		_roll_dir = dir  # 대쉬 종료 되튐 방향 — 원격은 카메라가 없으니 잔상·먼지에만 쓰인다
+	_dash_burst(dir)  # 원격도 같은 대쉬 연출(잔상·먼지). 카메라 킥은 _dash_burst 안에서 로컬만
 
 
 func _send_pos(delta: float) -> void:

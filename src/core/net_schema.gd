@@ -27,7 +27,7 @@ const FAIL_SERVER_FULL := "server_full"  # 서버 전체 방 상한 (Workers 릴
 # 게임 페이로드 (data 내부). "k" = 종류.
 const KEY_KIND := "k"
 const G_POS := "pos"                  # {k, n, s, x, y, f, a, c, vx, vy}  n = 송신 시퀀스(단조 증가) — 🔴 **P2P fast 채널이 unordered**라 순서가 뒤바뀐 위치 패킷이 앵커를 과거로 되돌릴 수 있다(릴레이 TCP에선 구조적으로 불가능했던 결함). 되돌아간 앵커는 net_anchor와 net_anchor_lead를 **같은 방향으로 함께** 낡게 만들어 "둘 다 맞아야 확정"인 방어자 우대 규약을 무력화한다 → 수신부가 CombatMath.is_pos_seq_fresh로 폐기. 0/미부착 = 항등 폴백(구버전·릴레이 경로). 자기 캐릭터 위치+좌우 플립+조준각(a, 라디안 — 무기 표시 전용, 판정 아님) (각자 자기 것만 보낸다). s = 씬 id — 다른 씬 피어의 유령 스폰 방지. c = 현재 차지 레벨(0~3, 법사 지팡이 — 원격 차지 오브 표시 전용, 판정 아님. 실제 발사 레벨은 G_SHOOT "c"를 호스트가 별도 검증). vx/vy = 현재 속도(px/s) — 호스트가 지연 보상 외삽에 쓴다(CombatMath.extrapolate). 속도는 이동 상한으로 clamp되고 외삽 결과도 거리 상한이 있어, 부풀려 보내도 "방어자 우대" 규약상 회피가 관대해질 뿐 피해를 못 만든다 (§3 지연 보상)
-const G_ATK := "atk"                  # {k, dx, dy}   공격 연출 (방향) — 판정 아님, 원격 표시용
+const G_ATK := "atk"                  # {k, dx, dy, cb} 공격 연출 (방향 + 콤보 타수) — 판정 아님, 원격 표시용. cb는 궤적만 정한다(수신부 clamp)
 const G_JOB := "job"                  # {k, job}      직업 공지 (id 문자열) — 스테이지 입장·피어 합류 시. 수신 측은 자기 data/jobs에서 리졸브(모르는 id = 기본 직업)
 const G_STATS := "stats"              # {k, atk, hp, weapon, lv}  장비 총 스탯 + 착용 무기 id + **레벨 스탯** 공지. atk/hp = 호스트가 데미지/HP 확정에 사용(트러스트=발신자, clamp). weapon = 원격 무기 겉모습(표시 전용, allowlist 리졸브만). lv = 직업 레벨 5스탯 {crit, crit_dmg, haste, move, leech} — 키는 CombatMath.LEVEL_STAT_KEYS 그대로, 호스트가 치명/피흡/공속 확정에 쓰므로 수신 측이 **키 목록을 순회**해 데이터 유도 상한(GameState.max_level_stats)으로 clamp한다(모르는 키 자동 폐기). 4인/PvP 전 검증 게이트(rules §2)
 const G_HIT_REQ := "hitreq"           # {k, eid}      게스트 → 호스트: 적중 요청 (호스트가 사거리 검증 후 확정)

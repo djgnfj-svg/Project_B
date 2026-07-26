@@ -26,7 +26,7 @@ animation = &"idle"
 autoplay = "idle"
 
 [node name="WeaponPivot" type="Node2D" parent="."]
-position = Vector2(0, 2)
+position = Vector2(0, -4)
 
 [node name="Weapon" type="Sprite2D" parent="WeaponPivot"]
 centered = false
@@ -56,7 +56,7 @@ enabled = false
 script = ExtResource("6")
 
 [node name="Shadow" type="Sprite2D" parent="."]
-z_index = -1
+z_index = -2
 position = Vector2(0, 13)
 texture = ExtResource("7")
 
