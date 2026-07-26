@@ -24,8 +24,8 @@ const SLOT_ARMOR := 1
 # 무기 표시용 (slot=weapon만) — JobDef.weapon_texture/grip을 장비로 이관하는 자리 (rules §3).
 # 장비 착용 시 player.gd의 WeaponPivot/Weapon 텍스처를 이걸로 교체 (후속 슬라이스).
 @export var weapon_texture: Texture2D
-@export var weapon_grip: Vector2 = Vector2(4, 8)
-@export var weapon_hold_dist: float = 8.0  # 몸 중심 → 무기 그립까지 거리(px). 큰 무기(활 34px)는 크게 잡아 몸과 안 겹치게(대검=8 기본)
+@export var weapon_grip: Vector2 = Vector2(2, 4)
+@export var weapon_hold_dist: float = 4.0  # 몸 중심 → 무기 그립까지 거리(px). 큰 무기(활 34px)는 크게 잡아 몸과 안 겹치게(대검=8 기본)
 
 # 공격 모션 타입 (§2 리팩터 게이트, 2026-07-24) — player.gd _do_attack/_update_weapon이 이 값으로 분기한다.
 #   "swing" = 근접 호 스윙(대검·기본, 로컬 원형 질의 판정) · "shoot" = 원거리 발사(궁수 활, 화살 스폰·호스트 화살 판정)
@@ -53,7 +53,7 @@ const SLOT_ARMOR := 1
 #   "이 무기가 어느 연출을 쓰는가"(콘텐츠·rules §4)와 무게 배율뿐이다. 전부 표시 전용(네트워크 0).
 @export_group("무기 손맛")
 @export var swing_texture: Texture2D               # 스윙 궤적 FX 트레일 (null → 기본 swoosh_arc 폴백)
-@export var swing_tex_radius: float = 46.0         # swing_texture 호 바깥 반지름(px) — 스케일=도달/반지름 정합 (rules §3)
+@export var swing_tex_radius: float = 23.0         # swing_texture 호 바깥 반지름(px) — 스케일=도달/반지름 정합 (rules §3)
 @export var swing_color: Color = Color(1, 1, 1, 1) # 궤적 틴트(그레이스케일 도트 재활용용, 페이드 알파와 곱)
 @export var swing_sfx: String = "swing"            # 스윙(휘두름) 효과음 id (Audio.SFX 키)
 @export var hit_sfx: String = ""                   # 적중 시 무기 고유 타격음 id (비면 무음 — 범용 피격음은 combat_impact가 별도 재생)

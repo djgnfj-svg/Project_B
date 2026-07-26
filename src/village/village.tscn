@@ -105,33 +105,39 @@ z_index = -1
 [node name="Petal1" type="Sprite2D" parent="Decals"]
 position = Vector2(588, 333)
 texture = ExtResource("41")
+offset = Vector2(4, 4)
 centered = false
 
 [node name="Petal2" type="Sprite2D" parent="Decals"]
 position = Vector2(228, 381)
 texture = ExtResource("41")
+offset = Vector2(4, 4)
 centered = false
 flip_h = true
 
 [node name="PebbleA1" type="Sprite2D" parent="Decals"]
 position = Vector2(453, 219)
 texture = ExtResource("39")
+offset = Vector2(3, 4)
 centered = false
 
 [node name="PebbleB1" type="Sprite2D" parent="Decals"]
 position = Vector2(774, 369)
 texture = ExtResource("40")
+offset = Vector2(3, 4)
 centered = false
 
 [node name="PebbleB2" type="Sprite2D" parent="Decals"]
 position = Vector2(141, 237)
 texture = ExtResource("40")
+offset = Vector2(3, 4)
 centered = false
 flip_h = true
 
 [node name="PebbleA2" type="Sprite2D" parent="Decals"]
 position = Vector2(528, 375)
 texture = ExtResource("39")
+offset = Vector2(3, 4)
 centered = false
 flip_h = true
 
@@ -139,12 +145,14 @@ flip_h = true
 z_index = -1
 position = Vector2(408, 435)
 texture = ExtResource("25")
+offset = Vector2(12, 48)
 centered = false
 
 [node name="Dock" type="Sprite2D" parent="."]
 z_index = -1
 position = Vector2(702, 450)
 texture = ExtResource("26")
+offset = Vector2(8, 28)
 centered = false
 
 [node name="Trees" type="Node2D" parent="."]
@@ -154,54 +162,54 @@ y_sort_enabled = true
 position = Vector2(15, 29)
 texture = ExtResource("30")
 centered = false
-offset = Vector2(-24, -56)
+offset = Vector2(-12, -28)
 
 [node name="PineA1" type="Sprite2D" parent="Trees"]
 position = Vector2(85, 9)
 texture = ExtResource("33")
 centered = false
-offset = Vector2(-16, -48)
+offset = Vector2(-8, -24)
 
 [node name="TreeB1" type="Sprite2D" parent="Trees"]
 position = Vector2(180, 32)
 texture = ExtResource("31")
 centered = false
-offset = Vector2(-24, -56)
+offset = Vector2(-12, -28)
 flip_h = true
 
 [node name="TreeC1" type="Sprite2D" parent="Trees"]
 position = Vector2(366, 35)
 texture = ExtResource("32")
 centered = false
-offset = Vector2(-24, -56)
+offset = Vector2(-12, -28)
 
 [node name="TreeA2" type="Sprite2D" parent="Trees"]
 position = Vector2(465.6, 17.4)
 scale = Vector2(0.9, 0.9)
 texture = ExtResource("30")
 centered = false
-offset = Vector2(-24, -56)
+offset = Vector2(-12, -28)
 flip_h = true
 
 [node name="PineA2" type="Sprite2D" parent="Trees"]
 position = Vector2(559, 24)
 texture = ExtResource("33")
 centered = false
-offset = Vector2(-16, -48)
+offset = Vector2(-8, -24)
 flip_h = true
 
 [node name="PineB1" type="Sprite2D" parent="Trees"]
 position = Vector2(754, 27)
 texture = ExtResource("34")
 centered = false
-offset = Vector2(-16, -48)
+offset = Vector2(-8, -24)
 flip_h = true
 
 [node name="TreeC2" type="Sprite2D" parent="Trees"]
 position = Vector2(852, 23)
 texture = ExtResource("32")
 centered = false
-offset = Vector2(-24, -56)
+offset = Vector2(-12, -28)
 flip_h = true
 
 [node name="TreeA3" type="Sprite2D" parent="Trees"]
@@ -209,46 +217,46 @@ position = Vector2(932.4, 23.6)
 scale = Vector2(0.85, 0.85)
 texture = ExtResource("30")
 centered = false
-offset = Vector2(-24, -56)
+offset = Vector2(-12, -28)
 
 [node name="TreeB2" type="Sprite2D" parent="Trees"]
 position = Vector2(6, 131)
 texture = ExtResource("31")
 centered = false
-offset = Vector2(-24, -56)
+offset = Vector2(-12, -28)
 
 [node name="PineA3" type="Sprite2D" parent="Trees"]
 position = Vector2(-5, 363)
 texture = ExtResource("33")
 centered = false
-offset = Vector2(-16, -48)
+offset = Vector2(-8, -24)
 
 [node name="TreeC3" type="Sprite2D" parent="Trees"]
 position = Vector2(933, 122)
 texture = ExtResource("32")
 centered = false
-offset = Vector2(-24, -56)
+offset = Vector2(-12, -28)
 flip_h = true
 
 [node name="PineB2" type="Sprite2D" parent="Trees"]
 position = Vector2(931, 381)
 texture = ExtResource("34")
 centered = false
-offset = Vector2(-16, -48)
+offset = Vector2(-8, -24)
 
 [node name="PineA4" type="Sprite2D" parent="Trees"]
 position = Vector2(67.6, 208.8)
 scale = Vector2(0.85, 0.85)
 texture = ExtResource("33")
 centered = false
-offset = Vector2(-16, -48)
+offset = Vector2(-8, -24)
 
 [node name="TreeA4" type="Sprite2D" parent="Trees"]
 position = Vector2(828, 384)
 scale = Vector2(0.75, 0.75)
 texture = ExtResource("30")
 centered = false
-offset = Vector2(-24, -56)
+offset = Vector2(-12, -28)
 flip_h = true
 
 [node name="TreeA5" type="Sprite2D" parent="Trees"]
@@ -256,14 +264,14 @@ position = Vector2(118.2, 536.8)
 scale = Vector2(0.8, 0.8)
 texture = ExtResource("30")
 centered = false
-offset = Vector2(-24, -56)
+offset = Vector2(-12, -28)
 
 [node name="PineB3" type="Sprite2D" parent="Trees"]
 position = Vector2(264.8, 533.4)
 scale = Vector2(0.8, 0.8)
 texture = ExtResource("34")
 centered = false
-offset = Vector2(-16, -48)
+offset = Vector2(-8, -24)
 flip_h = true
 
 [node name="TreeB3" type="Sprite2D" parent="Trees"]
@@ -271,30 +279,33 @@ position = Vector2(793.2, 536.8)
 scale = Vector2(0.8, 0.8)
 texture = ExtResource("31")
 centered = false
-offset = Vector2(-24, -56)
+offset = Vector2(-12, -28)
 
 [node name="PineA5" type="Sprite2D" parent="Trees"]
 position = Vector2(909.8, 533.4)
 scale = Vector2(0.8, 0.8)
 texture = ExtResource("33")
 centered = false
-offset = Vector2(-16, -48)
+offset = Vector2(-8, -24)
 
 [node name="Bushes" type="Node2D" parent="."]
 
 [node name="BushA1" type="Sprite2D" parent="Bushes"]
 position = Vector2(306, 189)
 texture = ExtResource("37")
+offset = Vector2(6, 8)
 centered = false
 
 [node name="BushB1" type="Sprite2D" parent="Bushes"]
 position = Vector2(636, 297)
 texture = ExtResource("38")
+offset = Vector2(6, 8)
 centered = false
 
 [node name="BushA2" type="Sprite2D" parent="Bushes"]
 position = Vector2(81, 351)
 texture = ExtResource("37")
+offset = Vector2(6, 8)
 centered = false
 flip_h = true
 
@@ -302,123 +313,125 @@ flip_h = true
 position = Vector2(588, 311)
 texture = ExtResource("35")
 centered = false
-offset = Vector2(-24, -56)
+offset = Vector2(-12, -28)
 
 [node name="Blossom2" type="Sprite2D" parent="."]
 position = Vector2(230.4, 356.6)
 scale = Vector2(0.85, 0.85)
 texture = ExtResource("36")
 centered = false
-offset = Vector2(-24, -56)
+offset = Vector2(-12, -28)
 flip_h = true
 
 [node name="ForgeHouse" type="Sprite2D" parent="."]
 position = Vector2(141, 112)
 texture = ExtResource("7")
 centered = false
-offset = Vector2(-48, -88)
+offset = Vector2(-24, -44)
 
 [node name="ForgeShed" type="Sprite2D" parent="."]
 position = Vector2(261, 124)
 texture = ExtResource("8")
 centered = false
-offset = Vector2(-24, -64)
+offset = Vector2(-12, -32)
 
 [node name="Anvil" type="Sprite2D" parent="."]
 position = Vector2(134, 169)
 texture = ExtResource("9")
 centered = false
-offset = Vector2(-14, -22)
+offset = Vector2(-7, -11)
 
 [node name="EmberBarrel" type="Sprite2D" parent="."]
 position = Vector2(179, 171)
 texture = ExtResource("10")
 centered = false
-offset = Vector2(-8, -18)
+offset = Vector2(-4, -9)
 
 [node name="WeaponRack" type="Sprite2D" parent="."]
 position = Vector2(331, 144)
 texture = ExtResource("11")
 centered = false
-offset = Vector2(-16, -24)
+offset = Vector2(-8, -12)
 
 [node name="Postbox" type="Sprite2D" parent="."]
 position = Vector2(77, 148)
 texture = ExtResource("12")
 centered = false
-offset = Vector2(-5, -16)
+offset = Vector2(-3, -8)
 
 [node name="EnhanceHouse" type="Sprite2D" parent="."]
 position = Vector2(461, 94)
 texture = ExtResource("13")
 centered = false
-offset = Vector2(-56, -88)
+offset = Vector2(-28, -44)
 
 [node name="EnhanceMachine" type="Sprite2D" parent="."]
 position = Vector2(608, 130)
 texture = ExtResource("14")
 centered = false
-offset = Vector2(-32, -64)
+offset = Vector2(-16, -32)
 
 [node name="SignWip" type="Sprite2D" parent="."]
 position = Vector2(594, 182)
 texture = ExtResource("15")
 centered = false
-offset = Vector2(-12, -20)
+offset = Vector2(-6, -10)
 
 [node name="ChestBig" type="Sprite2D" parent="."]
 position = Vector2(737, 138)
 texture = ExtResource("16")
 centered = false
-offset = Vector2(-32, -48)
+offset = Vector2(-16, -24)
 
 [node name="CrateA" type="Sprite2D" parent="."]
 position = Vector2(815, 154)
 texture = ExtResource("17")
 centered = false
-offset = Vector2(-8, -16)
+offset = Vector2(-4, -8)
 
 [node name="CrateB" type="Sprite2D" parent="."]
 position = Vector2(815, 127)
 texture = ExtResource("18")
 centered = false
-offset = Vector2(-8, -16)
+offset = Vector2(-4, -8)
 
 [node name="CrateC" type="Sprite2D" parent="."]
 position = Vector2(842, 154)
 texture = ExtResource("19")
 centered = false
-offset = Vector2(-8, -16)
+offset = Vector2(-4, -8)
 
 [node name="Garden" type="Sprite2D" parent="."]
 z_index = -1
 position = Vector2(840, 306)
 texture = ExtResource("20")
+offset = Vector2(16, 22)
 centered = false
 
 [node name="Stairs" type="Sprite2D" parent="."]
 z_index = -1
 position = Vector2(816, 222)
 texture = ExtResource("21")
+offset = Vector2(12, 24)
 centered = false
 
 [node name="RuinC" type="Sprite2D" parent="."]
 position = Vector2(758, 192)
 texture = ExtResource("24")
 centered = false
-offset = Vector2(-8, -12)
+offset = Vector2(-4, -6)
 
 [node name="RuinA" type="Sprite2D" parent="."]
 position = Vector2(782, 186)
 texture = ExtResource("22")
 centered = false
-offset = Vector2(-8, -12)
+offset = Vector2(-4, -6)
 
 [node name="RuinB" type="Sprite2D" parent="."]
 position = Vector2(806, 180)
 texture = ExtResource("23")
 centered = false
-offset = Vector2(-8, -12)
+offset = Vector2(-4, -6)
 
 [node name="Campfire" type="Sprite2D" parent="."]
 position = Vector2(369, 297)
@@ -430,13 +443,13 @@ offset = Vector2(-12, -24)
 position = Vector2(712, 442)
 texture = ExtResource("27")
 centered = false
-offset = Vector2(-7, -16)
+offset = Vector2(-4, -8)
 
 [node name="DockBucket" type="Sprite2D" parent="."]
 position = Vector2(737, 448)
 texture = ExtResource("28")
 centered = false
-offset = Vector2(-5, -10)
+offset = Vector2(-3, -6)
 
 [node name="Npcs" type="Node2D" parent="."]
 y_sort_enabled = true
@@ -445,37 +458,37 @@ y_sort_enabled = true
 position = Vector2(188, 172)
 texture = ExtResource("43")
 centered = false
-offset = Vector2(-16, -32)
+offset = Vector2(-8, -16)
 
 [node name="Enchanter" type="Sprite2D" parent="Npcs"]
 position = Vector2(518, 160)
 texture = ExtResource("44")
 centered = false
-offset = Vector2(-16, -32)
+offset = Vector2(-8, -16)
 
 [node name="Keeper" type="Sprite2D" parent="Npcs"]
 position = Vector2(737, 166)
 texture = ExtResource("45")
 centered = false
-offset = Vector2(-16, -32)
+offset = Vector2(-8, -16)
 
 [node name="Elder" type="Sprite2D" parent="Npcs"]
 position = Vector2(317, 295)
 texture = ExtResource("42")
 centered = false
-offset = Vector2(-16, -32)
+offset = Vector2(-8, -16)
 
 [node name="Guard" type="Sprite2D" parent="Npcs"]
 position = Vector2(824, 395)
 texture = ExtResource("48")
 centered = false
-offset = Vector2(-16, -32)
+offset = Vector2(-8, -16)
 
 [node name="Fisher" type="Sprite2D" parent="Npcs"]
 position = Vector2(714, 460)
 texture = ExtResource("46")
 centered = false
-offset = Vector2(-24, -32)
+offset = Vector2(-12, -16)
 
 [node name="Bobber" type="Sprite2D" parent="Npcs"]
 position = Vector2(761, 484)
@@ -487,7 +500,7 @@ offset = Vector2(-2, -4)
 position = Vector2(606, 348)
 texture = ExtResource("49")
 centered = false
-offset = Vector2(-6, -12)
+offset = Vector2(-3, -6)
 
 [node name="World" type="StaticBody2D" parent="."]
 collision_layer = 1
@@ -545,7 +558,7 @@ collision_mask = 2
 
 [node name="Sprite" type="Sprite2D" parent="Gate"]
 position = Vector2(0, 24)
-offset = Vector2(0, -24)
+offset = Vector2(0, -12)
 texture = ExtResource("3")
 
 [node name="Collision" type="CollisionShape2D" parent="Gate"]
@@ -599,7 +612,7 @@ collision_mask = 2
 [node name="Sprite" type="Sprite2D" parent="TrainStation"]
 texture = ExtResource("62")
 centered = false
-offset = Vector2(-16, -32)
+offset = Vector2(-8, -16)
 
 [node name="Collision" type="CollisionShape2D" parent="TrainStation"]
 shape = SubResource("shape_train")

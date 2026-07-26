@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://swg5rvel7jq4"
+path="res://.godot/imported/village_train_station.aseprite-8d051c3fd6c87bcd3744515ddea40092.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village_train_station.aseprite"
+dest_files=["res://.godot/imported/village_train_station.aseprite-8d051c3fd6c87bcd3744515ddea40092.res"]
+
+[params]
+

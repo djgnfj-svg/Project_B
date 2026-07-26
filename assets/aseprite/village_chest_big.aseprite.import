@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://s0cqa4hdgqyj"
+path="res://.godot/imported/village_chest_big.aseprite-425e49a892cfaa73c64b1832f17cbee0.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village_chest_big.aseprite"
+dest_files=["res://.godot/imported/village_chest_big.aseprite-425e49a892cfaa73c64b1832f17cbee0.res"]
+
+[params]
+

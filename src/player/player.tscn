@@ -11,7 +11,7 @@
 [ext_resource type="Texture2D" path="res://assets/sprites/fx/sword_wave.png" id="9"]
 
 [sub_resource type="RectangleShape2D" id="shape_body"]
-size = Vector2(12, 12)
+size = Vector2(6, 6)
 
 [node name="Player" type="CharacterBody2D"]
 collision_layer = 2
@@ -22,11 +22,11 @@ job = ExtResource("3")
 [node name="Sprite" type="AnimatedSprite2D" parent="."]
 z_index = 1
 sprite_frames = ExtResource("2")
-animation = &"idle"
-autoplay = "idle"
+animation = &"idle_s"
+autoplay = "idle_s"
 
 [node name="WeaponPivot" type="Node2D" parent="."]
-position = Vector2(0, -4)
+position = Vector2(0, -2)
 
 [node name="Weapon" type="Sprite2D" parent="WeaponPivot"]
 centered = false
@@ -57,11 +57,12 @@ script = ExtResource("6")
 
 [node name="Shadow" type="Sprite2D" parent="."]
 z_index = -2
-position = Vector2(0, 13)
+position = Vector2(0, 7)
+scale = Vector2(0.5, 0.5)
 texture = ExtResource("7")
 
 [node name="Dust" type="CPUParticles2D" parent="."]
-position = Vector2(0, 14)
+position = Vector2(0, 8)
 emitting = false
 amount = 12
 lifetime = 0.45

@@ -1,7 +1,7 @@
 [gd_resource type="Resource" script_class="EnemyDef" load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://src/core/enemy_def.gd" id="1"]
-[ext_resource type="Texture2D" path="res://assets/sprites/enemies/brute_48.png" id="2"]
+[ext_resource type="Texture2D" path="res://assets/sprites/enemies/brute_24.png" id="2"]
 [ext_resource type="Script" path="res://src/core/drop_table.gd" id="3"]
 [ext_resource type="Script" path="res://src/core/drop_entry.gd" id="4"]
 
@@ -35,11 +35,11 @@ display_name = "브루트"
 max_hp = 120
 respawns = false
 sprite = ExtResource("2")
-body_radius = 14.0
+body_radius = 7.0
 move_speed = 40.0
 aggro_range = 220.0
 attack_range = 42.0
-strike_radius = 32.0
+strike_radius = 16.0
 attack_damage = 12
 telegraph_s = 0.9
 attack_cooldown_s = 1.8

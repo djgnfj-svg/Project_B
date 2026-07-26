@@ -186,11 +186,15 @@ func _initialize() -> void:
 	failures += _check(CombatMath.is_shot_origin_ok(origin, Vector2(44.0, 0.0)), "shot_origin: 경계선(44.0) 허용")
 	failures += _check(not CombatMath.is_shot_origin_ok(origin, Vector2(44.1, 0.0)), "shot_origin: 한계 밖(44.1) 거부")
 	failures += _check(not CombatMath.is_shot_origin_ok(origin, Vector2(200.0, 0.0)), "shot_origin: 순간이동 원점(200) 거부")
-	# 화살 명중 반경 — ARROW_HIT_RADIUS 6 + 적 body_radius (거대 적 §3 대응)
-	failures += _check(CombatMath.is_arrow_hit(Vector2(6.0, 0.0), Vector2.ZERO), "arrow_hit: body0 경계선(6.0) 적중")
-	failures += _check(not CombatMath.is_arrow_hit(Vector2(6.1, 0.0), Vector2.ZERO), "arrow_hit: body0 반경 밖(6.1) 빗나감")
-	failures += _check(CombatMath.is_arrow_hit(Vector2(20.0, 0.0), Vector2.ZERO, 14.0), "arrow_hit: 브루트 body14 경계선(6+14=20) 적중")
-	failures += _check(not CombatMath.is_arrow_hit(Vector2(20.1, 0.0), Vector2.ZERO, 14.0), "arrow_hit: 브루트 body14 밖(20.1) 빗나감")
+	# 화살 명중 반경 = ARROW_HIT_RADIUS + 적 body_radius (거대 적 §3 대응).
+	# ⚠ 경계값을 숫자로 박지 마라 — 검증 대상은 "경계에서 어떻게 동작하나"이지 상수 값 자체가 아니다.
+	#   16px 전환에서 굵기가 6→3으로 바뀌자 하드코딩된 6.0이 통째로 빨개졌다(값만 낡은 거짓 실패).
+	var ahr := CombatMath.ARROW_HIT_RADIUS
+	var big := 14.0  # 거대 적 body_radius 예시
+	failures += _check(CombatMath.is_arrow_hit(Vector2(ahr, 0.0), Vector2.ZERO), "arrow_hit: body0 경계선 적중")
+	failures += _check(not CombatMath.is_arrow_hit(Vector2(ahr + 0.1, 0.0), Vector2.ZERO), "arrow_hit: body0 반경 밖 빗나감")
+	failures += _check(CombatMath.is_arrow_hit(Vector2(ahr + big, 0.0), Vector2.ZERO, big), "arrow_hit: 거대 적 경계선(굵기+body) 적중")
+	failures += _check(not CombatMath.is_arrow_hit(Vector2(ahr + big + 0.1, 0.0), Vector2.ZERO, big), "arrow_hit: 거대 적 밖 빗나감")
 	# 수명 = clamp(사거리)/속도 (무기별 사거리, 표시·호스트 공용 결정론). G_SHOOT "r"이 이 함수를 지난다.
 	failures += _check(is_equal_approx(CombatMath.arrow_lifetime_s(), CombatMath.DEFAULT_ARROW_RANGE / CombatMath.ARROW_SPEED), "arrow_lifetime(): 폴백 = DEFAULT_ARROW_RANGE/SPEED")
 	failures += _check(is_equal_approx(CombatMath.arrow_lifetime_s(210.0), 210.0 / CombatMath.ARROW_SPEED), "arrow_lifetime(210): 무기 사거리 그대로")
@@ -248,7 +252,9 @@ func _initialize() -> void:
 	failures += _check(is_equal_approx(CombatMath.projectile_lifetime_s(240.0, 240.0), 1.0), "proj_lifetime: 240px/240speed = 1.0s")
 	failures += _check(is_equal_approx(CombatMath.projectile_lifetime_s(240.0, 0.0), 240.0 / CombatMath.ARROW_SPEED), "proj_lifetime: 속도 0 → 기본 속도로 계산")
 	# 터널링 불변식(§3 주석) — 프레임당 전진 < 최소 명중 지름. MAX_PROJECTILE_SPEED를 올리면 여기가 빨개진다.
-	failures += _check(CombatMath.MAX_PROJECTILE_SPEED / 60.0 < 2.0 * (CombatMath.ARROW_HIT_RADIUS + 6.0), "터널링 불변식: 프레임 전진 < 최소 명중 지름(body_radius 6 기준)")
+	# ⚠ EnemyDef.body_radius 기본값과 미러다 — 16px 전환으로 6→3이 되며 여유가 절반으로 줄었다.
+	#   기본값을 또 낮추거나 속도 상한을 올리면 여기가 빨개진다(화살이 적을 통과하기 시작하는 지점).
+	failures += _check(CombatMath.MAX_PROJECTILE_SPEED / 60.0 < 2.0 * (CombatMath.ARROW_HIT_RADIUS + 3.0), "터널링 불변식: 프레임 전진 < 최소 명중 지름(body_radius 기본 3)")
 
 	# --- 지연 보상 (§3, 2026-07-24) — "피했는데 맞았다"를 없애는 계약 ---
 	# 편도 지연 정규화: 음수·NaN·스파이크를 판정에 쓸 수 있는 값으로
