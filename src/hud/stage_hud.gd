@@ -9,6 +9,9 @@ const TOAST_COLOR_UNLOCK := Color(1, 0.85, 0.3, 1)  # 도면·하위 직업 해�
 const TOAST_COLOR_LEVEL := Color(0.6, 1, 0.7, 1)  # 레벨업 = 연두
 const PHASE_BANNER_TIME := 2.0  # 페이즈2 배너 표시 시간 (연출값)
 const PING_LABEL_REFRESH_S := 0.5  # 핑 표시 갱신 주기(s) — Net의 측정 주기와 같게 (더 자주 그려도 값이 안 바뀜)
+# 구르기 쿨 표시 색 — 준비됨(밝은 흰)/쿨 중(흐림). 연출값이라 스크립트 const (rules §0 예외).
+const ROLL_READY_COLOR := Color(1, 1, 1, 1)
+const ROLL_COOLING_COLOR := Color(0.62, 0.70, 0.82, 1)
 const INV_ICON_SIZE := 16.0  # 인벤 아이콘 표시 크기(px)
 # UI 오버레이 조합 — HUD가 설정/인벤 패널을 무는 것은 조합(rules §0 예외). class_name 대신 preload(§0).
 const SettingsPanelScene := preload("res://src/ui/settings_panel.tscn")
@@ -21,6 +24,8 @@ var _toast_busy: bool = false  # 현재 한 건을 표시 중인가 (타이머 �
 var _phase_banner_seq: int = 0  # 페이즈 배너 자동 숨김 타이머 경합 가드 (다른 배너가 덮으면 안 지움)
 var _inv_panel: CanvasLayer = null  # I키 인벤 창 — HUD가 무는 조합(어디서나 열림)
 var _ping_refresh_accum: float = 0.0  # 핑 표시 갱신 누산
+var _local_player: Node = null  # 구르기 쿨 표시용 로컬 아바타 캐시 (씬/스폰마다 바뀌므로 유효성 재확인)
+var _roll_ready: bool = true  # 구르기 준비 상태 — 바뀔 때만 색을 덮어쓴다(매 프레임 override는 WASM에서 낭비)
 
 @onready var _room_label: Label = $RoomCode
 @onready var _progress: Label = $Progress
@@ -35,6 +40,8 @@ var _ping_refresh_accum: float = 0.0  # 핑 표시 갱신 누산
 @onready var _growth: Control = $Growth
 @onready var _level_label: Label = $Growth/LevelLabel
 @onready var _exp_bar: ProgressBar = $Growth/ExpBar
+@onready var _roll_bar: ProgressBar = $RollBar
+@onready var _roll_label: Label = $RollBar/RollLabel
 
 
 func _ready() -> void:
@@ -87,11 +94,44 @@ func _update_room_label() -> void:
 
 
 func _process(delta: float) -> void:
+	_refresh_roll_bar()  # 매 프레임 — 쿨은 0.8s 미만이라 0.5s 주기로 그리면 눈금이 뛴다
 	_ping_refresh_accum += delta
 	if _ping_refresh_accum < PING_LABEL_REFRESH_S:
 		return
 	_ping_refresh_accum = 0.0
 	_update_room_label()
+
+
+# 구르기 쿨 표시 — **표시 전용·네트워크 0.** 로컬 아바타의 읽기 접근자(roll_cooldown_ratio)만 본다.
+# 바는 "차오르면 준비됨"(value = 1 − 남은비율) — 비어 가는 바보다 "지금 구를 수 있나"가 한눈에 읽힌다.
+# 로컬 플레이어가 아직 없으면(스폰 전·로비) 숨긴다 — 빈 바가 떠 있으면 버그처럼 보인다.
+func _refresh_roll_bar() -> void:
+	var p := _local_player_node()
+	if p == null:
+		_roll_bar.visible = false
+		return
+	_roll_bar.visible = true
+	var ratio := float(p.call("roll_cooldown_ratio"))
+	_roll_bar.value = 1.0 - ratio
+	var ready := ratio <= 0.0
+	if ready != _roll_ready:
+		_roll_ready = ready
+		_roll_label.add_theme_color_override(
+			&"font_color", ROLL_READY_COLOR if ready else ROLL_COOLING_COLOR)
+
+
+# 로컬 아바타 찾기 — 씬 전환·재스폰마다 노드가 바뀌므로 캐시를 유효성으로 검증하고 필요할 때만 다시 스캔한다.
+# ⚠ 씬 스왑 프레임엔 이전 씬 노드가 그룹에 남는다(rules §5) — 캐시가 무효해지면 그 프레임에 옛 노드를
+#   잡을 수 있지만, 표시 전용이고 다음 프레임에 새 노드로 교체되므로 무해하다.
+func _local_player_node() -> Node:
+	if is_instance_valid(_local_player) and _local_player.is_inside_tree():
+		return _local_player
+	_local_player = null
+	for n: Node in get_tree().get_nodes_in_group("player"):
+		if n.get("is_local") == true and n.has_method("roll_cooldown_ratio"):
+			_local_player = n
+			break
+	return _local_player
 
 
 # I키로 인벤 창 토글 — HUD가 확실히 소비(패널은 I를 안 먹는다, 중복 방지). Esc 닫기는 패널 자체.
