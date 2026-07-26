@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=14 format=3]
 
 [ext_resource type="Script" path="res://src/stage/campfire.gd" id="1"]
 [ext_resource type="Resource" path="res://data/campfire/default.tres" id="2"]
@@ -10,6 +10,7 @@
 [ext_resource type="Script" path="res://src/net/scene_flow.gd" id="8"]
 [ext_resource type="PackedScene" path="res://src/hud/stage_hud.tscn" id="9"]
 [ext_resource type="Script" path="res://src/stage/chapter_flow.gd" id="10"]
+[ext_resource type="Script" path="res://src/stage/arrow_field.gd" id="11"]
 
 [sub_resource type="CircleShape2D" id="shape_fire"]
 radius = 44.0
@@ -73,6 +74,9 @@ spawn_base = Vector2(200, 180)
 [node name="CombatAuthority" type="Node" parent="."]
 script = ExtResource("7")
 peer_sync_path = NodePath("../PeerSync")
+
+[node name="ArrowField" type="Node" parent="."]
+script = ExtResource("11")
 
 [node name="SceneFlow" type="Node" parent="."]
 script = ExtResource("8")

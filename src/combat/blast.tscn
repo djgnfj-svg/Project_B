@@ -1,0 +1,9 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://src/combat/blast.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/fx/blast.png" id="2"]
+
+[node name="Blast" type="Sprite2D"]
+visible = false
+texture = ExtResource("2")
+script = ExtResource("1")

@@ -34,6 +34,15 @@ var storage_gold: int = 0
 var storage_materials: Dictionary = {}    # mat_id(String) -> qty(int)
 var storage_equipment: Dictionary = {}    # equip_id(String) -> level(int)
 
+# --- 직업 레벨 성장축 (2026-07-25, GDD v1.8) — 각 클라 자기 것(비네트워크), 저장 대상 ---
+# 계열(selected_job_id) 안의 하위 직업들이 5스탯을 담당한다. 효과 = 메인 온전 + 서브 합산 (GDD §5).
+var main_sub_job_id: String = ""   # 메인(활성) 하위 직업 — 마을에서만 변경 (GDD §5)
+# 🔴 **레벨은 저장하지 않는다 — EXP에서 파생한다**(CombatMath.level_for_exp). 둘을 다 들고 있으면
+#   어긋난 상태가 생기고, 레벨은 G_STATS 스탯 공지의 근거라 어긋남이 곧 클라 간 스탯 발산이다.
+var sub_job_exp: Dictionary = {}   # sub_id(String) -> 누적 EXP(int). **키의 존재 = 보유(해금됨)**
+var _sub_job_ids: Array[String] = []      # data/subjobs/ 스캔 캐시
+var _sub_job_cache: Dictionary = {}       # id -> SubJobDef (_equip_cache와 같은 이유 — 반복 .tres 재파싱 방지)
+
 
 # 직업 id 목록 — data/jobs/*.tres 파일명에서 유도. 하드코딩 금지: "새 직업 = 파일 한 장" (rules §4).
 # 익스포트 pck에선 .tres가 .remap(바이너리 변환 리맵)으로 보일 수 있어 접미사를 벗겨 판별한다.
@@ -187,10 +196,22 @@ func equipment_ids() -> Array[String]:
 	return _equipment_ids
 
 
+# ⚠ 캐시 필수(2026-07-24 리뷰): 투사체 파라미터 리졸브가 **발사마다** 이 함수를 탄다
+# (표시 스폰 + 호스트 등록 = 샷당 2회 이상, 궁수 연사 0.15s면 클라당 ~13회/s). 캐시가 없으면
+# 반환 EquipDef의 refcount가 0으로 떨어져 매번 .tres 재파싱 → WASM에서 "쏘는 순간" 프레임 히치.
+# allowlist(equipment_ids) 통과분만 담으므로 조작 id가 캐시에 들어오지 못한다.
+var _equip_cache: Dictionary = {}  # id -> EquipDef
+
+
 func equip_def(id: String) -> EquipDef:
+	if _equip_cache.has(id):
+		return _equip_cache[id] as EquipDef
 	if id not in equipment_ids():
 		return null
-	return load("res://data/equipment/%s.tres" % id) as EquipDef
+	var e := load("res://data/equipment/%s.tres" % id) as EquipDef
+	if e != null:
+		_equip_cache[id] = e
+	return e
 
 
 func recipe_ids() -> Array[String]:
@@ -294,6 +315,9 @@ func can_craft(recipe_id: String) -> bool:
 	var r := recipe_def(recipe_id)
 	if r == null or not has_blueprint(recipe_id):
 		return false
+	# 직업 귀속 — 다른 직업 무기는 제작 불가(재료만 태우고 못 쓰는 걸 차단). equip()과 같은 규칙(can_equip_job).
+	if not can_equip_job(equip_def(r.result_equip_id)):
+		return false
 	# 이미 보유(가방/창고)한 장비는 재제작 불가 — 장비는 id당 1개(중복 제작이 재료만 태우는 걸 차단).
 	if owned_equipment.has(r.result_equip_id) or storage_equipment.has(r.result_equip_id):
 		return false
@@ -350,12 +374,18 @@ func upgrade_equipment(equip_id: String) -> bool:
 	return true
 
 
+# 직업 귀속 판정 단일 소스 — 무기 job_id가 비면 범용, 아니면 현재 선택 직업과 일치해야 착용/제작 가능.
+# equip()·can_craft()가 같은 규칙을 쓴다(전사가 활 못 듦). 방어구는 보통 job_id 비움 = 범용.
+func can_equip_job(e: EquipDef) -> bool:
+	return e != null and (e.job_id.is_empty() or e.job_id == selected_job_id)
+
+
 func equip(equip_id: String) -> void:
 	if equip_level(equip_id) < 0:
 		return
 	var e := equip_def(equip_id)
-	if e == null:
-		return
+	if e == null or not can_equip_job(e):
+		return  # 직업 귀속 위반 = 착용 거부 (전사가 활 등)
 	equipped[e.slot()] = equip_id
 	_notify_inventory()
 
@@ -400,6 +430,32 @@ func current_stats() -> Dictionary:
 	return CombatMath.total_stats(equipped_defs())
 
 
+# 🔴 투사체 파라미터 리졸브 — 단일 소스 (rules §3, 차지 지팡이 2026-07-24).
+# 표시(ArrowField: 탄 겉모습·속도·수명·폭발 FX 반경)와 판정(CombatAuthority: 호스트 전진·명중·폭발 반경)이
+# 반드시 같은 값을 얻어야 "맞는 곳=보이는 곳"이 유지된다 — 한쪽에서 직접 계산하면 갈라진다.
+# weapon_id = G_SHOOT "w"(발신자 주장) → **allowlist 리졸브만** 한다(모르는 id → null → 기본 화살 폴백,
+# 경로 조작 불가 §3). 리졸브되면 사거리·속도·폭발 반경은 전송값이 아니라 **내 로컬 무기 데이터**에서 나온다
+# (스푸핑 표면 최소화). 리졸브 실패 시에만 전송 사거리(fallback_range)를 clamp해 쓴다(궁수 구경로 호환).
+func projectile_params(weapon_id: String, fallback_range: float, charge: int) -> Dictionary:
+	var e := equip_def(weapon_id)
+	var lv := CombatMath.clamp_charge_level(charge)
+	var is_charge := e != null and e.motion_type == "charge"
+	var speed := CombatMath.clamp_projectile_speed(e.projectile_speed if e != null else 0.0)
+	var travel := e.arrow_range if e != null else fallback_range
+	return {
+		"level": lv if is_charge else 0,  # 비차지 무기에 실린 레벨 주장은 여기서 떨군다(심층 방어 — is_charge_time_ok와 이중)
+		"speed": speed,
+		"life": CombatMath.projectile_lifetime_s(travel, speed),
+		"blast": CombatMath.charge_blast_radius(e.blast_radius if e != null else 0.0, lv),
+		"texture": e.projectile_texture if e != null else null,
+		"spin": e.projectile_spin if e != null else false,
+		"scale": CombatMath.CHARGE_ORB_SCALE[lv] if is_charge else 1.0,
+		"tint": e.swing_color if e != null else Color(1, 1, 1, 1),
+		"blast_sfx": e.blast_sfx if e != null else "",
+		"step_time": e.charge_step_time if is_charge else 0.0,  # 0 = 차지 무기가 아님 → 호스트가 레벨 주장을 거부
+	}
+
+
 # 데이터에서 유도한 이론상 최대 장비 스탯(각 스탯 최대 레벨) — G_STATS 수신 클램프의 현실 상한(심층 방어).
 # 정직한 최강 장비는 통과, 임의 수 주입만 막는다 (rules §2: 4인/PvP 전 본격 검증 게이트).
 func max_equip_stats() -> Dictionary:
@@ -413,6 +469,235 @@ func max_equip_stats() -> Dictionary:
 		atk = maxi(atk, int(s["attack"]))
 		hp = maxi(hp, int(s["hp"]))
 	return {"attack": atk, "hp": hp}
+
+
+# --- 직업 레벨 성장축 (GDD v1.8) — 리졸버·EXP 적립·해금·레벨 스탯 ---
+# 리졸버는 job/equipment와 같은 스캔 allowlist 규약 (rules §4) — 저장·네트워크로 들어온 id도 여길 지난다.
+
+func sub_job_ids() -> Array[String]:
+	if _sub_job_ids.is_empty():
+		_sub_job_ids = _scan_ids("res://data/subjobs")
+	return _sub_job_ids
+
+
+func sub_job_def(id: String) -> SubJobDef:
+	if _sub_job_cache.has(id):
+		return _sub_job_cache[id] as SubJobDef
+	if id not in sub_job_ids():
+		return null  # allowlist 밖 — 폐기(경로 조작 불가)
+	var s := load("res://data/subjobs/%s.tres" % id) as SubJobDef
+	if s != null:
+		_sub_job_cache[id] = s
+	return s
+
+
+# 한 계열의 하위 직업 id들 — order 정렬. 해금 체인의 단일 소스.
+func sub_jobs_of_series(series_id: String) -> Array[String]:
+	var pairs: Array = []
+	for sid: String in sub_job_ids():
+		var d := sub_job_def(sid)
+		if d != null and d.series_id == series_id:
+			pairs.append([d.order, sid])
+	pairs.sort_custom(func(a: Array, b: Array) -> bool: return int(a[0]) < int(b[0]))
+	var out: Array[String] = []
+	for p: Array in pairs:
+		out.append(str(p[1]))
+	return out
+
+
+# 현재(또는 지정) 계열에서 **보유한** 하위 직업 — order 정렬. sub_job_exp의 키 = 보유.
+func owned_sub_jobs(series_id: String = "") -> Array[String]:
+	var series := series_id if not series_id.is_empty() else selected_job_id
+	var out: Array[String] = []
+	for sid: String in sub_jobs_of_series(series):
+		if sub_job_exp.has(sid):
+			out.append(sid)
+	return out
+
+
+# 계열의 EXP 곡선 (JobDef.exp_curve, 비면 CombatMath 기본) — 레벨 파생·HUD 바 공용.
+# ⚠ series_id를 비우면 **현재 선택 계열**이다. 하위 직업의 레벨을 구할 때는 반드시 그 하위 직업의
+#   계열을 넘겨라 — 선택 직업 기준으로 계산하면 계열이 섞인 상태에서 표시 레벨이 거짓말한다
+#   (전사로 키운 뒤 궁수를 골라도 HUD가 "검사 LvN"을 띄우던 문제, 2026-07-25 리뷰 I3).
+func exp_curve(series_id: String = "") -> PackedInt32Array:
+	var j := job_def(series_id) if not series_id.is_empty() else selected_job()
+	if j != null and j.exp_curve.size() >= 2:
+		return j.exp_curve
+	return CombatMath.default_exp_curve()
+
+
+func has_sub_job(id: String) -> bool:
+	return sub_job_exp.has(id)
+
+
+func sub_job_level(id: String) -> int:
+	if not sub_job_exp.has(id):
+		return 0
+	var d := sub_job_def(id)
+	if d == null:
+		return 0
+	return CombatMath.level_for_exp(int(sub_job_exp[id]), exp_curve(d.series_id), d.max_level)
+
+
+func main_sub_job() -> SubJobDef:
+	var d := sub_job_def(main_sub_job_id)
+	if d == null or d.series_id != selected_job_id:
+		return null  # 타 계열 진행분은 이 판에서 없는 것으로 본다 (HUD가 남의 계열 레벨을 띄우지 않게)
+	return d
+
+
+# HUD EXP 바 — 메인 하위 직업의 {level, cur, need}. 미보유 = 0/0/0(표기 없음).
+func main_exp_progress() -> Dictionary:
+	var d := main_sub_job()
+	if d == null:
+		return {"level": 0, "cur": 0, "need": 0}
+	return CombatMath.exp_progress(int(sub_job_exp.get(main_sub_job_id, 0)), exp_curve(d.series_id), d.max_level)
+
+
+func _notify_growth() -> void:
+	var b := _bus()
+	if b != null:
+		b.growth_changed.emit()
+
+
+# 새 판 기본 지급 — 계열의 첫 하위 직업을 0 EXP로. grant_starting_loadout 미러(멱등: 이미 이 계열
+# 진행분이 있으면 재지급 안 하고 메인만 보정). 세이브 로드 후 마을 진입에서 부른다.
+func grant_starting_sub_job(job: JobDef) -> void:
+	if job == null:
+		return
+	var owned := owned_sub_jobs(job.id)
+	if not owned.is_empty():
+		# 로드한 판 — 진행을 존중. 메인이 비었거나 이 계열 보유분이 아니면 첫 하위 직업으로 보정.
+		if main_sub_job_id not in owned:
+			main_sub_job_id = owned[0]
+			_notify_growth()
+		return
+	if job.starting_sub_job_id.is_empty():
+		return  # 성장축이 없는 계열(데이터 미작성) — 조용히 넘어간다(전 슬라이스 호환)
+	var sid := job.starting_sub_job_id
+	var d := sub_job_def(sid)
+	if d == null:
+		push_warning("[GameState] 모르는 하위 직업 id '%s' — 지급 생략" % sid)
+		return
+	if d.series_id != job.id:
+		push_warning("[GameState] 하위 직업 '%s'의 계열(%s)이 직업(%s)과 불일치 — 지급 생략" % [sid, d.series_id, job.id])
+		return
+	sub_job_exp[sid] = 0
+	main_sub_job_id = sid
+	_notify_growth()
+
+
+# EXP 적립 — 현재 계열 **보유 전부**에 동일 적립 (GDD §6 계열 공용 풀).
+# 반환 = 레벨/해금이 변했나 → 호출부가 이때만 G_STATS 재공지를 트리거한다(킬마다 재공지 방지).
+# ⚠ 다른 계열의 진행분은 건드리지 않는다 — 전사로 키운 EXP가 궁수 판에서 섞이지 않는다.
+func add_exp(amount: int) -> bool:
+	if amount <= 0:
+		return false
+	var owned := owned_sub_jobs()
+	if owned.is_empty():
+		return false
+	var before := {}
+	for sid: String in owned:
+		before[sid] = sub_job_level(sid)
+		sub_job_exp[sid] = int(sub_job_exp.get(sid, 0)) + amount
+	var b := _bus()
+	var changed := false
+	for sid: String in owned:
+		var lv := sub_job_level(sid)
+		if lv > int(before[sid]):
+			changed = true
+			if b != null:
+				b.sub_job_level_up.emit(sid, lv)
+	if _try_unlock_next():
+		changed = true
+	if b != null:
+		var p := main_exp_progress()
+		b.exp_changed.emit(int(p["cur"]), int(p["need"]))  # 가벼운 훅(HUD 바) — 재공지를 유발하지 않는다
+	if changed:
+		_notify_growth()
+	return changed
+
+
+# 해금 — 메인이 unlocks_next_at에 닿으면 계열의 다음(order+1) 하위 직업을 연다.
+# 해금분은 **0 EXP로 시작**한다 → "해금 이후 적립분만 받으므로 자연히 레벨이 낮다"(GDD §6).
+func _try_unlock_next() -> bool:
+	var main := main_sub_job()
+	if main == null:
+		return false
+	if sub_job_level(main_sub_job_id) < main.unlocks_next_at:
+		return false
+	for sid: String in sub_jobs_of_series(main.series_id):
+		if sub_job_exp.has(sid):
+			continue
+		var d := sub_job_def(sid)
+		if d != null and d.order == main.order + 1:
+			sub_job_exp[sid] = 0
+			var b := _bus()
+			if b != null:
+				b.sub_job_unlocked.emit(sid)
+			return true
+	return false
+
+
+# 메인 전환 — 마을에서만(GDD §5). 판 도중 전환은 상황별 스탯 취사선택 이득이라 거부한다.
+func set_main_sub_job(id: String) -> bool:
+	if in_chapter():
+		return false
+	if not sub_job_exp.has(id):
+		return false  # 미보유
+	var d := sub_job_def(id)
+	if d == null or d.series_id != selected_job_id:
+		return false  # 타 계열 거부
+	if main_sub_job_id == id:
+		return true
+	main_sub_job_id = id
+	_notify_growth()
+	return true
+
+
+# 현재 레벨 스탯 {crit, crit_dmg, haste, move, leech} — 전투(호스트 확정)·공지·UI 공용 (단일 소스 CombatMath).
+func current_level_stats() -> Dictionary:
+	var levels := {}
+	var defs := {}
+	for sid: String in owned_sub_jobs():
+		var d := sub_job_def(sid)
+		if d == null:
+			continue
+		levels[sid] = sub_job_level(sid)
+		defs[sid] = d
+	return CombatMath.level_stats(main_sub_job_id, levels, defs)
+
+
+# 데이터에서 유도한 이론상 최대 레벨 스탯 — G_STATS "lv" 수신 clamp의 현실 상한 (max_equip_stats 미러).
+# 계열별로 "그 계열 하위 직업 전부를 만레벨·전부 메인 취급"한 관대한 합 → 정직한 최대치(서브 가중 < 1)는
+# 절대 안 잘리고, 임의 수 주입만 막는다. 하드 상한(CombatMath.LEVEL_STAT_MAX)과 이중 방어.
+func max_level_stats() -> Dictionary:
+	var sums := {}   # series -> {key: Σ 만레벨 스텝}
+	var tops := {}   # series -> {key: 단일 최대 만레벨 스텝}
+	for sid: String in sub_job_ids():
+		var d := sub_job_def(sid)
+		if d == null:
+			continue
+		var s := CombatMath.sub_job_stat_at_level(d, d.max_level)
+		var sum_t: Dictionary = sums.get(d.series_id, {})
+		var top_t: Dictionary = tops.get(d.series_id, {})
+		for key: String in CombatMath.LEVEL_STAT_KEYS:
+			sum_t[key] = float(sum_t.get(key, 0.0)) + float(s[key])
+			top_t[key] = maxf(float(top_t.get(key, 0.0)), float(s[key]))
+		sums[d.series_id] = sum_t
+		tops[d.series_id] = top_t
+	var out := CombatMath.empty_level_stats()
+	var w := CombatMath.SUB_JOB_WEIGHT
+	for series: String in sums:
+		var sum_t: Dictionary = sums[series]
+		var top_t: Dictionary = tops[series]
+		for key: String in CombatMath.LEVEL_STAT_KEYS:
+			# 정직한 최대치 = 가장 센 하나를 메인(가중 1) + 나머지 전부 서브(가중 w) = w·Σ + (1-w)·max.
+			#   "전부 메인" 합산으로 잡으면 하위 직업 개수에 비례해 상한이 부풀어, 조작 게스트가 주장할 수
+			#   있는 여유가 콘텐츠와 함께 조용히 넓어진다 (2026-07-25 리뷰 I2).
+			var cap := w * float(sum_t[key]) + (1.0 - w) * float(top_t[key])
+			out[key] = maxf(float(out[key]), cap)
+	return out
 
 
 # --- 창고 넣기/빼기 (각 클라 로컬 — 네트워크 0개, inventory_changed로 UI 갱신) ---
@@ -500,6 +785,10 @@ func clear_inventory() -> void:
 	storage_gold = 0
 	storage_materials.clear()
 	storage_equipment.clear()
+	# 성장축도 함께 리셋 — 파일만 지우고 오토로드 메모리를 안 지우면 옛 진행이 다음 저장에 도로 써진다(rules §5)
+	main_sub_job_id = ""
+	sub_job_exp.clear()
+	_notify_growth()  # 인벤 알림과 대칭 — 안 쏘면 HUD 레벨 표기가 스테일로 남는다
 
 
 func to_save_dict() -> Dictionary:
@@ -512,6 +801,11 @@ func to_save_dict() -> Dictionary:
 		"storage_gold": storage_gold,
 		"storage_materials": storage_materials.duplicate(),
 		"storage_equipment": storage_equipment.duplicate(),
+		# 성장축 (GDD v1.8) — 🔴 SAVE_VERSION은 올리지 않는다(정확일치 검사라 올리면 배포본 세이브가
+		# 전부 조용히 무시된다, rules §5). 필드 추가 + 구 세이브는 키 없음 → 레벨 0으로 읽힌다.
+		# 레벨은 저장 대상이 아니다 — EXP에서 파생(위 sub_job_exp 주석).
+		"main_sub": main_sub_job_id,
+		"sub_exp": sub_job_exp.duplicate(),
 	}
 
 
@@ -550,4 +844,16 @@ func from_save_dict(d: Dictionary) -> void:
 		# 창고와 가방 양쪽에 같은 id가 오면(손상 세이브) 가방 우선 — 창고분은 버려 id당 1개 불변식 유지.
 		if eid in equipment_ids() and not owned_equipment.has(eid):
 			storage_equipment[eid] = maxi(0, int(seqp[eid]))
+	# 성장축 (GDD v1.8) — 인벤과 같은 allowlist 재검증. 구 세이브엔 키가 없다 → 빈 상태로 두고
+	# 마을 진입의 grant_starting_sub_job이 0 EXP로 지급한다("구 세이브는 레벨 0으로 읽힌다").
+	# ⚠ EXP 상한 clamp가 없어도 안전하다: 레벨은 level_for_exp가 max_level로 clamp하고, 공지된 스탯은
+	#   수신 측이 max_level_stats로 다시 clamp한다 → 조작 세이브가 정직한 만성장을 초과할 수 없다.
+	var sexp: Dictionary = d.get("sub_exp", {})
+	for sid: String in sexp:
+		if sid in sub_job_ids():
+			sub_job_exp[sid] = maxi(0, int(sexp[sid]))
+	var ms := str(d.get("main_sub", ""))
+	if sub_job_exp.has(ms):
+		main_sub_job_id = ms  # 보유분이 아니면 비워 둔다 — grant_starting_sub_job이 첫 하위 직업으로 보정
 	_notify_inventory()
+	_notify_growth()

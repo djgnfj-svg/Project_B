@@ -1,4 +1,4 @@
-[gd_scene load_steps=16 format=3]
+[gd_scene load_steps=18 format=3]
 
 [ext_resource type="Script" path="res://src/stage/stage.gd" id="1"]
 [ext_resource type="Texture2D" path="res://assets/sprites/stage/swamp_ground.png" id="2"]
@@ -15,6 +15,8 @@
 [ext_resource type="Script" path="res://src/stage/drop_authority.gd" id="11"]
 [ext_resource type="Script" path="res://src/stage/drop_field.gd" id="12"]
 [ext_resource type="Script" path="res://src/stage/swamp_field.gd" id="13"]
+[ext_resource type="Script" path="res://src/stage/arrow_field.gd" id="17"]
+[ext_resource type="Script" path="res://src/stage/exp_authority.gd" id="16"]
 
 [node name="Stage" type="Node2D"]
 script = ExtResource("1")
@@ -53,6 +55,9 @@ script = ExtResource("11")
 script = ExtResource("12")
 drop_authority_path = NodePath("../DropAuthority")
 
+[node name="ArrowField" type="Node" parent="."]
+script = ExtResource("17")
+
 [node name="MobSync" type="Node" parent="."]
 script = ExtResource("7")
 
@@ -71,3 +76,6 @@ script = ExtResource("15")
 boss_eid = "boss1"
 
 [node name="HUD" parent="." instance=ExtResource("10")]
+
+[node name="ExpAuthority" type="Node" parent="."]
+script = ExtResource("16")

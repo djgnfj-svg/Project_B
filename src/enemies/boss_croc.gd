@@ -41,6 +41,9 @@ var _p2_swamp_accum: float = 0.0       # 페이즈2 자동 늪 생성 카운트�
 var _remote_target: Vector2 = Vector2.ZERO
 var _remote_flip: bool = false
 var _telegraph_left: float = 0.0       # 표시용 자동 숨김 타이머(각 클라 로컬 리졸브)
+# 이번 예고를 띄워둘 시간(초) — 호스트는 지연 보상분이 더해진 값, 게스트는 pat.telegraph_s 그대로.
+# WINDUP 진입/예고 수신 때 한 번 확정해 표시·타격이 같은 값을 쓰게 한다(중간에 RTT가 흔들려도 안 갈라지게).
+var _telegraph_hold_s: float = 0.0
 
 @onready var _sprite: AnimatedSprite2D = $Sprite
 @onready var _collision: CollisionShape2D = $Collision
@@ -86,7 +89,7 @@ func _on_hp_changed(hp: int, dropped: bool) -> void:
 	if dropped:
 		var amount := _prev_hp - hp
 		_prev_hp = hp
-		EventBus.combat_impact.emit("enemy", global_position, maxi(amount, 0))  # 손맛 공용 훅
+		EventBus.combat_impact.emit("enemy", global_position, maxi(amount, 0), _health.last_crit)  # 손맛 공용 훅 (crit = 표시 강조)
 		if dead:
 			EventBus.entity_died.emit("enemy", global_position)  # 사망 SFX
 		else:
@@ -215,7 +218,10 @@ func _select_pattern(dist: float) -> BossPatternDef:
 func _begin_windup(pat: BossPatternDef, anchor: Vector2) -> void:
 	_cur_pattern = pat
 	_state = State.WINDUP
-	_state_left = pat.telegraph_s
+	# 지연 보상(§3, 잔몹 mob_melee와 같은 규약): 예고가 게스트 화면에 뜨기까지 편도 지연만큼 늦으므로
+	# 타격도 그만큼 늦춘다 → 게스트도 온전한 telegraph_s를 갖는다. 이 경로는 호스트 전용(보스 AI).
+	_telegraph_hold_s = pat.telegraph_s + CombatMath.strike_delay_s(Net.max_remote_one_way_ms())
+	_state_left = _telegraph_hold_s
 	velocity = Vector2.ZERO
 	_strike_angle = (anchor - global_position).angle()  # 대상 방향
 	_strike_centers = []
@@ -363,7 +369,9 @@ func _spawn_spray_circle(pat: BossPatternDef, center: Vector2) -> void:
 	spr.scale = Vector2.ONE * (pat.range * 2.0 / tex_w)  # 원: 지름 = range*2 (텔레그래프 반경=판정 반경)
 	get_parent().add_child(spr)  # 스테이지 Node2D 자식 (런타임 add_child — _ready 함정 무관, rules §5)
 	spr.global_position = center
-	get_tree().create_timer(pat.telegraph_s).timeout.connect(
+	# 표시 지속 = 호스트는 지연 보상분 포함(_begin_windup 확정), 게스트는 자기 telegraph_s (단일 원과 같은 규약)
+	var hold := _telegraph_hold_s if _telegraph_hold_s > 0.0 else pat.telegraph_s
+	get_tree().create_timer(hold).timeout.connect(
 		func() -> void:
 			if is_instance_valid(spr):
 				spr.queue_free())
@@ -402,7 +410,9 @@ func _show_telegraph_visual(pat: BossPatternDef, center: Vector2, angle: float) 
 		_telegraph.rotation = 0.0
 		_telegraph.scale = Vector2.ONE * (pat.range * 2.0 / tex_w)
 	_telegraph.visible = true
-	_telegraph_left = pat.telegraph_s
+	# 호스트는 지연 보상분이 더해진 시간(_begin_windup에서 확정), 게스트는 자기 telegraph_s.
+	# 게스트가 편도 지연만큼 늦게 시작하고 호스트가 그만큼 늦게 때리므로 양쪽 예고가 같은 순간에 끝난다.
+	_telegraph_left = _telegraph_hold_s if _telegraph_hold_s > 0.0 else pat.telegraph_s
 
 
 # --- 애니 표시 경로 (호스트/게스트 공용 — 판정과 무관) ---

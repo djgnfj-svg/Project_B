@@ -14,6 +14,8 @@ const DEFAULT_MASTER := 0.55  # 초기 마스터 볼륨(선형 0~1) — 사용�
 # 상황 키 → sfx 파일명(assets/audio/sfx/<id>.wav). 파일 없으면 조용히 스킵.
 const SFX := {
 	"swing": "swing",
+	"swing_heavy": "swing_heavy",  # 무거운 대검 스윙(EquipDef.swing_sfx)
+	"thud": "thud",                # 대검 적중 묵직한 쿵(EquipDef.hit_sfx)
 	"hit": "hit",
 	"hurt": "hurt",
 	"roll": "roll",
@@ -23,6 +25,10 @@ const SFX := {
 	"pickup_item": "pickup_item",  # 재료/도면 픽업(item_picked)
 	"pickup_gold": "pickup_gold",  # 골드 픽업(item_picked kind=gold)
 	"blueprint": "blueprint",    # 도면 신규 언락 팡파레(blueprint_unlocked)
+	"bow_fire": "bow_fire",      # 활 발사(시위 튕김) — 궁수 EquipDef.swing_sfx (player_shoot). 명중음은 combat_impact "hit"이 담당
+	"charge_step": "charge_step",  # 차지 단계 상승 "띵" — 법사 EquipDef.charge_sfx (로컬 입력·원격 G_POS "c" 상승 시)
+	"staff_fire": "staff_fire",  # 지팡이 마법탄 발사 — 법사 EquipDef.swing_sfx
+	"blast": "blast",            # 차지 착탄 폭발 — EquipDef.blast_sfx (ArrowField가 weapon_impact로 발화, 각 클라 로컬)
 }
 
 var _players: Array[AudioStreamPlayer] = []
@@ -42,7 +48,8 @@ func _ready() -> void:
 	_load_settings()
 	_apply_volume()
 	EventBus.combat_impact.connect(_on_impact)
-	EventBus.player_swing.connect(func(_pos: Vector2) -> void: play("swing"))
+	EventBus.player_swing.connect(func(_pos: Vector2, sfx: String) -> void: play(sfx))  # 무기별 휘두름음
+	EventBus.weapon_impact.connect(func(_pos: Vector2, sfx: String, _shake: float) -> void: play(sfx))  # 무기 고유 타격음(비면 무음)
 	EventBus.player_roll.connect(func(_pos: Vector2) -> void: play("roll"))
 	EventBus.entity_died.connect(func(kind: String, _pos: Vector2) -> void:
 		play("enemy_death" if kind == "enemy" else "player_death"))
@@ -70,8 +77,8 @@ func play(id: String) -> void:
 	p.play()
 
 
-func _on_impact(kind: String, _pos: Vector2, _amount: int) -> void:
-	play("hit" if kind == "enemy" else "hurt")
+func _on_impact(kind: String, _pos: Vector2, _amount: int, _crit: bool) -> void:
+	play("hit" if kind == "enemy" else "hurt")  # 치명 전용 타격음은 후속(SFX 추가 시 _crit로 분기)
 
 
 # 픽업 SFX — 골드는 코인, 도면은 blueprint_unlocked 팡파레가 담당(무음), 그 외 일반 픽업

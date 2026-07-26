@@ -52,6 +52,32 @@ func _initialize() -> void:
 	_check("전멸 롤백: 커밋된 도면은 생존", gs.has_blueprint("iron_greatsword"))
 	_check("전멸 롤백: 커밋 후 주운 재료 소실", gs.material_count("sharp_fang") == 0)
 
+	# --- EXP·직업 레벨도 재료와 **같은 롤백 규칙** (성장축 GDD v1.8 §6) ---
+	# 성장 자원마다 롤백 규칙이 다르면 플레이어가 "내가 무엇을 잃었는지"를 읽을 수 없다.
+	# 이 계약은 SaveManager 코드 0줄로 성립한다(to/from_save_dict에 필드로 실리기 때문) — 그래서
+	# 저장 필드가 빠지면 여기서만 드러난다.
+	gs.grant_starting_sub_job(gs.job_def("warrior"))
+	gs.add_exp(60)                       # 클리어분 EXP (curve [0,25,60,…] → 2레벨)
+	_check("클리어 전 EXP 적립 = 60", int(gs.sub_job_exp.get("warrior_swordsman", -1)) == 60)
+	_check("클리어 전 레벨 = 2", gs.sub_job_level("warrior_swordsman") == 2)
+	sm.commit()                          # 스테이지 클리어 = 커밋
+	gs.add_exp(45)                       # 전멸 스테이지에서 더 벌어 3레벨(105)까지 감
+	_check("전멸 전 인메모리 EXP = 105", int(gs.sub_job_exp.get("warrior_swordsman", -1)) == 105)
+	_check("전멸 전 레벨 = 3", gs.sub_job_level("warrior_swordsman") == 3)
+	_check("전멸 전 해금 발생(3레벨)", gs.has_sub_job("warrior_berserker"))
+	sm.reload()                          # 전멸 = 마지막 커밋으로 롤백
+	_check("전멸 롤백: EXP = 클리어분 60 (전멸분 45 소실)", int(gs.sub_job_exp.get("warrior_swordsman", -1)) == 60)
+	_check("전멸 롤백: 레벨도 클리어분(2)으로 되돌아감", gs.sub_job_level("warrior_swordsman") == 2)
+	_check("전멸 롤백: 전멸 스테이지에서 딴 해금도 소실", not gs.has_sub_job("warrior_berserker"))
+	_check("전멸 롤백: 메인 하위 직업은 커밋분 그대로", gs.main_sub_job_id == "warrior_swordsman")
+
+	# 🔴 SAVE_VERSION 트립와이어 — 올리면 여기가 빨개지고 이유를 읽게 된다.
+	# save_manager.gd가 버전을 **정확일치**로 검사하므로, 버전을 올리면 이미 배포된
+	# game.jachana.com 플레이어들의 세이브가 조건에서 탈락해 조용히 전부 무시된다.
+	# 성장축 같은 필드 추가는 버전을 올리지 않고 "키 없음 = 기본값" 폴백으로 처리한다(GDD §6).
+	_check("SAVE_VERSION == 1 고정 (올리면 배포본 세이브가 조용히 전멸 — GDD §6·rules §5)",
+		int(SaveManagerScript.SAVE_VERSION) == 1)
+
 	sm.free()
 	gs.free()
 

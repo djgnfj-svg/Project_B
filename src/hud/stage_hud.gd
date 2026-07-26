@@ -3,8 +3,12 @@ extends CanvasLayer
 # 마을·스테이지가 인스턴스로 문다 (rules §2 src/hud). HP는 php 확정만 반영 (§3 — 로컬 선적용 금지).
 
 const INVITE_FX_TIME := 1.5  # 복사 피드백 표시 시간 (연출값)
-const BLUEPRINT_TOAST_TIME := 2.5  # 도면 획득 토스트 표시 시간 (연출값)
+const TOAST_TIME := 2.5  # 토스트 1건 표시 시간 (연출값) — 도면·레벨업·해금 공용
+const TOAST_QUEUE_MAX := 3  # 동시 발생분 대기 상한 (넘치면 가장 오래된 걸 버려 최신 소식이 보이게)
+const TOAST_COLOR_UNLOCK := Color(1, 0.85, 0.3, 1)  # 도면·하위 직업 해금 = 금색
+const TOAST_COLOR_LEVEL := Color(0.6, 1, 0.7, 1)  # 레벨업 = 연두
 const PHASE_BANNER_TIME := 2.0  # 페이즈2 배너 표시 시간 (연출값)
+const PING_LABEL_REFRESH_S := 0.5  # 핑 표시 갱신 주기(s) — Net의 측정 주기와 같게 (더 자주 그려도 값이 안 바뀜)
 const INV_ICON_SIZE := 16.0  # 인벤 아이콘 표시 크기(px)
 # UI 오버레이 조합 — HUD가 설정/인벤 패널을 무는 것은 조합(rules §0 예외). class_name 대신 preload(§0).
 const SettingsPanelScene := preload("res://src/ui/settings_panel.tscn")
@@ -12,9 +16,11 @@ const InventoryPanelScene := preload("res://src/ui/inventory_panel.tscn")
 const GOLD_TEX := preload("res://assets/sprites/items/gold.png")  # 골드 인벤 아이콘 (DropField와 같은 소스)
 
 var _invite_fx_seq: int = 0  # 복사 연타 시 이전 타이머가 새 피드백을 지우지 않게
-var _toast_seq: int = 0  # 도면 연속 획득 시 이전 타이머가 새 토스트를 지우지 않게
+var _toast_queue: Array[Dictionary] = []  # 대기 중 토스트 — 같은 프레임에 여러 건(레벨업+해금)이 와도 차례로 보인다
+var _toast_busy: bool = false  # 현재 한 건을 표시 중인가 (타이머 만료 시 다음 것으로 넘어감)
 var _phase_banner_seq: int = 0  # 페이즈 배너 자동 숨김 타이머 경합 가드 (다른 배너가 덮으면 안 지움)
 var _inv_panel: CanvasLayer = null  # I키 인벤 창 — HUD가 무는 조합(어디서나 열림)
+var _ping_refresh_accum: float = 0.0  # 핑 표시 갱신 누산
 
 @onready var _room_label: Label = $RoomCode
 @onready var _progress: Label = $Progress
@@ -26,11 +32,13 @@ var _inv_panel: CanvasLayer = null  # I키 인벤 창 — HUD가 무는 조합(�
 @onready var _gold_bar: HBoxContainer = $GoldBar
 @onready var _banner: Label = $Banner
 @onready var _toast: Label = $Toast
+@onready var _growth: Control = $Growth
+@onready var _level_label: Label = $Growth/LevelLabel
+@onready var _exp_bar: ProgressBar = $Growth/ExpBar
 
 
 func _ready() -> void:
-	_room_label.text = "방 %s · %s" % [
-		Net.room_code, "호스트" if Net.is_host() else "게스트"]
+	_update_room_label()
 	_progress.text = GameState.progress_label()  # 마을(비챕터)은 빈 문자열 = 표시 없음
 	_invite_btn.pressed.connect(_on_invite_pressed)
 	var settings := SettingsPanelScene.instantiate()
@@ -52,12 +60,38 @@ func _ready() -> void:
 	# 상태 배너(관전/클리어/전멸)와 독립 노드라 서로 안 덮는다. 각 클라 자기 인벤 기준.
 	EventBus.blueprint_unlocked.connect(_on_blueprint_unlocked)
 	EventBus.player_hp_confirmed.connect(_on_player_hp)
+	# 직업 레벨·EXP 표기 (GDD v1.8 성장축) — 전부 각 클라 자기 GameState 읽기 전용, 네트워크 0.
+	# growth_changed = 레벨/메인 변동(라벨+바 전체 갱신) · exp_changed = 매 적립(바만, 가벼운 훅).
+	EventBus.growth_changed.connect(_refresh_growth)
+	EventBus.exp_changed.connect(_on_exp_changed)
+	EventBus.sub_job_level_up.connect(_on_sub_job_level_up)
+	EventBus.sub_job_unlocked.connect(_on_sub_job_unlocked)
+	_refresh_growth()
 	# 페이즈2 돌입 배너 — 호스트 확정, MobSync가 게스트에 G_BOSS_PHASE 중계. 잠깐 표시 후 자동 숨김.
 	EventBus.boss_phase_changed.connect(_on_boss_phase)
 	# 마지막 칸 클리어 = 챕터 완주 — 각 클라가 자기 GameState(G_SCENE 검증으로 동기)로 판별
 	EventBus.stage_cleared.connect(func() -> void: _show_banner(
 		"챕터 클리어! 마을로 귀환합니다" if GameState.is_last_stage() else "스테이지 클리어!"))
 	EventBus.stage_wiped.connect(func() -> void: _show_banner("전멸 — 마을로 귀환합니다 (챕터 처음부터)"))
+
+
+# 방 코드 줄에 왕복 지연(핑)을 같이 띄운다 — 별도 노드를 안 만들어 레이아웃/클릭 리스크가 없다.
+# 핑은 게스트가 겪는 회피 창 손실의 크기와 직결된다(지연 보상 §3) — 렉이 체감될 때 원인을 눈으로 확인하는 창구.
+# 아직 왕복 측정 전이거나 솔로면 생략(0 = 표시 안 함).
+func _update_room_label() -> void:
+	var text := "방 %s · %s" % [Net.room_code, "호스트" if Net.is_host() else "게스트"]
+	var rtt := Net.display_rtt_ms()
+	if rtt > 0.0:
+		text += " · 핑 %dms" % int(roundf(rtt))
+	_room_label.text = text
+
+
+func _process(delta: float) -> void:
+	_ping_refresh_accum += delta
+	if _ping_refresh_accum < PING_LABEL_REFRESH_S:
+		return
+	_ping_refresh_accum = 0.0
+	_update_room_label()
 
 
 # I키로 인벤 창 토글 — HUD가 확실히 소비(패널은 I를 안 먹는다, 중복 방지). Esc 닫기는 패널 자체.
@@ -127,18 +161,85 @@ func _show_banner(text: String) -> void:
 	_banner.visible = true
 
 
-# 도면 획득 토스트 — 레시피명을 잠깐 띄우고 타이머로 소멸. 연속 획득 시 seq로 마지막 것만 유지.
+# 도면 획득 토스트 — 레시피명을 잠깐 띄운다. 표시는 공용 토스트 큐가 맡는다.
 func _on_blueprint_unlocked(recipe_id: String) -> void:
 	var r := GameState.recipe_def(recipe_id)
 	var disp := r.display_name if r != null else "새 설계도"  # 내부 id 노출 방지 (allowlist 통과분만 오므로 실질 폴백 안 씀)
-	_toast.text = "설계도 획득! — %s" % disp
+	_push_toast("설계도 획득! — %s" % disp, TOAST_COLOR_UNLOCK)
+
+
+# 하위 직업 레벨업 — 계열 보유분에 EXP가 동시 적립되므로 한 킬에 여러 건이 올 수 있다(큐가 차례로 보여준다).
+func _on_sub_job_level_up(sub_id: String, level: int) -> void:
+	_push_toast("레벨 업! — %s Lv%d" % [_sub_job_name(sub_id), level], TOAST_COLOR_LEVEL)
+
+
+# 다음 하위 직업 해금 — 레벨업과 같은 프레임에 오는 게 정상(레벨업이 해금을 트리거)이라 큐로 둘 다 보인다.
+func _on_sub_job_unlocked(sub_id: String) -> void:
+	_push_toast("새 하위 직업 해금! — %s" % _sub_job_name(sub_id), TOAST_COLOR_UNLOCK)
+
+
+func _sub_job_name(sub_id: String) -> String:
+	var d := GameState.sub_job_def(sub_id)
+	return d.display_name if d != null and not d.display_name.is_empty() else "새 하위 직업"  # 내부 id 노출 방지
+
+
+# 공용 토스트 큐 — 도면·레벨업·해금이 같은 Toast 노드를 차례로 쓴다(노드를 늘리지 않아 레이아웃/클릭 리스크 0).
+# 같은 프레임에 여러 건이 오면 앞의 것이 즉시 덮여 안 보이던 문제를 큐로 해결. 상태 배너(_banner)와는 여전히 독립.
+func _push_toast(text: String, color: Color) -> void:
+	if _toast_queue.size() >= TOAST_QUEUE_MAX:
+		_toast_queue.pop_front()
+	_toast_queue.append({"text": text, "color": color})
+	if not _toast_busy:
+		_advance_toast()
+
+
+func _advance_toast() -> void:
+	if _toast_queue.is_empty():
+		_toast_busy = false
+		_toast.visible = false
+		return
+	_toast_busy = true
+	var m: Dictionary = _toast_queue.pop_front()
+	var col: Color = m["color"]
+	_toast.text = str(m["text"])
+	_toast.add_theme_color_override(&"font_color", col)
 	_toast.visible = true
-	_toast_seq += 1
-	var seq := _toast_seq
-	get_tree().create_timer(BLUEPRINT_TOAST_TIME).timeout.connect(
-		func() -> void:
-			if is_instance_valid(_toast) and seq == _toast_seq:
-				_toast.visible = false)
+	# 타이머 만료 → 다음 대기분(없으면 숨김). HUD가 씬 전환으로 사라지면 연결이 자동 해제된다.
+	get_tree().create_timer(TOAST_TIME).timeout.connect(_advance_toast)
+
+
+# 하위 직업 이름 + 레벨 + EXP 진행 — 성장축이 없는 계열(main_sub_job() == null: 데이터 미작성 궁수·법사)은
+# 표기 전체를 숨긴다(빈 라벨이 떠 있으면 버그처럼 보인다). 만레벨(need == 0)은 바를 가득 채우고 "MAX".
+func _refresh_growth() -> void:
+	var d := GameState.main_sub_job()
+	if d == null:
+		_growth.visible = false
+		return
+	_growth.visible = true
+	var p := GameState.main_exp_progress()
+	var lv := int(p["level"])
+	var need := int(p["need"])
+	var cur := int(p["cur"])
+	if need <= 0:
+		_level_label.text = "%s Lv%d · MAX" % [d.display_name, lv]
+	else:
+		_level_label.text = "%s Lv%d · %d/%d" % [d.display_name, lv, cur, need]
+	_set_exp_bar(cur, need)
+
+
+# 매 적립 훅 — 인자(cur/need)는 GameState.main_exp_progress()와 같은 값이라 _refresh_growth로 일원화한다
+# (표기 문구를 두 곳에서 만들면 갈라진다). 비용 = 킬당 Dictionary 하나 + 짧은 곡선 루프.
+func _on_exp_changed(_cur: int, _need: int) -> void:
+	_refresh_growth()
+
+
+func _set_exp_bar(cur: int, need: int) -> void:
+	if need <= 0:  # 만레벨 — 바는 가득 찬 상태로 남긴다(사라지면 "뭔가 없어졌다"로 읽힌다)
+		_exp_bar.max_value = 1.0
+		_exp_bar.value = 1.0
+		return
+	_exp_bar.max_value = float(need)
+	_exp_bar.value = float(clampi(cur, 0, need))
 
 
 # 초대 코드(방 코드) 클립보드 복사 — URL이 아니라 코드만 준다 (사용자 확정 2026-07-22:

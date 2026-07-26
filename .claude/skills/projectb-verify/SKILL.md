@@ -16,16 +16,16 @@ description: Project_B(2D Godot) 프로젝트의 검증 규율. Godot 헤드리�
 PowerShell은 자식 프로세스 stdout을 안 보여준다 — **테스트는 Bash 툴로 돌려라.** 실행 파일은 프로젝트 루트의 `Godot_v4.7.1-stable_win64.exe`다.
 
 ```bash
-# CombatMath 단위 (사거리·쿨다운·구르기·잔몹 타격 반경 + 장비 스탯 total_stats/equip_stat_at_level/upgraded_stats/upgrade_cost·calc_damage 보너스 — 신뢰 경계·§3 계약)
+# CombatMath 단위 (사거리·쿨다운·구르기·잔몹 타격 반경·부채꼴·화살 발사율/원점/명중반경/사거리 clamp + 차지 발사(레벨 clamp·홀드→레벨·위력/반경 배율·폭발 판정·차지 시간 검증·탄속 clamp·터널링 불변식) + 장비 스탯 total_stats/equip_stat_at_level/upgraded_stats/upgrade_cost·calc_damage 보너스 + **성장축 5스탯**(level_stats 메인/서브 합산·clamp_level_stats 경계·confirm_damage 곱 순서·반올림 1회·치명 경계·leech_gain 오버킬·haste_scale/effective_cooldown + 검증 3함수 haste 버전·**스윙 창 계약 데이터 전수**·SAME_SWING 퇴화 트립와이어·effective_move_speed·level_for_exp/exp_progress) — 신뢰 경계·§3 계약)
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_combat_math_auto.gd
 
-# GameState 리졸버·인벤/제작/강화/저장 (직업·챕터·재료·장비·레시피 스캔 allowlist + 조작 id 거부 + 제작/강화 전이 + to/from_save_dict 라운드트립·조작 세이브 폐기 + 진행 좌표·HP 이월 — 네트워크/저장 신뢰 경계)
+# GameState 리졸버·인벤/제작/강화/저장 (직업·챕터·재료·장비·레시피 스캔 allowlist + 조작 id 거부 + 제작/강화 전이 + to/from_save_dict 라운드트립·조작 세이브 폐기 + 진행 좌표·HP 이월 + **성장축**(하위 직업 allowlist·계열 공용 풀 add_exp·해금 전이·메인 전환 마을 전용·타 계열 격리·저장 라운드트립·구 세이브 폴백·과대 EXP 만레벨 clamp) — 네트워크/저장 신뢰 경계)
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_game_state_auto.gd
 
 # HealthComponent (HP·부활 타이머 권한/표시 경로 격리 — 게스트 자가 부활 금지)
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_health_component_auto.gd
 
-# SaveManager 커밋/롤백 (스테이지 클리어=commit·전멸=reload 롤백 → 클리어분 생존·전멸분 소실·무파일 첫 판 전멸 — GDD §11 저장 계약)
+# SaveManager 커밋/롤백 (스테이지 클리어=commit·전멸=reload 롤백 → 클리어분 생존·전멸분 소실·무파일 첫 판 전멸 + **EXP/레벨도 같은 롤백 규칙**·`SAVE_VERSION == 1` 트립와이어 — GDD §11·§6 저장 계약)
 #   ⚠ save_path를 임시 경로로 격리해 실제 user://save.json을 안 건드린다. GameState는 game_state_override로 주입(트리 밖 -s, rules §5)
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_save_manager_auto.gd
 
@@ -41,6 +41,18 @@ wait $GUEST_PID; kill $RELAY_PID
 ```
 
 새 테스트를 추가하면 위 목록과 `CLAUDE.md`의 「검증 명령」 절을 **동시에** 갱신해라.
+
+**진단 도구(스위트 아님) — 릴레이 왕복 지연 계측 `tests/measure_latency.gd`:** "렉이 있다·게스트만 맞는다" 류 신고가 오면 추측하지 말고 먼저 재라. 게임과 같은 홉(클라A→릴레이→클라B→릴레이→클라A)을 왕복해 RTT 분포 + 그 지연이 깎아먹는 **회피 창 예산**까지 환산해 찍는다. `_auto`가 아니라 스위트에 안 들어간다(외부 네트워크 의존).
+
+```bash
+CF=/tmp/lat_code.txt; rm -f $CF
+./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/measure_latency.gd -- role=host codefile=$CF url=wss://relay.jachana.com count=40 gap_ms=100 &
+HP=$!; sleep 2
+./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/measure_latency.gd -- role=guest codefile=$CF url=wss://relay.jachana.com > /dev/null 2>&1 &
+wait $HP   # 출력: LATENCY_OK rtt_ms min/p50/p95/max/mean + [budget] 회피 창 환산
+```
+- `url=ws://localhost:9080`으로 로컬 릴레이를 겨누면 **코드 자체의 오버헤드 하한**(실측 14ms)이 나온다 — 배포 릴레이 값에서 이걸 빼면 순수 네트워크분이다.
+- ⚠ **한 번 재고 결론 내지 마라.** 릴레이 왕복은 시점에 따라 140~215ms를 오간다. 변경의 효과를 보려면 **같은 시간대에 A/B를 번갈아** 재라 — 순차 전후 비교는 경로 변동을 개선으로 착각하게 만든다(실제로 겪음, rules §5 DO 배치 항목).
 
 ⚠ **이 목록이 정본과 갈라지면**, 이 스킬을 읽은 에이전트가 "전 스위트를 돌렸다"고 믿으면서 절반만 돌린다. 새 테스트를 더하면 목록도 갱신해라 — **목록에서 빠진 테스트는 낡아 죽는다**(문법이 바뀌어도 아무도 안 돌려서 조용히 깨진 채 방치된다).
 
@@ -92,3 +104,4 @@ wait $GUEST_PID; kill $RELAY_PID
 - [ ] 소리/오디오면 실게임 `playing==true` 확인
 - [ ] 손맛/채점 수치면 **사용자에게 직접 해 보라고** 넘긴다 (헤드리스로 결론 내지 않는다)
 - [ ] 새 테스트를 더했으면 이 스킬 §1의 스위트 목록 + CLAUDE.md도 갱신
+- [ ] 🔴 테스트가 딕셔너리를 **직접 인덱싱**하지 않는지 — `dict["key"]`는 그 키를 만드는 코드를 지우는 뮤테이션에서 SCRIPT ERROR로 테스트를 죽여 **검출력을 0으로 위장**한다(2026-07-25 실제로 겪음). `dict.get("key", 폴백)`으로 읽어라

@@ -30,6 +30,10 @@ signal player_hp_confirmed(peer_id: int, hp: int)  # 확정 HP 통지 — 호스
 signal mob_telegraph(eid: String, center: Vector2)  # 호스트 전용 emit(잔몹 AI WINDUP) — MobSync가 matk 브로드캐스트
 signal mob_strike(eid: String, center: Vector2)     # 호스트 전용 emit(잔몹 AI STRIKE) — CombatAuthority가 데미지 확정
 
+# --- 투사체 (궁수 활 2026-07-24 / 법사 차지 지팡이 확장) — 발사는 로컬 선언, 표시 탄은 각 클라 로컬 시뮬, 명중 확정은 호스트만 ---
+signal player_shoot(shooter_id: int, origin: Vector2, dir: Vector2, aid: String, arrow_range: float, weapon_id: String, charge: int)  # 로컬 발사 선언(player emit) — ArrowField가 표시 투사체 스폰, CombatAuthority(호스트 자기 발사)가 권한 투사체 등록. arrow_range = 무기 사거리(EquipDef.arrow_range) · weapon_id = 착용 무기 id(수신 측이 allowlist 리졸브해 탄 겉모습/속도/폭발 반경을 얻는다) · charge = 차지 레벨(0~3, 비차지 무기는 0). player가 G_SHOOT도 송신(원격 표시용)
+signal arrow_gone_local(aid: String, world_pos: Vector2)  # 호스트 전용 emit(CombatAuthority: 자기 권한 투사체 종료 — 적중/사거리 소진) → 호스트 ArrowField가 자기 표시 탄 despawn+임팩트. 호스트는 자기 G_ARROW_HIT를 릴레이로 못 받으므로(drop_pick_local 미러). 게스트는 G_ARROW_HIT 수신으로 처리
+
 # --- boss (보스전 2026-07-23) — 호스트 전용 emit(보스 AI), 표시(telegraph)와 판정(strike) 분리. mob_* 규약 확장 ---
 signal boss_telegraph(eid: String, pattern_id: String, center: Vector2, angle: float)  # 호스트 emit(보스 WINDUP) — MobSync가 G_BOSS_ATK 브로드캐스트(표시). 수신 측은 자기 def에서 패턴 리졸브
 signal boss_strike(center: Vector2, angle: float, pattern: BossPatternDef)  # 호스트 emit(보스 STRIKE) — CombatAuthority가 pattern.shape별(원/부채꼴) 플레이어 피격 판정
@@ -47,12 +51,16 @@ signal stage_wiped
 # HP 감소 표시 경로(Health.hp_changed dropped=true)에서 피격 당사자 글루가 emit — 호스트/게스트
 # 무관하게 각 클라가 자기 화면 연출(플래시·데미지 숫자·셰이크·SFX·히트스톱)을 재생한다.
 # kind = "enemy"|"player" (누가 맞았나), world_pos = 피격 지점, amount = 감소량.
-signal combat_impact(kind: String, world_pos: Vector2, amount: int)
+# crit = 이번 확정이 치명타였나 (표시 강조 전용 — 굴림은 호스트만, 표시 쪽에서 다시 굴리지 않는다 §3).
+signal combat_impact(kind: String, world_pos: Vector2, amount: int, crit: bool)
 signal screen_shake(strength: float)  # 명시적 셰이크 트리거 (사망·보스 슬램 등) — 카메라가 소비
 # 소리/연출 트리거 (표시·소리 전용, 각 클라 로컬) — Audio가 SFX로, 필요시 연출이 구독.
-signal player_swing(world_pos: Vector2)   # 플레이어 공격 스윙(로컬·원격 연출 시점)
+signal player_swing(world_pos: Vector2, sfx: String)   # 플레이어 공격 스윙(로컬·원격 연출 시점) — sfx = 무기 스윙음 id(EquipDef.swing_sfx). ⚠ 발사(EquipDef.swing_sfx)·**차지 단계 상승(charge_sfx)**도 이 훅을 재사용한다 = "소리 낼 순간" 훅에 가깝다. 여기에 스윙 궤적 같은 **시각** 연출을 매달면 기 모을 때마다 검을 휘두른다 — 시각을 붙일 땐 sfx id로 갈라내거나 별도 시그널을 파라
 signal player_roll(world_pos: Vector2)    # 플레이어 구르기 시작
 signal entity_died(kind: String, world_pos: Vector2)  # kind = "enemy"|"player" — 사망 확정 표시
+# 내 무기가 적중(공격자 로컬 예측 — 호스트 확정 전 즉발). 무기별 타격 손맛: Audio가 sfx(비면 무음),
+# 카메라가 shake. 범용 "피격" 연출(플래시·데미지 숫자·범용 히트음)은 combat_impact가 별도로 담당한다.
+signal weapon_impact(world_pos: Vector2, sfx: String, shake: float)
 
 # --- 드랍/인벤 (드랍·제작 2026-07-23) ---
 signal enemy_killed(eid: String, def: EnemyDef, world_pos: Vector2)  # 호스트 전용 emit(CombatAuthority, hp<=0 확정) — DropAuthority가 드랍 롤 트리거
@@ -63,3 +71,13 @@ signal blueprint_unlocked(recipe_id: String)  # 도면 획득 확정 — "설계
 # feel (표시 전용 — 네트워크 아님, rules §2)
 signal item_dropped(kind: String, rarity: int, world_pos: Vector2)  # 드랍 등장 연출(착지 팝·등급 반짝임)
 signal item_picked(kind: String, rarity: int, world_pos: Vector2)   # 픽업 연출(흡수 팝)
+
+# --- 직업 레벨 성장축 (2026-07-25, GDD v1.8) ---
+# EXP 확정 권한 = 호스트 (§1). 게스트는 G_EXP 수신으로만 적립한다 — 각 클라가 킬을 세면
+# 패킷 유실·씬 전환·관전 타이밍에 따라 레벨이 **조용히** 갈리고, 레벨은 스탯 공지의 근거라
+# 그 발산이 곧 "게스트의 정당한 타격이 간헐 거부됨"으로 나타난다.
+signal exp_granted_local(amount: int)  # ExpAuthority(호스트) → 자기 적립 경로 (호스트는 자기 G_EXP를 릴레이로 못 받는다 — drop_spawn_local 미러)
+signal growth_changed  # 레벨/메인 하위 직업 변동 (GameState emit) — PeerSync 재공지(G_STATS "lv")·HUD·패널 갱신. ⚠ EXP만 오른 킬에는 emit하지 않는다(킬마다 재공지 = 불필요한 트래픽)
+signal exp_changed(cur: int, need: int)  # 매 적립 (GameState emit) — HUD EXP 바 전용, 재공지를 유발하지 않는 가벼운 훅
+signal sub_job_level_up(sub_id: String, level: int)  # 레벨업 확정 — HUD 토스트·레벨업음
+signal sub_job_unlocked(sub_id: String)  # 다음 하위 직업 해금 (blueprint_unlocked 미러) — HUD 토스트·패널 갱신
