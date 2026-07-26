@@ -15,7 +15,7 @@ model: inherit
 
 1. **`.claude/skills/projectb-rules/SKILL.md`를 Read해라** — §5 "조용히 깨지는 함정"의 `mouse_filter`가 2D UI 버그 1위다.
 2. **`.claude/skills/projectb-verify/SKILL.md`를 Read해라** — UI 변경은 헤드리스가 클릭·렌더를 못 잡는다. "실게임 push_input·MCP 스샷으로 확인 필요"를 리포트에 반드시 명시하기 위해.
-3. **기존 패널을 Read해서 그 패턴을 따라라** — 이미 만든 모달/패널이 있으면 그 중 가장 가까운 걸 복제·확장해라. 패턴이 잡혀 있으면 새로 짓지 말고 따른다. (초기 프로젝트라 아직 없으면, 네가 만드는 첫 패널이 **표준이 된다** — 모달 토글·mouse_filter·시그널 배선을 깔끔히 잡아라.)
+3. **기존 패널을 Read해서 그 패턴을 따라라 — 표준은 이미 있다.** 모달 규약의 준거는 `src/ui/craft_panel`(마을 제작대)이고, 그것을 복제해 만든 것이 `src/ui/inventory_panel`(I키 인벤)·`src/ui/subjob_panel`(훈련소)이다. 새 패널은 **가장 가까운 하나를 복제·확장**해라. 스타일은 `ui_theme` 단일 소스를 쓴다(2026-07-26 도입 — 패널마다 `theme_override_*`를 흩뿌리면 다음 톤 조정이 전수 수정이 된다).
 4. 제네릭 UI 패턴이 필요하면 `godot-ui`(Control·테마·앵커·컨테이너) · `hud-system`(체력바·피해숫자·알림) · `tween-animation`(패널 페이드/슬라이드) · 다해상도 대응이면 `responsive-ui`를 Skill 도구로. Project_B 규칙과 충돌하면 Project_B가 이긴다.
 
 ## 🔴🔴 UI 1번 함정 — mouse_filter (헤드리스가 절대 못 잡는다)
@@ -26,6 +26,8 @@ model: inherit
   - 클릭을 통과시켜야 하는 배경/장식 → `mouse_filter = 2`(IGNORE)
   - 클릭을 막아야 하는 모달 뒷판(뒤 게임 클릭 차단) → STOP(기본값)이 맞다
 - **모달 규약**: 열리면 `GameState.ui_modal_open = true`(또는 EventBus 시그널) → player·caster가 폴링/구독해 멎는다. **닫힌 invisible Control도 `_unhandled_input`을 받는다**(자기토글 숨은 패널의 핵심). 닫히면 `visible=false`라 클릭이 그 아래로 샌다.
+- **토글 키는 한 곳에서만 소비한다** — I키 인벤은 **HUD가 키를 먹고** 패널은 안 먹는다(양쪽이 다 처리하면 열자마자 닫힌다). 새 토글 키를 붙일 땐 소비 주체를 하나로 정하고 보고해라.
+- 🔴 **Control만의 문제가 아니다 — 월드 씬의 `Label`도 그 아래 게임 클릭을 먹는다** (2026-07-26 실제 버그: 보스전 480px 밴드·마을 3개·모닥불 2개의 안내 Label이 클릭을 삼켰다). 월드에 안내문·표지를 놓을 때도 `mouse_filter = 2`를 적어라. 이것도 **헤드리스는 절대 못 잡는다.**
 - **바꿨으면 반드시 실게임에서 확인**: 에디터로 띄워 `viewport.push_input(InputEventMouseButton)`으로 0회→1회. 액션 주입·헤드리스 push_input은 이 버그를 못 잡는다.
 
 ## 작업 원칙

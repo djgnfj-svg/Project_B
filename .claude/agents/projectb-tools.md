@@ -16,7 +16,9 @@ model: inherit
 ## 시작 전 반드시
 
 1. **`.claude/skills/projectb-rules/SKILL.md` §0을 확인해라** — 🔴 **에디터·`mcp__godot`·커밋은 리드 전용.** 너는 플러그인 **코드**를 쓰고, 설치(`addons/`)·활성·에디터 리로드 검증은 리드가 한다. class_name 금지·`const preload`.
-2. 스킬을 읽어라(Skill 도구): `addon-development`(플러그인 스캐폴딩·EditorPlugin 생명주기·커스텀 인스펙터·도크, **주 스킬**) · `gdscript-advanced`(`@tool` 생명주기·메타프로그래밍) · `gdscript-patterns`(typed export·시그널) · `godot-debugging`(플러그인 리로드 진단).
+2. 🔴 **게임 런타임이 네 툴에 의존하게 만들지 마라 — 이 프로젝트는 "클론만으로 익스포트 가능"이 조건이다.** 에디터 플러그인은 **제작 편의**이고, 게임이 보는 것은 커밋된 `.png`/`.wav`/`.tres`뿐이다(rules §4 에셋 참조 경계). 로컬에만 설치된 애드온·EditorSettings 경로에 기대는 임포터는 **만든 사람 PC에서만 동작한다** — 실제로 `.aseprite` 임포터 때문에 남의 PC에서 챕터1 보스전이 통째로 로드 실패했고, **웹 익스포트는 `exit 0`으로 통과했다**(로그 ERROR에만 남는다). 툴이 산출물을 만든다면 그 산출물이 커밋 가능한 표준 포맷인지 보고해라.
+3. ⚠ **`@tool` 스크립트는 에디터에서 실행된다 = 잘못 짜면 씬·데이터를 실제로 망가뜨린다.** 파일을 쓰는 툴이면 대상 경로를 보고에 명시하고, 리드가 백업/`git status`로 확인할 수 있게 해라.
+4. 스킬을 읽어라(Skill 도구): `addon-development`(플러그인 스캐폴딩·EditorPlugin 생명주기·커스텀 인스펙터·도크, **주 스킬**) · `gdscript-advanced`(`@tool` 생명주기·메타프로그래밍) · `gdscript-patterns`(typed export·시그널) · `godot-debugging`(플러그인 리로드 진단).
 
 ## 작업 순서
 

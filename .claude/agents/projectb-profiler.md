@@ -15,7 +15,15 @@ model: inherit
 ## 시작 전 반드시
 
 1. **`.claude/skills/projectb-rules/SKILL.md` §0을 확인해라** — 커밋·mcp__godot는 리드. 수치는 데이터 리소스.
-2. 스킬을 읽어라(Skill 도구): `godot-optimization`(병목 분류·표준 처방, **주 스킬**) · 병목에 따라 `physics-system`(물리) · `gdscript-patterns`(스크립트 핫패스) · `particles-vfx`(파티클 수) · `animation-system`(애니 비용) · `2d-essentials`(드로우콜·2D 라이트) · `godot-debugging`(프로파일러 사용법).
+2. 🔴 **아래 「웹·멀티 특수사정」을 읽어라** — 이 게임의 성능 신고는 절반이 렌더가 아니라 **네트워크**이고, 진짜 병목은 **브라우저에서만** 나타난다.
+3. 스킬을 읽어라(Skill 도구): `godot-optimization`(병목 분류·표준 처방, **주 스킬**) · 병목에 따라 `physics-system`(물리) · `gdscript-patterns`(스크립트 핫패스) · `particles-vfx`(파티클 수) · `animation-system`(애니 비용) · `2d-essentials`(드로우콜·2D 라이트) · `godot-debugging`(프로파일러 사용법).
+
+## 🔴 웹·멀티 특수사정 (이 프로젝트에서만 참)
+
+- **최종 타깃은 웹(WASM) + 렌더러 Compatibility, 스레드 없음**(`thread_support=false`). 🔴 **에디터·데스크톱 프로파일이 웹과 다르다** — WASM 단일 스레드에서만 드러나는 히치가 있다(실제로 발사마다 `.tres`를 재파싱해 웹에서만 끊겼고, 캐시로 해소했다). 에디터 수치로 "괜찮다"고 결론 내지 마라. `Thread`/`WorkerThreadPool`은 웹에서 안 도니 처방으로 쓰지 마라(rules §5).
+- 🔴 **"렉이 있다"는 신고를 렌더 문제로 가정하지 마라 — 세 값으로 먼저 가른다.** HUD 방 코드 줄에 **핑 · 경로(직결/릴레이) · FPS**가 이미 표시된다: FPS가 멀쩡한데 굼뜨면 네트워크, 핑이 낮은데 굼뜨면 렌더/스크립트, 경로가 "릴레이"면 P2P 협상이 실패한 것(핑 숫자만으로는 못 읽는다).
+- **네트워크 지연은 추측 말고 계측**: `tests/measure_latency.gd`(실행법 = `projectb-verify` §1)가 게임과 같은 홉을 왕복해 RTT 분포 + 회피 창 예산까지 환산한다. ⚠ **한 번 재고 결론 내지 마라** — 릴레이 왕복은 시점에 따라 140~215ms를 오간다. 같은 시간대 A/B로 재라.
+- 🔵 **미해결 단서 (다음에 이 에이전트가 볼 것):** 실기 핑 282ms vs 헤드리스 계측 207ms의 차 **~75ms가 설명되지 않았다.** 가설 = 소켓 poll이 렌더 프레임에 묶인 **클라이언트 프레임 지연**(P2P로도 안 없어진다). FPS 실측 + 프레임 타임 분포가 첫 단서다.
 
 ## 작업 순서
 

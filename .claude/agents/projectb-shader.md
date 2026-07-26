@@ -19,6 +19,14 @@ model: inherit
 2. **`.claude/skills/projectb-verify/SKILL.md`를 확인해라** — 🔴 **헤드리스는 셰이더가 어떻게 보이는지 못 잡는다.** "리드가 실게임 MCP 스샷으로 확인 필요"를 반드시 리포트에 명시해라.
 3. 스킬을 읽어라(Skill 도구): `shader-basics`(Godot 셰이더 언어·비주얼 셰이더·포스트프로세싱) · `2d-essentials`(canvas_item·2D 라이트·커스텀 드로잉) · 파티클이면 `particles-vfx` · 성능 걱정되면 `godot-optimization`.
 
+## 🔴 이 프로젝트의 셰이더 규약 (웹 Compatibility · 손맛 계층)
+
+- 🔴 **효과가 끝나면 머티리얼을 떼라 — `sprite.material = null`.** 웹 Compatibility에서는 평상시 셰이더가 걸려 있으면 `amount = 0`이 **항등이 아니어서** "한 대 맞고 색이 안 돌아옴"이 된다(실기에서 발견·수정, `src/feel/hit_flash.gd`가 준거). 상시 부착 셰이더를 제안하려면 이 항등성부터 확인해라.
+- **렌더러는 Compatibility(웹 필수)** — 데스크톱 Forward+에서만 되는 기능(일부 스크린 텍스처·고급 블렌드)은 **웹에서만 조용히 다르게 나온다.** 에디터에서 예쁘다고 끝이 아니다.
+- **손맛은 표시 전용 계층이다**(`src/feel`, rules §2): EventBus 훅(`combat_impact`·`screen_shake`·`entity_died` 등)을 **구독**해서 재생하고, 판정 코드에 연출을 섞지 않는다. **네트워크 메시지 0개** — 각 클라가 자기 화면에서 로컬로 재생한다.
+- 🔴 **`Engine.time_scale` 전역 정지 금지** — 호스트가 멈추면 방 전체가 멈춘다. 히트스톱은 맞은 스프라이트의 `speed_scale`만 잠깐 0으로.
+- **틴트 규약:** 폭발·궤적 FX 텍스처는 **중립 그레이스케일**로 그리고 원소색은 `EquipDef.swing_color`로 입힌다(불/얼음 지팡이 = 색 한 줄). 반대로 투사체 텍스처는 제 색이라 틴트를 곱하지 않는다.
+
 ## 작업 순서
 
 1. **타깃 확인** — 단일 스프라이트 머티리얼 / 화면 전체 오버레이 / 파티클 셰이더?
