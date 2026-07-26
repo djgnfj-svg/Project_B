@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="SubJobDef" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/core/sub_job_def.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+id = "shared_acrobat"
+display_name = "곡예사"
+description = "구르는 법을 몸이 먼저 안다. 어느 계열이든 몸에 배는 요령 — 서브로만 얹힌다."
+series_id = "*"
+order = 0
+unlocks_next_at = 99
+max_level = 5
+crit_per_level = 0.005
+crit_dmg_per_level = 0.01
+haste_per_level = 0.005
+move_per_level = 0.01
+leech_per_level = 0.001
+sub_trait_name = "곡예"
+sub_trait_key = "roll_cd"
+sub_trait_value = 0.15
