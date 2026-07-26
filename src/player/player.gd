@@ -57,6 +57,7 @@ var _fx_dir: Vector2 = Vector2.RIGHT
 var _attack_queued: bool = false
 var _last_remote_msec: int = -1
 var _alive: bool = true
+var bound: bool = false  # 코옵 속박(소울 케이지) — CoopAuthority가 켠다/끈다 (움직임 봉인)
 var _saved_layer: int = 0
 var _saved_mask: int = 0
 var _remote_roll_left: float = 0.0  # 원격 구르기 연출 창 (G_ROLL 수신 — 표시 전용, 판정 아님)
@@ -338,6 +339,10 @@ func _update_weapon(delta: float) -> void:
 
 
 func _local_move(delta: float) -> void:
+	if bound:
+		# 코옵 속박(소울 케이지) — 파트너가 구출할 때까지 움직임/구르기 불가 (표시 전용 상태, 판정은 호스트)
+		velocity = Vector2.ZERO
+		return
 	var dir := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	if seated:
 		# 앉는 동안 무방비·정지 (GDD §5 모닥불) — 몸을 움직이려는 입력이 오면 스스로 일어난다

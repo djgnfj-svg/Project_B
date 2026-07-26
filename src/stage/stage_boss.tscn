@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3]
+[gd_scene load_steps=16 format=3]
 
 [ext_resource type="Script" path="res://src/stage/stage.gd" id="1"]
 [ext_resource type="Texture2D" path="res://assets/sprites/stage/swamp_ground.png" id="2"]
@@ -10,6 +10,7 @@
 [ext_resource type="Script" path="res://src/stage/mob_sync.gd" id="7"]
 [ext_resource type="Script" path="res://src/net/scene_flow.gd" id="8"]
 [ext_resource type="Script" path="res://src/stage/chapter_flow.gd" id="9"]
+[ext_resource type="Script" path="res://src/stage/coop_authority.gd" id="15"]
 [ext_resource type="PackedScene" path="res://src/hud/stage_hud.tscn" id="10"]
 [ext_resource type="Script" path="res://src/stage/drop_authority.gd" id="11"]
 [ext_resource type="Script" path="res://src/stage/drop_field.gd" id="12"]
@@ -64,5 +65,9 @@ script = ExtResource("8")
 [node name="ChapterFlow" type="Node" parent="."]
 script = ExtResource("9")
 scene_flow_path = NodePath("../SceneFlow")
+
+[node name="CoopAuthority" type="Node" parent="."]
+script = ExtResource("15")
+boss_eid = "boss1"
 
 [node name="HUD" parent="." instance=ExtResource("10")]

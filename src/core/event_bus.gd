@@ -34,6 +34,8 @@ signal boss_strike(center: Vector2, angle: float, pattern: BossPatternDef)  # �
 signal swamp_spawn_local(swamps: Array)  # 호스트 보스 → SwampField 로컬 스폰 (호스트는 자기 G_SWAMP를 릴레이로 못 받으므로 — drop_spawn_local 미러). swamps=[[sid,x,y,r,ttl,slow], …] slow=늪 안 이동 배율
 signal boss_spray(eid: String, pattern_id: String, centers: Array, angle: float)  # 호스트 emit(보스 물뿌리기 WINDUP) — MobSync가 G_BOSS_SPRAY 브로드캐스트. 각 클라가 centers마다 원 텔레그래프 표시(N개). 판정은 호스트가 STRIKE 시 boss_strike를 착탄점마다 재사용
 signal boss_phase_changed(phase: int)  # 호스트 emit(보스 페이즈 전이) — MobSync가 G_BOSS_PHASE 브로드캐스트, HUD가 배너. 게스트는 G_BOSS_PHASE 수신 시 로컬 emit(mob_telegraph→matk 미러)
+signal coop_call(duration: float)      # 코옵 파훼 시전 시작 — HUD 프롬프트("함께 F!")·보스 cast 애니·아레나 텔레그래프. 호스트/게스트 각자 로컬 표시
+signal coop_result(success: bool)      # 코옵 파훼 결과 — 배너/연출(성공=취소·그로기, 실패=폭발). 표시 전용, 정본 판정은 호스트
 
 # --- stage flow (호스트=판정 시, 게스트=clear/wipe 수신 시 emit) ---
 signal stage_cleared
