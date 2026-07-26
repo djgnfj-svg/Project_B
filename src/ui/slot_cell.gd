@@ -133,6 +133,14 @@ func set_empty(slot_name: String = "", placeholder: Texture2D = null) -> void:
 	_restyle()
 
 
+# 아이콘 확대 방식 — 기본은 칸에 맞춰 늘리는 KEEP_ASPECT_CENTERED다(아이콘 = 칸 크기 전제).
+# 🔴 아이콘 원본이 칸보다 작으면 그 배율이 정수가 아니라 픽셀아트가 뭉개진다(24px 아이콘 / 28px 안쪽
+#   = 1.17배). 원본 크기 그대로 두려면 STRETCH_KEEP_CENTERED(=1배)를 넣어라 — 훈련소 패널이 쓴다.
+# 기본값은 그대로라 인벤·창고 표시는 변하지 않는다(추가만, 변경 없음).
+func set_icon_stretch(mode: int) -> void:
+	_icon.stretch_mode = mode
+
+
 func _restyle() -> void:
 	if _equipped:
 		add_theme_stylebox_override("panel", UiTheme.equipped_slot_box())
