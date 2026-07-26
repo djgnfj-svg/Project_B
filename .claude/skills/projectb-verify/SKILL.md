@@ -25,6 +25,13 @@ PowerShell은 자식 프로세스 stdout을 안 보여준다 — **테스트는 
 # HealthComponent (HP·부활 타이머 권한/표시 경로 격리 — 게스트 자가 부활 금지)
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_health_component_auto.gd
 
+# 전송 계층 계약 (P2P 직결, 2026-07-26) — 소켓 없이 상수/스키마만 본다.
+#   fast(유실 허용) 채널 분류 = {G_POS, G_MOB_POS} 정확 일치 + **사건 kind 22종 제외 단정**(하나라도 끼면 빨개진다)
+#   + ping/pong이 fast에 없음(측정 채널 = 예고 채널, §3) + **G_* kind 값 유일성 전수**(rules §5 "nping" 사고 자동 방지)
+#   + keepalive 주기 부등식(서버 IDLE_LIMIT_MS/SEEN_WRITE_MS의 JS 미러 — 릴레이 유휴 절단 방지) + 워치독/채널 id 정합
+# ⚠ 이 테스트는 **협상·폴백·지연을 검증하지 않는다** — WebRTC는 웹 전용이라 네이티브에서 코드가 한 줄도 안 돈다(§2).
+./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_net_transport_auto.gd
+
 # SaveManager 커밋/롤백 (스테이지 클리어=commit·전멸=reload 롤백 → 클리어분 생존·전멸분 소실·무파일 첫 판 전멸 + **EXP/레벨도 같은 롤백 규칙**·`SAVE_VERSION == 1` 트립와이어 — GDD §11·§6 저장 계약)
 #   ⚠ save_path를 임시 경로로 격리해 실제 user://save.json을 안 건드린다. GameState는 game_state_override로 주입(트리 밖 -s, rules §5)
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_save_manager_auto.gd
@@ -59,6 +66,14 @@ wait $HP   # 출력: LATENCY_OK rtt_ms min/p50/p95/max/mean + [budget] 회피 �
 ⚠ **세이브를 건드리는 테스트 주의.** `SaveManager`가 부팅 시 저장을 살리는 구조라면, 저장 관련 시그널을 쏘는 테스트는 실제 `user://save`를 덮어쓴다. 테스트 끝의 정리는 지울 뿐 복구가 아니다 — 플레이하던 세이브가 있으면 날아간다. 새 시그널을 쏘는 테스트를 더할 땐 SaveManager가 물려 있는지 먼저 확인해라.
 
 ## 2. 헤드리스가 못 잡는 것 (실게임으로만 확인된다)
+
+### 2-0. 🔴 P2P 직결은 헤드리스가 **한 줄도 안 돈다** (2026-07-26)
+`Net._p2p_available()`이 `OS.has_feature("web")`로 막혀 있어 네이티브 `-s` 경로는 릴레이만 탄다. 즉 **스위트 6종 전부 그린이어도 P2P에 대해서는 아무것도 검증되지 않았다** — 회귀 0의 증거일 뿐이다(그게 이 게이트의 목적이기도 하다). 아래는 웹 2클라 실기로만 확인된다:
+- **HUD 방 코드 줄에 "직결"이 뜨는가** — 릴레이 폴백도 조용히 잘 돌기 때문에 **핑 숫자만으론 못 읽는다.** 이 표시가 곧 P2P 성공 여부의 유일한 창구다.
+- 핑이 실제로 떨어지는가 — ⚠ **한 번 재고 결론 내지 마라**(§1 경고). 릴레이 왕복 자체가 140~215ms를 오간다.
+- 🔴 **3분 이상 방을 유지**해 안 끊기는지 (릴레이 유휴 스윕 × 직결 무트래픽, rules §5). **로컬 릴레이엔 유휴 스윕이 없어 `dev_local.sh`로는 영원히 재현 안 된다 — 반드시 배포본에서 4분 이상.**
+- 게스트 Wi-Fi를 껐다 켜면 몇 초 안에 릴레이로 복귀하는가(무수신 워치독).
+- 손실이 있는 회선(테더링)에서 예고 타이밍 — 깨끗한 랜에선 안 드러난다.
 
 ### 2-1. "클릭이 닿는다" — `push_input` + 실게임
 🔴🔴 **헤드리스는 마우스가 Control에 닿는지 모른다.** 화면을 덮는 Control(배경 ColorRect·패널 루트·오버레이)의 `mouse_filter`가 기본값 **STOP**이면 그 아래 클릭을 다 먹어 발사·상호작용이 통째로 죽는데, 에러도 경고도 없고 헤드리스 스위트는 그린이다. 렌더가 없어 히트 테스트가 실게임과 달라서, `push_input` 테스트조차 헤드리스에선 그냥 통과한다.
