@@ -85,7 +85,7 @@ func _ready() -> void:
 	visible = false
 	$Center.theme = UiTheme.get_theme()  # 공용 픽셀 테마 (인벤/제작/창고와 통일)
 	_close_btn.pressed.connect(close)
-	_stat_label.add_theme_color_override(&"font_color", UiTheme.TEXT)
+	# 크기는 씬의 InfoLabel 등급, 색만 의미별로 덮는다(값은 전부 UiTheme 팔레트 — 여기서 Color 생성 금지)
 	_trait_label.add_theme_color_override(&"font_color", UiTheme.ACCENT)
 	_notice_label.add_theme_color_override(&"font_color", UiTheme.GOLD)
 	_hint_label.add_theme_color_override(&"font_color", UiTheme.TEXT_DIM)
@@ -216,10 +216,10 @@ func _make_slot_card(index: int) -> Control:
 	cell.activated.connect(_on_slot_activated)
 	card.add_child(cell)
 
-	# 셀 아래 이름 한 줄. 크기 9 = Galmuri9 설계 크기(픽셀 퍼펙트), 마우스 IGNORE = 셀 툴팁·카드 드롭 통과.
+	# 셀 아래 이름 한 줄. 크기 = 칸 위 뱃지 등급(ui_theme FS_BADGE), 마우스 IGNORE = 셀 툴팁·카드 드롭 통과.
 	var caption := Label.new()
 	caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	caption.add_theme_font_size_override(&"font_size", 9)
+	caption.add_theme_font_size_override(&"font_size", UiTheme.FS_BADGE)
 	caption.add_theme_constant_override(&"line_spacing", 0)
 	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	caption.clip_text = true  # 🔴 긴 이름이 카드를 밀어 Dialog가 640 뷰포트를 넘는 것을 막는다

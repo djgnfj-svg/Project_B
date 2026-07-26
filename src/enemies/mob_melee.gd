@@ -21,6 +21,12 @@ const REMOTE_MOVE_EPS := 1.0      # 게스트 표시: 목표점과 이만큼 이
 # 아직 남아 있어(queue_free는 프레임 끝) 게이트 앞 좌표로 유령 어그로가 잡힌다 — CHASE에 이탈
 # 조건이 없으면 그 한 프레임이 영구 추격으로 굳는다 (챕터1 실기에서 발견, 간헐 레이스)
 const LEASH_MULT := 1.5
+# 접지 그림자 (사용자 요청 2026-07-26: "그림자가 잘 붙게해주면 됨" — 잔몹엔 아예 없었다).
+# 🔴 텍스처 크기 미러 상수를 새로 만들지 않는다 — shadow.png·몹 시트를 다시 그려도 자동으로 맞게
+#   런타임에 읽는다(TELEGRAPH_TEX_SIZE 같은 "텍스처를 고치면 상수도 고쳐야 하는" 함정을 안 늘린다).
+const SHADOW_WIDTH_MULT := 2.3   # 그림자 폭 = def.body_radius × 이 배수 (몸보다 살짝 넓어야 접지로 읽힌다)
+const SHADOW_ALPHA := 0.5
+const SHADOW_FOOT_INSET := 2.0   # 스프라이트 하단에서 이만큼 올려 둔다(발이 그림자를 밟고 선 모습)
 
 enum State { IDLE, CHASE, WINDUP, RECOVER }
 
@@ -39,6 +45,35 @@ var _telegraph_left: float = 0.0
 @onready var _collision: CollisionShape2D = $Collision
 @onready var _telegraph: Sprite2D = $Telegraph
 @onready var _health: HealthComponent = $Health
+@onready var _shadow: Sprite2D = $Shadow
+
+
+# 접지 그림자를 이 개체 크기에 맞춘다 — 폭은 판정 몸 반경, 높이는 스프라이트 하단에서 파생.
+# 둘 다 런타임에 읽으므로 몹이 16px든 48px든, 시트를 다시 그려도 따로 손댈 곳이 없다.
+func _fit_shadow() -> void:
+	var tex := _shadow.texture
+	if tex == null or def == null:
+		return
+	var w := float(tex.get_width())
+	if w > 0.0:
+		_shadow.scale = Vector2.ONE * (def.body_radius * SHADOW_WIDTH_MULT / w)
+	_shadow.modulate = Color(1.0, 1.0, 1.0, SHADOW_ALPHA)
+	# 발밑 = 몸 스프라이트 하단(AnimatedSprite2D는 centered라 높이/2). 애니 이름은 idle을 우선하되,
+	# 없는 개체(폴백 시트·다른 명명)를 위해 첫 애니로 떨어진다 — 못 찾으면 중앙(0)이라 무해하다.
+	var sf := _sprite.sprite_frames
+	if sf == null:
+		return
+	var anim: StringName = &"idle"
+	if not sf.has_animation(anim):
+		var names := sf.get_animation_names()
+		if names.is_empty():
+			return
+		anim = StringName(names[0])
+	if sf.get_frame_count(anim) <= 0:
+		return
+	var ft := sf.get_frame_texture(anim, 0)
+	if ft != null:
+		_shadow.position = Vector2(0.0, maxf(0.0, float(ft.get_height()) * 0.5 - SHADOW_FOOT_INSET))
 
 
 func _ready() -> void:
@@ -65,6 +100,7 @@ func _ready() -> void:
 		_prev_hp = def.max_hp
 		# 텔레그래프 표시 반경 = 판정 반경(def.strike_radius) — "맞는 곳=보이는 곳" (rules §3)
 		_telegraph.scale = Vector2.ONE * (def.strike_radius * 2.0 / TELEGRAPH_TEX_SIZE)
+		_fit_shadow()
 	_health.hp_changed.connect(_on_hp_changed)
 	# 권한 경로(호스트 apply_damage)에서만 발화 — CombatAuthority가 ehp 브로드캐스트 + 클리어 판정.
 	# 이 연결이 없으면 게스트 화면에 시체가 남고 클리어가 영영 안 뜬다 (enemy.gd 글루와 동일 규약).
@@ -112,6 +148,7 @@ func _physics_process(delta: float) -> void:
 			_play(&"attack")
 		if _telegraph_left <= 0.0:
 			_telegraph.visible = false
+	_shadow.visible = not _health.is_dead()  # 시체·부활 대기 중엔 그림자도 없앤다(플레이어 고스트와 같은 규칙)
 	if _health.is_dead() or def == null:
 		return
 	if Net.is_host():

@@ -2,11 +2,11 @@
 
 [ext_resource type="Script" path="res://src/core/boss_def.gd" id="1"]
 [ext_resource type="Script" path="res://src/core/boss_pattern_def.gd" id="2"]
-[ext_resource type="Texture2D" path="res://assets/sprites/enemies/brute_48.png" id="3"]
+[ext_resource type="Texture2D" path="res://assets/sprites/enemies/brute_24.png" id="3"]
 [ext_resource type="Script" path="res://src/core/drop_table.gd" id="4"]
 [ext_resource type="Script" path="res://src/core/drop_entry.gd" id="5"]
 [ext_resource type="Texture2D" path="res://assets/sprites/fx/telegraph_cone.png" id="6"]
-[ext_resource type="SpriteFrames" path="res://assets/sprites/enemies/croc_boss_frames.tres" id="7"]
+[ext_resource type="SpriteFrames" path="res://assets/sprites/enemies/croc_boss_64_frames.tres" id="7"]
 [ext_resource type="Texture2D" path="res://assets/sprites/fx/telegraph.png" id="8"]
 
 [sub_resource type="Resource" id="p_swing"]
@@ -95,7 +95,7 @@ max_hp = 300
 respawns = false
 sprite = ExtResource("3")
 frames = ExtResource("7")
-body_radius = 44.0
+body_radius = 32.0
 move_speed = 60.0
 aggro_range = 520.0
 exp = 100

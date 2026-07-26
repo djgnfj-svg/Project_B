@@ -51,10 +51,10 @@ func _init() -> void:
 	qty.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	qty.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 	qty.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	qty.add_theme_font_size_override("font_size", 9)
+	qty.add_theme_font_size_override("font_size", UiTheme.FS_BADGE)
 	qty.add_theme_color_override("font_color", Color(1, 1, 1, 1))
-	qty.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
-	qty.add_theme_constant_override("outline_size", 3)
+	qty.add_theme_color_override("font_outline_color", UiTheme.OUTLINE)
+	qty.add_theme_constant_override("outline_size", UiTheme.OUTLINE_SIZE)
 	qty.visible = false
 	overlay.add_child(qty)
 
@@ -63,10 +63,10 @@ func _init() -> void:
 	badge.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	badge.offset_left = 2; badge.offset_top = 1; badge.offset_right = CELL; badge.offset_bottom = 13
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	badge.add_theme_font_size_override("font_size", 9)
+	badge.add_theme_font_size_override("font_size", UiTheme.FS_BADGE)
 	badge.add_theme_color_override("font_color", UiTheme.GOLD)
-	badge.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
-	badge.add_theme_constant_override("outline_size", 3)
+	badge.add_theme_color_override("font_outline_color", UiTheme.OUTLINE)
+	badge.add_theme_constant_override("outline_size", UiTheme.OUTLINE_SIZE)
 	badge.visible = false
 	overlay.add_child(badge)
 
@@ -76,7 +76,7 @@ func _init() -> void:
 	slot_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	slot_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	slot_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	slot_name.add_theme_font_size_override("font_size", 9)
+	slot_name.add_theme_font_size_override("font_size", UiTheme.FS_BADGE)
 	slot_name.add_theme_color_override("font_color", UiTheme.TEXT_DIM)
 	slot_name.visible = false
 	overlay.add_child(slot_name)

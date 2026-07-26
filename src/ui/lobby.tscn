@@ -23,32 +23,41 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+mouse_filter = 2
 
-[node name="Box" type="VBoxContainer" parent="Center"]
-custom_minimum_size = Vector2(260, 0)
+[node name="Dialog" type="PanelContainer" parent="Center"]
+custom_minimum_size = Vector2(268, 0)
+layout_mode = 2
+
+[node name="Margin" type="MarginContainer" parent="Center/Dialog"]
+layout_mode = 2
+
+[node name="Box" type="VBoxContainer" parent="Center/Dialog/Margin"]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="Title" type="Label" parent="Center/Box"]
+[node name="Title" type="Label" parent="Center/Dialog/Margin/Box"]
 layout_mode = 2
+theme_type_variation = &"TitleLabel"
 text = "Project_B"
 horizontal_alignment = 1
 
-[node name="JobLabel" type="Label" parent="Center/Box"]
+[node name="JobLabel" type="Label" parent="Center/Dialog/Margin/Box"]
 layout_mode = 2
+theme_type_variation = &"SmallLabel"
 text = "직업 선택"
 horizontal_alignment = 1
 
-[node name="JobRow" type="HBoxContainer" parent="Center/Box"]
+[node name="JobRow" type="HBoxContainer" parent="Center/Dialog/Margin/Box"]
 layout_mode = 2
+theme_override_constants/separation = 8
 alignment = 1
-theme_override_constants/separation = 12
 
-[node name="WarriorBox" type="VBoxContainer" parent="Center/Box/JobRow"]
+[node name="WarriorBox" type="VBoxContainer" parent="Center/Dialog/Margin/Box/JobRow"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Icon" type="TextureRect" parent="Center/Box/JobRow/WarriorBox"]
+[node name="Icon" type="TextureRect" parent="Center/Dialog/Margin/Box/JobRow/WarriorBox"]
 custom_minimum_size = Vector2(32, 32)
 layout_mode = 2
 size_flags_horizontal = 4
@@ -57,20 +66,20 @@ mouse_filter = 2
 expand_mode = 1
 stretch_mode = 5
 
-[node name="WarriorBtn" type="Button" parent="Center/Box/JobRow/WarriorBox"]
+[node name="WarriorBtn" type="Button" parent="Center/Dialog/Margin/Box/JobRow/WarriorBox"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(64, 0)
+custom_minimum_size = Vector2(68, 0)
 layout_mode = 2
 toggle_mode = true
 button_pressed = true
 button_group = SubResource("job_group")
 text = "전사"
 
-[node name="ArcherBox" type="VBoxContainer" parent="Center/Box/JobRow"]
+[node name="ArcherBox" type="VBoxContainer" parent="Center/Dialog/Margin/Box/JobRow"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Icon" type="TextureRect" parent="Center/Box/JobRow/ArcherBox"]
+[node name="Icon" type="TextureRect" parent="Center/Dialog/Margin/Box/JobRow/ArcherBox"]
 custom_minimum_size = Vector2(32, 32)
 layout_mode = 2
 size_flags_horizontal = 4
@@ -79,19 +88,19 @@ mouse_filter = 2
 expand_mode = 1
 stretch_mode = 5
 
-[node name="ArcherBtn" type="Button" parent="Center/Box/JobRow/ArcherBox"]
+[node name="ArcherBtn" type="Button" parent="Center/Dialog/Margin/Box/JobRow/ArcherBox"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(64, 0)
+custom_minimum_size = Vector2(68, 0)
 layout_mode = 2
 toggle_mode = true
 button_group = SubResource("job_group")
 text = "궁수"
 
-[node name="MageBox" type="VBoxContainer" parent="Center/Box/JobRow"]
+[node name="MageBox" type="VBoxContainer" parent="Center/Dialog/Margin/Box/JobRow"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Icon" type="TextureRect" parent="Center/Box/JobRow/MageBox"]
+[node name="Icon" type="TextureRect" parent="Center/Dialog/Margin/Box/JobRow/MageBox"]
 custom_minimum_size = Vector2(32, 32)
 layout_mode = 2
 size_flags_horizontal = 4
@@ -100,60 +109,75 @@ mouse_filter = 2
 expand_mode = 1
 stretch_mode = 5
 
-[node name="MageBtn" type="Button" parent="Center/Box/JobRow/MageBox"]
+[node name="MageBtn" type="Button" parent="Center/Dialog/Margin/Box/JobRow/MageBox"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(64, 0)
+custom_minimum_size = Vector2(68, 0)
 layout_mode = 2
 toggle_mode = true
 button_group = SubResource("job_group")
 text = "법사"
 
-[node name="HostBtn" type="Button" parent="Center/Box"]
+[node name="HostBtn" type="Button" parent="Center/Dialog/Margin/Box"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 36)
+custom_minimum_size = Vector2(0, 32)
 layout_mode = 2
 text = "방 만들기"
 
-[node name="JoinLabel" type="Label" parent="Center/Box"]
+[node name="JoinLabel" type="Label" parent="Center/Dialog/Margin/Box"]
 layout_mode = 2
+theme_type_variation = &"SmallLabel"
 text = "초대 코드로 참가"
 horizontal_alignment = 1
 
-[node name="JoinRow" type="HBoxContainer" parent="Center/Box"]
+[node name="JoinRow" type="HBoxContainer" parent="Center/Dialog/Margin/Box"]
 layout_mode = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 6
 
-[node name="CodeEdit" type="LineEdit" parent="Center/Box/JoinRow"]
+[node name="CodeEdit" type="LineEdit" parent="Center/Dialog/Margin/Box/JoinRow"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 placeholder_text = "방 코드"
 max_length = 4
 
-[node name="JoinBtn" type="Button" parent="Center/Box/JoinRow"]
+[node name="JoinBtn" type="Button" parent="Center/Dialog/Margin/Box/JoinRow"]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(56, 0)
 layout_mode = 2
 text = "참가"
 
-[node name="Status" type="Label" parent="Center/Box"]
+[node name="Status" type="Label" parent="Center/Dialog/Margin/Box"]
 unique_name_in_owner = true
 layout_mode = 2
+theme_type_variation = &"SmallLabel"
+autowrap_mode = 3
 horizontal_alignment = 1
 
-[node name="SettingsBtn" type="Button" parent="Center/Box"]
+[node name="FootSep" type="HSeparator" parent="Center/Dialog/Margin/Box"]
+layout_mode = 2
+
+[node name="FootRow" type="HBoxContainer" parent="Center/Dialog/Margin/Box"]
+layout_mode = 2
+theme_override_constants/separation = 6
+alignment = 1
+
+[node name="SettingsBtn" type="Button" parent="Center/Dialog/Margin/Box/FootRow"]
 unique_name_in_owner = true
 layout_mode = 2
+size_flags_horizontal = 3
 focus_mode = 0
+theme_type_variation = &"SmallButton"
 text = "설정"
-flat = true
 
-[node name="AdvBtn" type="Button" parent="Center/Box"]
+[node name="AdvBtn" type="Button" parent="Center/Dialog/Margin/Box/FootRow"]
 unique_name_in_owner = true
 layout_mode = 2
-text = "서버 주소 설정"
-flat = true
+size_flags_horizontal = 3
+focus_mode = 0
+theme_type_variation = &"SmallButton"
+text = "서버 주소"
 
-[node name="UrlEdit" type="LineEdit" parent="Center/Box"]
+[node name="UrlEdit" type="LineEdit" parent="Center/Dialog/Margin/Box"]
 unique_name_in_owner = true
 visible = false
 layout_mode = 2

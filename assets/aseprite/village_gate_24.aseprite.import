@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://btd3p8u4lghj2"
+path="res://.godot/imported/village_gate_24.aseprite-9538be6f8717dec4a86905fe24a9e0ca.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village_gate_24.aseprite"
+dest_files=["res://.godot/imported/village_gate_24.aseprite-9538be6f8717dec4a86905fe24a9e0ca.res"]
+
+[params]
+

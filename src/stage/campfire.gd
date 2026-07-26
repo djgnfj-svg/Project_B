@@ -10,6 +10,7 @@ const PlayerActor := preload("res://src/player/player.gd")
 const SceneFlowNode := preload("res://src/net/scene_flow.gd")
 const PeerSyncNode := preload("res://src/net/peer_sync.gd")
 const HealthComponent := preload("res://src/combat/health_component.gd")
+const UiTheme := preload("res://src/ui/ui_theme.gd")  # UI 톤 단일 소스 (HUD·패널과 같은 테마)
 
 @export var def: CampfireDef
 
@@ -48,6 +49,12 @@ func _ready() -> void:
 	gate.body_exited.connect(_on_gate_body.bind(false))
 	_fire_hint.visible = false
 	_gate_hint.visible = false
+	# 🔴 월드 안내 라벨 = 장식인데 Label 기본 mouse_filter가 STOP이라 그 사각형 아래 클릭(공격·상호작용)이
+	#   통째로 죽는다 — 에러 없음, 헤드리스 검출 불가(rules §5 1번 함정). 마을 안내와 같은 규약.
+	for lbl: Label in [_fire_hint, _gate_hint]:
+		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		lbl.theme = UiTheme.get_theme()  # 월드 라벨은 Control 조상이 없어 상속이 안 온다
+		lbl.theme_type_variation = &"HudLabel"
 
 
 # 상호작용은 폴링이 아니라 _unhandled_input — UI가 소비한 입력은 여기 안 온다 (마을 게이트 규약)

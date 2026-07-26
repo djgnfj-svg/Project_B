@@ -7,6 +7,7 @@ extends Node2D
 const NetSchema := preload("res://src/core/net_schema.gd")
 const PlayerActor := preload("res://src/player/player.gd")
 const SceneFlowNode := preload("res://src/net/scene_flow.gd")
+const UiTheme := preload("res://src/ui/ui_theme.gd")  # UI 톤 단일 소스 (HUD·패널과 같은 테마)
 
 # 훈련소 스프라이트 — 아트 담당 작업 중(2026-07-25). 파일이 임포트되면 자동 교체되고,
 # 없으면 씬에 박아둔 폴백(craft_station.png)을 그대로 쓴다.
@@ -52,19 +53,38 @@ func _ready() -> void:
 	_train_hint.visible = false
 	_apply_train_texture()
 	set_meta("map_rect", MAP_RECT)  # 카메라 맵 클램프 — camera_rig가 스폰 시 읽는다
+	_style_world_hints()
 	_build_info_overlay()
 
 
-# 좌상단 버전·인원 표시 (캐시 판별 + 2인 접속 확인). 표시 전용 오버레이.
+# 월드 위에 떠 있는 안내 라벨(게이트·제작대·훈련소) 정리.
+# 🔴 **mouse_filter** — Label 기본값은 STOP이라, Node2D 밑에 있어도 그 사각형(가로 160~200px)이
+#   그 아래 게임 클릭을 통째로 먹는다(에러·경고 없음, 헤드리스 검출 불가 — rules §5 1번 함정).
+#   안내는 장식이므로 전부 IGNORE. 톤은 HUD 라벨과 같은 등급(외곽선 = 밝은 바닥 위에서도 읽힘).
+func _style_world_hints() -> void:
+	for lbl: Label in [_hint, _craft_hint, _train_hint]:
+		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		lbl.theme = UiTheme.get_theme()  # 월드 라벨은 Control 조상이 없어 상속이 안 온다
+		lbl.theme_type_variation = &"HudLabel"
+
+
+# 버전·인원 표시 (캐시 판별 + 2인 접속 확인). 표시 전용 오버레이.
+# ⚠ **우상단**이다 — 좌상단은 HUD 방 코드 줄(핑·경로·fps) 자리라, 여기 있던 시절엔 마을에서 두 줄이
+#   같은 픽셀에 겹쳐 찍혔다(이 오버레이가 layer 9 = HUD보다 위). 겹치는 코너를 나눠 갖는다.
 func _build_info_overlay() -> void:
 	var layer := CanvasLayer.new()
 	layer.layer = 9
 	add_child(layer)
 	_info_label = Label.new()
-	_info_label.position = Vector2(6, 4)
-	_info_label.add_theme_color_override("font_color", Color(0.85, 0.9, 0.7))
-	_info_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
-	_info_label.add_theme_constant_override("outline_size", 3)
+	_info_label.theme = UiTheme.get_theme()
+	_info_label.theme_type_variation = &"HudLabel"
+	_info_label.mouse_filter = Control.MOUSE_FILTER_IGNORE  # 장식 — 아래 게임 클릭을 먹지 않게(§5)
+	_info_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_info_label.offset_left = -240.0
+	_info_label.offset_top = 4.0
+	_info_label.offset_right = -6.0
+	_info_label.offset_bottom = 20.0
+	_info_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	layer.add_child(_info_label)
 	_refresh_info()
 

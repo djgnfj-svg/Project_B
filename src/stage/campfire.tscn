@@ -1,4 +1,4 @@
-[gd_scene load_steps=14 format=3]
+[gd_scene load_steps=27 format=3]
 
 [ext_resource type="Script" path="res://src/stage/campfire.gd" id="1"]
 [ext_resource type="Resource" path="res://data/campfire/default.tres" id="2"]
@@ -11,6 +11,19 @@
 [ext_resource type="PackedScene" path="res://src/hud/stage_hud.tscn" id="9"]
 [ext_resource type="Script" path="res://src/stage/chapter_flow.gd" id="10"]
 [ext_resource type="Script" path="res://src/stage/arrow_field.gd" id="11"]
+[ext_resource type="Texture2D" path="res://assets/sprites/stage/ground_32_a.png" id="15"]
+[ext_resource type="Texture2D" path="res://assets/sprites/stage/ground_32_b.png" id="16"]
+[ext_resource type="Texture2D" path="res://assets/sprites/stage/detail_grass.png" id="17"]
+[ext_resource type="Texture2D" path="res://assets/sprites/stage/detail_pebble.png" id="18"]
+[ext_resource type="Texture2D" path="res://assets/sprites/stage/detail_crack.png" id="19"]
+[ext_resource type="Texture2D" path="res://assets/sprites/stage/detail_flower.png" id="20"]
+[ext_resource type="Texture2D" path="res://assets/sprites/stage/foliage_grass.png" id="21"]
+[ext_resource type="Texture2D" path="res://assets/sprites/stage/foliage_bush.png" id="22"]
+[ext_resource type="Texture2D" path="res://assets/sprites/stage/foliage_tree_s.png" id="23"]
+[ext_resource type="Script" path="res://src/stage/ground_variant.gd" id="24"]
+[ext_resource type="Script" path="res://src/stage/ground_detail.gd" id="25"]
+[ext_resource type="Script" path="res://src/stage/foliage_field.gd" id="26"]
+[ext_resource type="PackedScene" path="res://src/stage/foliage.tscn" id="27"]
 
 [sub_resource type="CircleShape2D" id="shape_fire"]
 radius = 44.0
@@ -29,6 +42,28 @@ position = Vector2(320, 180)
 texture = ExtResource("3")
 region_enabled = true
 region_rect = Rect2(0, 0, 640, 360)
+
+[node name="GroundVariant" type="Node2D" parent="."]
+script = ExtResource("24")
+area = Rect2(0, 0, 640, 360)
+variants = Array[Texture2D]([ExtResource("15"), ExtResource("16")])
+rng_seed = 3301
+
+[node name="GroundDetail" type="Node2D" parent="."]
+script = ExtResource("25")
+area = Rect2(0, 0, 640, 360)
+textures = Array[Texture2D]([ExtResource("17"), ExtResource("18"), ExtResource("19"), ExtResource("20")])
+count = 90
+rng_seed = 3302
+
+[node name="FoliageField" type="Node2D" parent="."]
+script = ExtResource("26")
+foliage_scene = ExtResource("27")
+area = Rect2(0, 0, 640, 360)
+textures = Array[Texture2D]([ExtResource("21"), ExtResource("22"), ExtResource("23")])
+count = 16
+rng_seed = 3303
+exclude = Array[Rect2]([Rect2(260, 120, 120, 110), Rect2(140, 130, 120, 100), Rect2(530, 130, 110, 100)])
 
 [node name="Fire" type="Area2D" parent="."]
 position = Vector2(320, 170)

@@ -16,6 +16,7 @@ const INV_ICON_SIZE := 16.0  # 인벤 아이콘 표시 크기(px)
 # UI 오버레이 조합 — HUD가 설정/인벤 패널을 무는 것은 조합(rules §0 예외). class_name 대신 preload(§0).
 const SettingsPanelScene := preload("res://src/ui/settings_panel.tscn")
 const InventoryPanelScene := preload("res://src/ui/inventory_panel.tscn")
+const UiTheme := preload("res://src/ui/ui_theme.gd")  # UI 톤 단일 소스 (로비·패널과 같은 테마)
 const GOLD_TEX := preload("res://assets/sprites/items/gold.png")  # 골드 인벤 아이콘 (DropField와 같은 소스)
 
 var _invite_fx_seq: int = 0  # 복사 연타 시 이전 타이머가 새 피드백을 지우지 않게
@@ -45,6 +46,13 @@ var _roll_ready: bool = true  # 구르기 준비 상태 — 바뀔 때만 색을
 
 
 func _ready() -> void:
+	# 루트가 CanvasLayer라 theme 프로퍼티가 없다 → Control 자식마다 건다(손자는 상속).
+	# ⚠ 자식 CanvasLayer(설정·인벤 패널)는 건너뛴다 — 그쪽은 자기 루트에서 직접 건다.
+	UiTheme.apply_to_children(self)
+	# 바 채움색만 바마다 다르다(바탕·모서리는 테마 공용) — 색은 ui_theme 팔레트에서 온다.
+	_hp_bar.add_theme_stylebox_override(&"fill", UiTheme.bar_fill(UiTheme.HP_FILL))
+	_exp_bar.add_theme_stylebox_override(&"fill", UiTheme.bar_fill(UiTheme.EXP_FILL))
+	_roll_bar.add_theme_stylebox_override(&"fill", UiTheme.bar_fill(UiTheme.ROLL_FILL))
 	_update_room_label()
 	_progress.text = GameState.progress_label()  # 마을(비챕터)은 빈 문자열 = 표시 없음
 	_invite_btn.pressed.connect(_on_invite_pressed)
@@ -177,9 +185,7 @@ func _refresh_inv() -> void:
 	lbl.text = str(GameState.gold)
 	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	lbl.add_theme_color_override(&"font_color", Color(1, 0.85, 0.3, 1))  # 골드 색
-	lbl.add_theme_color_override(&"font_outline_color", Color(0, 0, 0, 0.8))
-	lbl.add_theme_constant_override(&"outline_size", 3)
+	lbl.theme_type_variation = &"HudGoldLabel"  # 금색 + 외곽선 = ui_theme 등급 (여기서 Color를 박지 않는다)
 	_gold_bar.add_child(lbl)
 
 

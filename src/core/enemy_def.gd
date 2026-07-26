@@ -9,7 +9,7 @@ extends Resource
 @export var sprite: Texture2D             # 개체 스프라이트 — 씬 1장을 데이터로 재사용 (§4)
 @export var frames: SpriteFrames          # 애니 시트(idle/walk/attack/death) — 있으면 sprite보다 우선. 없으면 sprite 1장을 idle로 감싼다
 
-@export var body_radius: float = 6.0      # 몸 판정 반경(px) — 플레이어 공격 원형 질의가 맞는 몸집. 스프라이트 크기와 정합 유지 (48px 브루트 등 덩치 큰 개체용)
+@export var body_radius: float = 3.0      # 몸 판정 반경(px) — 플레이어 공격 원형 질의가 맞는 몸집. 스프라이트 크기와 정합 유지. 16px 전환으로 기본 6→3 (덩치 큰 개체는 .tres에서 키운다 — 브루트 7·보스 등)
 
 # 이동/AI (호스트 전용 구동 — 0 = 고정형). 수치는 전부 임시값 — 사용자가 플레이하며 조인다.
 @export var move_speed: float = 0.0

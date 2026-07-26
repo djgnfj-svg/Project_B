@@ -4,6 +4,7 @@ extends Control
 # 직업(GDD §5: 시작 시 선택·이후 고정)은 GameState.selected_job_id에 기록 — 스테이지가 읽는다.
 
 const SettingsPanelScene := preload("res://src/ui/settings_panel.tscn")  # rules §0: class_name 대신 preload
+const UiTheme := preload("res://src/ui/ui_theme.gd")  # UI 톤 단일 소스 (제작/인벤/HUD와 같은 테마)
 
 @onready var _url_edit: LineEdit = %UrlEdit
 @onready var _code_edit: LineEdit = %CodeEdit
@@ -25,6 +26,7 @@ func _ready() -> void:
 	# Node2D(main) 아래 붙는 루트 Control — 비-Control 부모에선 씬 앵커가 안 펴지는 경우가 있어 뷰포트 크기 강제
 	position = Vector2.ZERO
 	size = get_viewport_rect().size
+	theme = UiTheme.get_theme()  # 루트 Control에 한 번 — 아래 전부 상속 (제작/인벤 패널과 같은 톤)
 	_url_edit.text = Net.default_relay_url()
 	if Net.state == Net.State.CONNECTED:
 		_status.text = "서버 연결됨 — 방을 만들거나 참가하세요"

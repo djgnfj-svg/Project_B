@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://cb54tudbelo0x"
+path="res://.godot/imported/npc_enchanter.aseprite-172c4ad50474d7c69e5af8bca6e44a39.res"
+
+[deps]
+
+source_file="res://assets/aseprite/npc_enchanter.aseprite"
+dest_files=["res://.godot/imported/npc_enchanter.aseprite-172c4ad50474d7c69e5af8bca6e44a39.res"]
+
+[params]
+

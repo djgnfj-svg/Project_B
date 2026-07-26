@@ -54,6 +54,12 @@ signal stage_wiped
 # crit = 이번 확정이 치명타였나 (표시 강조 전용 — 굴림은 호스트만, 표시 쪽에서 다시 굴리지 않는다 §3).
 signal combat_impact(kind: String, world_pos: Vector2, amount: int, crit: bool)
 signal screen_shake(strength: float)  # 명시적 셰이크 트리거 (사망·보스 슬램 등) — 카메라가 소비
+# 방향성 카메라 반동 — 셰이크(무작위 진동)와 **다른 축**이다: 이쪽은 정해진 방향으로 밀렸다 복귀한다.
+# 타격은 때린 방향으로, 발사는 그 반대로, 피격은 맞은 방향으로 민다 → "쫀득함"이 방향으로 읽힌다.
+# 🔴 **로컬 아바타에서만 emit해라** — 카메라는 뷰포트를 잡은 로컬 인스턴스에만 붙어 있지만(enabled),
+#   EventBus는 전역이라 원격 아바타가 emit하면 남이 맞을 때 내 화면이 밀린다(combat_impact가 이미
+#   그런 상태라 셰이크는 남의 피격에도 난다 — 킥까지 따라가면 원인 모를 화면 흔들림이 된다).
+signal camera_kick(dir: Vector2, strength: float)
 # 소리/연출 트리거 (표시·소리 전용, 각 클라 로컬) — Audio가 SFX로, 필요시 연출이 구독.
 signal player_swing(world_pos: Vector2, sfx: String)   # 플레이어 공격 스윙(로컬·원격 연출 시점) — sfx = 무기 스윙음 id(EquipDef.swing_sfx). ⚠ 발사(EquipDef.swing_sfx)·**차지 단계 상승(charge_sfx)**도 이 훅을 재사용한다 = "소리 낼 순간" 훅에 가깝다. 여기에 스윙 궤적 같은 **시각** 연출을 매달면 기 모을 때마다 검을 휘두른다 — 시각을 붙일 땐 sfx id로 갈라내거나 별도 시그널을 파라
 signal player_roll(world_pos: Vector2)    # 플레이어 구르기 시작

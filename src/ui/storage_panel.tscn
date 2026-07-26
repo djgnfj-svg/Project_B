@@ -31,14 +31,10 @@ layout_mode = 2
 
 [node name="Margin" type="MarginContainer" parent="Center/Dialog"]
 layout_mode = 2
-theme_override_constants/margin_left = 12
-theme_override_constants/margin_top = 10
-theme_override_constants/margin_right = 12
-theme_override_constants/margin_bottom = 8
 
 [node name="VBox" type="VBoxContainer" parent="Center/Dialog/Margin"]
 layout_mode = 2
-theme_override_constants/separation = 7
+theme_override_constants/separation = 8
 
 [node name="TitleRow" type="HBoxContainer" parent="Center/Dialog/Margin/VBox"]
 layout_mode = 2
@@ -47,13 +43,12 @@ theme_override_constants/separation = 8
 [node name="Title" type="Label" parent="Center/Dialog/Margin/VBox/TitleRow"]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_font_sizes/font_size = 13
-theme_override_colors/font_color = Color(0.31, 0.72, 0.86, 1)
+theme_type_variation = &"TitleLabel"
 text = "창고"
 
 [node name="CloseBtn" type="Button" parent="Center/Dialog/Margin/VBox/TitleRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(52, 0)
+custom_minimum_size = Vector2(56, 0)
 layout_mode = 2
 focus_mode = 0
 text = "닫기"
@@ -66,12 +61,11 @@ theme_override_constants/separation = 10
 [node name="BagCol" type="VBoxContainer" parent="Center/Dialog/Margin/VBox/Cols"]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_constants/separation = 5
+theme_override_constants/separation = 6
 
 [node name="Head" type="Label" parent="Center/Dialog/Margin/VBox/Cols/BagCol"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 11
-theme_override_colors/font_color = Color(0.31, 0.72, 0.86, 1)
+theme_type_variation = &"SectionLabel"
 text = "내 가방"
 
 [node name="GoldRow" type="HBoxContainer" parent="Center/Dialog/Margin/VBox/Cols/BagCol"]
@@ -90,14 +84,14 @@ unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
-theme_override_colors/font_color = Color(1, 0.82, 0.3, 1)
+theme_type_variation = &"GoldLabel"
 text = "0"
 
 [node name="BagGoldBtn" type="Button" parent="Center/Dialog/Margin/VBox/Cols/BagCol/GoldRow"]
 unique_name_in_owner = true
 layout_mode = 2
 focus_mode = 0
-theme_override_font_sizes/font_size = 10
+theme_type_variation = &"SmallButton"
 text = "보관 ▶"
 
 [node name="Scroll" type="ScrollContainer" parent="Center/Dialog/Margin/VBox/Cols/BagCol"]
@@ -123,12 +117,11 @@ layout_mode = 2
 [node name="StoreCol" type="VBoxContainer" parent="Center/Dialog/Margin/VBox/Cols"]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_constants/separation = 5
+theme_override_constants/separation = 6
 
 [node name="Head" type="Label" parent="Center/Dialog/Margin/VBox/Cols/StoreCol"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 11
-theme_override_colors/font_color = Color(0.31, 0.72, 0.86, 1)
+theme_type_variation = &"SectionLabel"
 text = "창고"
 
 [node name="GoldRow" type="HBoxContainer" parent="Center/Dialog/Margin/VBox/Cols/StoreCol"]
@@ -139,7 +132,7 @@ theme_override_constants/separation = 4
 unique_name_in_owner = true
 layout_mode = 2
 focus_mode = 0
-theme_override_font_sizes/font_size = 10
+theme_type_variation = &"SmallButton"
 text = "◀ 꺼내기"
 
 [node name="GoldIcon" type="TextureRect" parent="Center/Dialog/Margin/VBox/Cols/StoreCol/GoldRow"]
@@ -154,7 +147,7 @@ unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
-theme_override_colors/font_color = Color(1, 0.82, 0.3, 1)
+theme_type_variation = &"GoldLabel"
 text = "0"
 
 [node name="Scroll" type="ScrollContainer" parent="Center/Dialog/Margin/VBox/Cols/StoreCol"]
@@ -177,6 +170,5 @@ zone = "storage"
 [node name="Hint" type="Label" parent="Center/Dialog/Margin/VBox"]
 layout_mode = 2
 horizontal_alignment = 1
-theme_override_font_sizes/font_size = 9
-theme_override_colors/font_color = Color(0.55, 0.62, 0.74, 1)
+theme_type_variation = &"SmallLabel"
 text = "드래그: 전부 옮김 · 클릭: 재료 1개 / 장비 이동"

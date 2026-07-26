@@ -87,6 +87,7 @@ func _refresh_inv_bar() -> void:
 	_clear(_inv_row)
 	var gold := Label.new()
 	gold.text = "골드 %d" % GameState.gold
+	gold.theme_type_variation = &"GoldLabel"  # 색/크기는 ui_theme 등급 (여기서 Color를 박지 않는다)
 	_inv_row.add_child(gold)
 	for mid: String in GameState.materials:
 		var qty := int(GameState.materials[mid])
@@ -142,7 +143,7 @@ func _make_craft_row(rid: String, recipe: RecipeDef) -> Control:
 	var cost_lbl := Label.new()
 	cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cost_lbl.text = _craft_cost_text(recipe)
-	cost_lbl.add_theme_font_size_override("font_size", 10)
+	cost_lbl.theme_type_variation = &"SmallLabel"
 	info.add_child(cost_lbl)
 	row.add_child(info)
 
@@ -208,12 +209,12 @@ func _make_upgrade_row(eid: String, equip: EquipDef) -> Control:
 	var stat_lbl := Label.new()
 	stat_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	stat_lbl.text = "공격 %d · HP %d" % [int(cur0["attack"]), int(cur0["hp"])]
-	stat_lbl.add_theme_font_size_override("font_size", 10)
+	stat_lbl.theme_type_variation = &"SmallLabel"
 	info.add_child(stat_lbl)
 
 	var prev_lbl := Label.new()
 	prev_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	prev_lbl.add_theme_font_size_override("font_size", 10)
+	prev_lbl.theme_type_variation = &"SmallLabel"
 	if maxed:
 		prev_lbl.text = "MAX"
 	else:
@@ -294,5 +295,5 @@ func _make_empty_label(text: String) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	l.theme_type_variation = &"SmallLabel"  # 흐린 보조색 = ui_theme 등급
 	return l

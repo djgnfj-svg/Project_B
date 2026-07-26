@@ -30,14 +30,10 @@ layout_mode = 2
 
 [node name="Margin" type="MarginContainer" parent="Center/Dialog"]
 layout_mode = 2
-theme_override_constants/margin_left = 10
-theme_override_constants/margin_top = 8
-theme_override_constants/margin_right = 10
-theme_override_constants/margin_bottom = 8
 
 [node name="VBox" type="VBoxContainer" parent="Center/Dialog/Margin"]
 layout_mode = 2
-theme_override_constants/separation = 5
+theme_override_constants/separation = 8
 
 [node name="TitleRow" type="HBoxContainer" parent="Center/Dialog/Margin/VBox"]
 layout_mode = 2
@@ -46,6 +42,7 @@ theme_override_constants/separation = 8
 [node name="Title" type="Label" parent="Center/Dialog/Margin/VBox/TitleRow"]
 layout_mode = 2
 size_flags_horizontal = 3
+theme_type_variation = &"TitleLabel"
 text = "훈련소 · 하위 직업 조립"
 
 [node name="CloseBtn" type="Button" parent="Center/Dialog/Margin/VBox/TitleRow"]
@@ -63,13 +60,10 @@ alignment = 1
 
 [node name="StatBar" type="PanelContainer" parent="Center/Dialog/Margin/VBox"]
 layout_mode = 2
+theme_type_variation = &"InnerPanel"
 
 [node name="StatMargin" type="MarginContainer" parent="Center/Dialog/Margin/VBox/StatBar"]
 layout_mode = 2
-theme_override_constants/margin_left = 6
-theme_override_constants/margin_top = 2
-theme_override_constants/margin_right = 6
-theme_override_constants/margin_bottom = 2
 
 [node name="StatBox" type="VBoxContainer" parent="Center/Dialog/Margin/VBox/StatBar/StatMargin"]
 layout_mode = 2
@@ -78,24 +72,24 @@ theme_override_constants/separation = 1
 [node name="StatLabel" type="Label" parent="Center/Dialog/Margin/VBox/StatBar/StatMargin/StatBox"]
 unique_name_in_owner = true
 layout_mode = 2
+theme_type_variation = &"InfoLabel"
 theme_override_constants/line_spacing = 0
-theme_override_font_sizes/font_size = 9
 autowrap_mode = 3
 
 [node name="TraitLabel" type="Label" parent="Center/Dialog/Margin/VBox/StatBar/StatMargin/StatBox"]
 unique_name_in_owner = true
 visible = false
 layout_mode = 2
+theme_type_variation = &"InfoLabel"
 theme_override_constants/line_spacing = 0
-theme_override_font_sizes/font_size = 9
 autowrap_mode = 3
 
 [node name="NoticeLabel" type="Label" parent="Center/Dialog/Margin/VBox"]
 unique_name_in_owner = true
 visible = false
 layout_mode = 2
+theme_type_variation = &"InfoLabel"
 theme_override_constants/line_spacing = 0
-theme_override_font_sizes/font_size = 9
 autowrap_mode = 3
 
 [node name="OwnedScroll" type="ScrollContainer" parent="Center/Dialog/Margin/VBox"]
@@ -118,6 +112,6 @@ zone = "owned"
 [node name="HintLabel" type="Label" parent="Center/Dialog/Margin/VBox"]
 unique_name_in_owner = true
 layout_mode = 2
+theme_type_variation = &"InfoLabel"
 theme_override_constants/line_spacing = 0
-theme_override_font_sizes/font_size = 9
 autowrap_mode = 3

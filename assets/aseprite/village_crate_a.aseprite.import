@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://c1eo6rwtrmxwx"
+path="res://.godot/imported/village_crate_a.aseprite-b7e5620368d9fe29d7d997c2b50f8338.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village_crate_a.aseprite"
+dest_files=["res://.godot/imported/village_crate_a.aseprite-b7e5620368d9fe29d7d997c2b50f8338.res"]
+
+[params]
+

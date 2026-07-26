@@ -260,7 +260,10 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 		NetSchema.G_ATK:
 			if _players.has(from_id):
 				var dir := Vector2(float(data.get("dx", 1.0)), float(data.get("dy", 0.0)))
-				_players[from_id].play_attack_fx(dir.normalized() if dir.length() > 0.001 else Vector2.RIGHT)
+				# "cb" = 콤보 타수(표시 전용 — 궤적 방향/크기만 정한다). 없으면 0 = 도입 전과 같은 첫 타 궤적.
+				# 범위 밖 값은 play_attack_fx → _begin_swing이 clamp하므로 여기선 정수화만 한다.
+				_players[from_id].play_attack_fx(
+					dir.normalized() if dir.length() > 0.001 else Vector2.RIGHT, int(data.get("cb", 0)))
 		NetSchema.G_SHOOT:
 			# 원격 궁수 발사 연출(활 반동) — 표시 전용. 화살 스폰은 ArrowField, 판정은 CombatAuthority(호스트)가 별도.
 			if _players.has(from_id):
