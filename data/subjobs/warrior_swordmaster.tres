@@ -1,12 +1,14 @@
-[gd_resource type="Resource" script_class="SubJobDef" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="SubJobDef" load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://src/core/sub_job_def.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/subjobs/warrior_swordmaster.png" id="2"]
 
 [resource]
 script = ExtResource("1")
 id = "warrior_swordmaster"
 display_name = "검성"
 description = "검이 닿는 거리를 다시 정의한다 — 평타가 검기를 날려 더 멀리서 베고, 한 번 들어간 치명타가 무겁다."
+icon = ExtResource("2")
 series_id = "warrior"
 order = 2
 unlocks_next_at = 3

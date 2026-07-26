@@ -1,12 +1,14 @@
-[gd_resource type="Resource" script_class="SubJobDef" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="SubJobDef" load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://src/core/sub_job_def.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/subjobs/shared_acrobat.png" id="2"]
 
 [resource]
 script = ExtResource("1")
 id = "shared_acrobat"
 display_name = "곡예사"
 description = "구르는 법을 몸이 먼저 안다. 어느 계열이든 몸에 배는 요령 — 서브로만 얹힌다."
+icon = ExtResource("2")
 series_id = "*"
 order = 0
 unlocks_next_at = 99

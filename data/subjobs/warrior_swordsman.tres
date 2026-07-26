@@ -1,12 +1,14 @@
-[gd_resource type="Resource" script_class="SubJobDef" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="SubJobDef" load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://src/core/sub_job_def.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/subjobs/warrior_swordsman.png" id="2"]
 
 [resource]
 script = ExtResource("1")
 id = "warrior_swordsman"
 display_name = "검사"
 description = "기본에 충실한 전사의 길. 오래 버티고 꾸준히 움직인다 — 피흡과 이동속도가 오른다."
+icon = ExtResource("2")
 series_id = "warrior"
 order = 0
 unlocks_next_at = 3
