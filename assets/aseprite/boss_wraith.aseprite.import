@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://cb0fpkryakk4e"
+path="res://.godot/imported/boss_wraith.aseprite-f9bf4e4c6592b621396f72bb91fe9cb1.res"
+
+[deps]
+
+source_file="res://assets/aseprite/boss_wraith.aseprite"
+dest_files=["res://.godot/imported/boss_wraith.aseprite-f9bf4e4c6592b621396f72bb91fe9cb1.res"]
+
+[params]
+

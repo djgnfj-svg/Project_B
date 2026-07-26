@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://804akyxr0pn1"
+path="res://.godot/imported/archer_32.aseprite-527ab9c257e8afd0da07a7ea459283cd.res"
+
+[deps]
+
+source_file="res://assets/aseprite/archer_32.aseprite"
+dest_files=["res://.godot/imported/archer_32.aseprite-527ab9c257e8afd0da07a7ea459283cd.res"]
+
+[params]
+

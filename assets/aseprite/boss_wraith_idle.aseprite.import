@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://c2g7fdhfajqva"
+path="res://.godot/imported/boss_wraith_idle.aseprite-a010d307f118586de95329ad09a81d76.res"
+
+[deps]
+
+source_file="res://assets/aseprite/boss_wraith_idle.aseprite"
+dest_files=["res://.godot/imported/boss_wraith_idle.aseprite-a010d307f118586de95329ad09a81d76.res"]
+
+[params]
+

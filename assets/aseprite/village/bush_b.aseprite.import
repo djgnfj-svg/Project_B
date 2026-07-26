@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://djcxbtf5ogv40"
+path="res://.godot/imported/bush_b.aseprite-aa590dd3a4b7f1c7f55a572b0fd02001.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/bush_b.aseprite"
+dest_files=["res://.godot/imported/bush_b.aseprite-aa590dd3a4b7f1c7f55a572b0fd02001.res"]
+
+[params]
+

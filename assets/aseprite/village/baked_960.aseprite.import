@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://ctd0b3x8vjw7g"
+path="res://.godot/imported/baked_960.aseprite-ca16fc92038c81d7ba5b36adc96b0a9a.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/baked_960.aseprite"
+dest_files=["res://.godot/imported/baked_960.aseprite-ca16fc92038c81d7ba5b36adc96b0a9a.res"]
+
+[params]
+

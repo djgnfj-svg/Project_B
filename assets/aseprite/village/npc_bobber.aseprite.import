@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://d34otfbrma5v6"
+path="res://.godot/imported/npc_bobber.aseprite-92b1d6f3e5495ffe303a7db7d4522034.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/npc_bobber.aseprite"
+dest_files=["res://.godot/imported/npc_bobber.aseprite-92b1d6f3e5495ffe303a7db7d4522034.res"]
+
+[params]
+

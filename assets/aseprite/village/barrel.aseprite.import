@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://bsn1kxkiyaa8m"
+path="res://.godot/imported/barrel.aseprite-402e4cbc047849a1db04227119d4fa30.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/barrel.aseprite"
+dest_files=["res://.godot/imported/barrel.aseprite-402e4cbc047849a1db04227119d4fa30.res"]
+
+[params]
+

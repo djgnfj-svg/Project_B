@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://dtugm0ldejoen"
+path="res://.godot/imported/npc_rabbit.aseprite-635683205039741fc17a7b34107534f0.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/npc_rabbit.aseprite"
+dest_files=["res://.godot/imported/npc_rabbit.aseprite-635683205039741fc17a7b34107534f0.res"]
+
+[params]
+

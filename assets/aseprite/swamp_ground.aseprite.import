@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://dwiexh66nwxh7"
+path="res://.godot/imported/swamp_ground.aseprite-bb5cd0dc00dc23af0ab9b428fcd7883d.res"
+
+[deps]
+
+source_file="res://assets/aseprite/swamp_ground.aseprite"
+dest_files=["res://.godot/imported/swamp_ground.aseprite-bb5cd0dc00dc23af0ab9b428fcd7883d.res"]
+
+[params]
+

@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://cl33drrahfg0h"
+path="res://.godot/imported/coop_marker.aseprite-acc54b8973fa351519f16e0949491b9c.res"
+
+[deps]
+
+source_file="res://assets/sprites/fx/coop_marker.aseprite"
+dest_files=["res://.godot/imported/coop_marker.aseprite-acc54b8973fa351519f16e0949491b9c.res"]
+
+[params]
+

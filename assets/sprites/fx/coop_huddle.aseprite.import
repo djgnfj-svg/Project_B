@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://4nlmqr8f0dph"
+path="res://.godot/imported/coop_huddle.aseprite-39344b41e45c6eb9356e9ad76a25e73c.res"
+
+[deps]
+
+source_file="res://assets/sprites/fx/coop_huddle.aseprite"
+dest_files=["res://.godot/imported/coop_huddle.aseprite-39344b41e45c6eb9356e9ad76a25e73c.res"]
+
+[params]
+

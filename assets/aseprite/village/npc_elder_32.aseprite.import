@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://drf3jod7thb4q"
+path="res://.godot/imported/npc_elder_32.aseprite-14d0914103c319f06e6ca1145f21cf33.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/npc_elder_32.aseprite"
+dest_files=["res://.godot/imported/npc_elder_32.aseprite-14d0914103c319f06e6ca1145f21cf33.res"]
+
+[params]
+

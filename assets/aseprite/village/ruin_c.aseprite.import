@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://cb0lstkc61lrc"
+path="res://.godot/imported/ruin_c.aseprite-49bbdf519309d4e937b8292e103746db.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/ruin_c.aseprite"
+dest_files=["res://.godot/imported/ruin_c.aseprite-49bbdf519309d4e937b8292e103746db.res"]
+
+[params]
+

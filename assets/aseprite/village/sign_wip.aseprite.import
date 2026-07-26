@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://ck3plqqu0pbjo"
+path="res://.godot/imported/sign_wip.aseprite-6c62c149a5dc4d48e754b78b6811e3b0.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/sign_wip.aseprite"
+dest_files=["res://.godot/imported/sign_wip.aseprite-6c62c149a5dc4d48e754b78b6811e3b0.res"]
+
+[params]
+

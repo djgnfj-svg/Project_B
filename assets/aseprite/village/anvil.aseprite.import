@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://xwxqnn8qjhcu"
+path="res://.godot/imported/anvil.aseprite-aa5fcc0b24837ccd6ea0d4ab93054ae0.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/anvil.aseprite"
+dest_files=["res://.godot/imported/anvil.aseprite-aa5fcc0b24837ccd6ea0d4ab93054ae0.res"]
+
+[params]
+

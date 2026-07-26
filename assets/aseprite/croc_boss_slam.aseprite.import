@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://da4sm44dsjw7d"
+path="res://.godot/imported/croc_boss_slam.aseprite-7b7bb2139ffe94fb463b18cb0dca8f4b.res"
+
+[deps]
+
+source_file="res://assets/aseprite/croc_boss_slam.aseprite"
+dest_files=["res://.godot/imported/croc_boss_slam.aseprite-7b7bb2139ffe94fb463b18cb0dca8f4b.res"]
+
+[params]
+

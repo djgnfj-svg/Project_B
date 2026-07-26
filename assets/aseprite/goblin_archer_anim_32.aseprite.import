@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://dm3mwkaoddkal"
+path="res://.godot/imported/goblin_archer_anim_32.aseprite-727c32e8d62ffc5bfb32f07ceabe31fd.res"
+
+[deps]
+
+source_file="res://assets/aseprite/goblin_archer_anim_32.aseprite"
+dest_files=["res://.godot/imported/goblin_archer_anim_32.aseprite-727c32e8d62ffc5bfb32f07ceabe31fd.res"]
+
+[params]
+

@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://oj3w4qd8afly"
+path="res://.godot/imported/npc_smith_32.aseprite-9e4c633ba40a37175b0b2c0f27b63254.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/npc_smith_32.aseprite"
+dest_files=["res://.godot/imported/npc_smith_32.aseprite-9e4c633ba40a37175b0b2c0f27b63254.res"]
+
+[params]
+

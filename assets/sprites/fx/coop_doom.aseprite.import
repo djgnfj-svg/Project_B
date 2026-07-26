@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://djbpb51sqxyv3"
+path="res://.godot/imported/coop_doom.aseprite-2daf4f42a082f87c429bac5db19e29f2.res"
+
+[deps]
+
+source_file="res://assets/sprites/fx/coop_doom.aseprite"
+dest_files=["res://.godot/imported/coop_doom.aseprite-2daf4f42a082f87c429bac5db19e29f2.res"]
+
+[params]
+
