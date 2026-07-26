@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://ce3rbs2pa3utb"
+path="res://.godot/imported/sword_wave.aseprite-e45afb0cd58cd4687801ef154c4f1ae5.res"
+
+[deps]
+
+source_file="res://assets/aseprite/sword_wave.aseprite"
+dest_files=["res://.godot/imported/sword_wave.aseprite-e45afb0cd58cd4687801ef154c4f1ae5.res"]
+
+[params]
+
