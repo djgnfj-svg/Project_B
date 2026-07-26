@@ -57,6 +57,11 @@ func _initialize() -> void:
 	gs.leave_chapter()
 	_check("챕터 이탈 시 좌표 리셋", not gs.in_chapter())
 	_check("챕터 이탈 시 이월 HP 리셋", gs.carried_hp(7) == -1)
+	# 「도굴」 소수 잔량도 판 단위 런타임 상태다(저장 대상 아님) — 이월 HP와 같은 자리에서 리셋한다.
+	gs.begin_stage("chapter1", 0)
+	gs.drop_find_frac["material"] = 0.9
+	gs.leave_chapter()
+	_check("챕터 이탈 시 도굴 잔량 리셋", gs.drop_find_frac.is_empty())
 
 	# --- 인벤/제작/강화/저장 (드랍·제작 신뢰 경계) ---
 	_check("재료 스캔에 goblin_hide", "goblin_hide" in gs.material_ids())
@@ -195,11 +200,15 @@ func _initialize() -> void:
 	gg.selected_job_id = "warrior"
 	_check("하위 직업 스캔에 warrior_swordsman", "warrior_swordsman" in gg.sub_job_ids())
 	_check("하위 직업 스캔에 warrior_berserker", "warrior_berserker" in gg.sub_job_ids())
+	_check("하위 직업 스캔에 warrior_swordmaster(검성)", "warrior_swordmaster" in gg.sub_job_ids())
 	_check("하위 직업 경로 조작 → null", gg.sub_job_def("../../src/core/net_schema") == null)
 	_check("모르는 하위 직업 id → null", gg.sub_job_def("bogus_sub") == null)
 	var series: Array = gg.sub_jobs_of_series("warrior")  # gg는 Node 캐스트라 반환 타입 추론 불가 — 명시
-	_check("계열 목록 = order 정렬(검사 → 광전사)",
-		series.size() == 2 and series[0] == "warrior_swordsman" and series[1] == "warrior_berserker")
+	# order 정렬 = 해금 체인의 순서 그대로. 계열에 하위 직업을 더하면 이 줄도 같이 늘린다
+	# (부등호로 느슨하게 두면 순서가 뒤집혀도 통과해 해금 체인이 조용히 어긋난다).
+	_check("계열 목록 = order 정렬(검사 → 광전사 → 검성)",
+		series.size() == 3 and series[0] == "warrior_swordsman" and series[1] == "warrior_berserker" \
+		and series[2] == "warrior_swordmaster")
 	_check("타 계열(archer) 하위 직업 없음(미작성 = 스트레치)", gg.sub_jobs_of_series("archer").is_empty())
 
 	# 지급 — 멱등(grant_starting_loadout 미러)
@@ -255,6 +264,9 @@ func _initialize() -> void:
 	_check("타 계열에선 보유 목록이 비어 EXP가 안 섞인다", gg.owned_sub_jobs().is_empty())
 	# 리뷰 I3: 계열이 섞였을 때 표시가 거짓말하지 않는지 — 메인이 타 계열이면 없는 것으로 본다
 	_check("타 계열 선택 시 main_sub_job() = null (HUD 거짓 표기 방지)", gg.main_sub_job() == null)
+	# 🔴 공지도 같은 판정을 써야 한다 — 나는 0으로 계산하는데 남에게는 id를 보내면 "같은 것을 두
+	#   근거로 계산"하는 구조가 남는다(수신 측 계열 필터가 지금은 같은 결과를 내서 안 드러날 뿐).
+	_check("타 계열 선택 시 공지 메인 id도 비어야 한다(계산 근거 통일)", gg.announced_main_id().is_empty())
 	_check("타 계열 선택 시 EXP 진행 표기 = 0", int(gg.main_exp_progress()["level"]) == 0)
 	_check("타 계열 선택 시 레벨 스탯 = 전부 0", is_equal_approx(float(gg.current_level_stats()["crit"]), 0.0))
 	_check("타 계열에선 add_exp가 no-op", not gg.add_exp(100))
@@ -268,6 +280,154 @@ func _initialize() -> void:
 		float(caps["crit"]) <= float(CombatMath.LEVEL_STAT_MAX["crit"]))
 	_check("정직한 만성장 ≤ 데이터 유도 상한",
 		float(gg.current_level_stats()["crit"]) <= float(caps["crit"]))
+
+	# 🔴 GDD §6 총 화력 예산 트립와이어 — max_level_stats()가 곧 "메인 만레벨 + 나머지 전부 서브 만레벨"의
+	#   정직한 최대치라 예산과 직접 비교된다. **하위 직업을 추가하고 스텝 재역산을 잊으면 여기서 빨개진다**
+	#   ("데이터 한 장"이 아니라 "재역산이 딸린 한 장" — GDD §6·§7). 하드 상한(LEVEL_STAT_MAX)은 스푸핑
+	#   방어선이라 예산보다 넉넉하다 — 그래서 그 검사만으로는 예산 초과를 못 잡는다.
+	var budget := {"crit": 0.20, "crit_dmg": 0.50, "haste": 0.25, "move": 0.15, "leech": 0.06}
+	for key: String in budget:
+		var got := float(caps.get(key, -1.0))
+		_check("예산 %s: 만성장 %.3f ≤ GDD %.2f" % [key, got, float(budget[key])],
+			got >= 0.0 and got <= float(budget[key]) + 0.0005)
+
+	# 🔴 이동 축 합산 트립와이어 (리뷰 I1) — 「광란」(kill_move)은 5스탯 move와 **같은 축이라 더해진 뒤**
+	#   LEVEL_STAT_MAX["move"]에서 잘린다. 데이터 최대 move + TRAIT_MAX["kill_move"]가 그 상한을 넘으면
+	#   표시는 "+15%"인데 실제로는 조용히 깎인다(이속을 키울수록 광란이 사라진다). 둘 중 하나를 올릴 때
+	#   여기가 빨개진다 — 그때는 값을 낮추거나, 축을 분리하고 LAG_MAX_LEAD_DIST를 재유도해라.
+	#   ⚠ **현재 여유는 0.01뿐이다**(실측 move 0.14 + kill_move 0.15 = 0.29 ≤ 0.30). 이동 성장이 있는
+	#   하위 직업을 하나만 더 넣거나 SUB_SLOT_COUNT를 3으로 올리면 즉시 빨개진다 — 빡빡한 게 정상이다.
+	_check("이동 축 합산: 데이터 최대 move + kill_move ≤ LEVEL_STAT_MAX['move'] (표시=실제)",
+		float(caps.get("move", 9.0)) + float(CombatMath.TRAIT_MAX.get("kill_move", 9.0))
+			<= float(CombatMath.LEVEL_STAT_MAX.get("move", 0.0)) + 0.0005)
+
+	# --- 하위 직업 특성 리졸브 (자리별 두 얼굴) — GDD v2.0 §5 ---
+	# 🔴 네트워크로 오가는 것은 **하위 직업 id뿐**이고 값은 로컬 .tres에서 나온다(peer_weapon_id 철학).
+	#   그래서 여기 검사는 곧 호스트가 원격 주장을 어떻게 거르는지의 검사다.
+	#   ⚠ 딕셔너리는 반드시 `.get(키, 폴백)`으로 읽는다 — 직접 인덱싱하면 그 키를 지우는 뮤테이션에서
+	#   SCRIPT ERROR로 테스트가 통째로 죽어 "검출력 0"이 통과로 위장된다 (verify §3, 2026-07-25).
+	var t_main: Dictionary = gg.traits_of("warrior_swordmaster", [], "warrior")
+	_check("특성: 검성을 **메인**에 = 평타 사거리 +30%",
+		is_equal_approx(float(t_main.get("reach", -1.0)), 0.3))
+	var t_sub: Dictionary = gg.traits_of("warrior_swordsman", ["warrior_swordmaster"], "warrior")
+	# 🔴 자리별 두 얼굴의 핵심 계약 — 같은 검성이라도 서브면 **다른(약한) 특성**이 켜진다.
+	_check("특성: 검성을 **서브**에 = 간격 감각 +10%(메인 특성 아님)",
+		is_equal_approx(float(t_sub.get("reach", -1.0)), 0.1))
+	_check("특성: 검사를 메인에 = 굳건한 자세(구르기 쿨 −20%)",
+		is_equal_approx(float(t_sub.get("roll_cd", -1.0)), 0.2))
+	# 같은 축은 합산되고 상한에서 잘린다(GDD §6 "보상은 있되 끝이 있다")
+	var t_stack: Dictionary = gg.traits_of("warrior_swordsman", ["shared_acrobat"], "warrior")
+	_check("특성: 같은 축 합산 = 검사 0.2 + 곡예사 0.15 → 상한 0.30",
+		is_equal_approx(float(t_stack.get("roll_cd", -1.0)), CombatMath.TRAIT_MAX.get("roll_cd", 0.0)))
+	# 🔒 공유 하위 직업은 **서브 전용** — 메인 자리에 넣어도 특성이 안 켜진다(SubJobDef.trait_at 구조 방어).
+	# 🔴 현재 data/subjobs의 공유 2종은 main_trait_key가 비어 있어 **데이터만으로는 이 가드를 못 겨눈다**
+	#   (가드를 지워도 빈 키에서 걸러져 테스트가 통과 = 검출력 0의 침묵 통과, verify §3에서 실제로 겪음).
+	#   그래서 가드를 직접 겨누는 합성 def를 만든다 — 나중에 공유 .tres에 메인 특성을 적어 넣어도 안 켜진다.
+	var fake_shared := SubJobDef.new()
+	fake_shared.series_id = SubJobDef.SERIES_SHARED
+	fake_shared.main_trait_key = "reach"
+	fake_shared.main_trait_value = 0.5
+	fake_shared.sub_trait_key = "roll_cd"
+	fake_shared.sub_trait_value = 0.1
+	_check("특성: 공유는 메인 자리 특성이 구조적으로 꺼진다(데이터에 적어도)",
+		fake_shared.trait_at(true).is_empty())
+	_check("특성: 공유의 서브 자리 특성은 정상 동작",
+		is_equal_approx(float(fake_shared.trait_at(false).get("value", -1.0)), 0.1))
+	var t_shared_main: Dictionary = gg.traits_of("shared_acrobat", [], "warrior")
+	_check("특성: 공유를 메인 자리에 넣어도 꺼짐(서브 전용)",
+		is_equal_approx(float(t_shared_main.get("roll_cd", -1.0)), 0.0))
+	_check("특성: 공유는 서브 자리에서 켜짐(+15%)",
+		is_equal_approx(float(gg.traits_of("", ["shared_acrobat"], "warrior").get("roll_cd", -1.0)), 0.15))
+	_check("특성: 공유는 **다른 계열**에서도 켜진다(계열 무관)",
+		is_equal_approx(float(gg.traits_of("", ["shared_acrobat"], "archer").get("roll_cd", -1.0)), 0.15))
+	_check("특성: 타 계열 주장(archer가 검성) 폐기",
+		is_equal_approx(float(gg.traits_of("warrior_swordmaster", [], "archer").get("reach", -1.0)), 0.0))
+	_check("특성: 모르는 id 폐기",
+		is_equal_approx(float(gg.traits_of("bogus_sub", [], "warrior").get("reach", -1.0)), 0.0))
+	_check("특성: 경로 조작 폐기",
+		is_equal_approx(float(gg.traits_of("../../src/core/net_schema", [], "warrior").get("reach", -1.0)), 0.0))
+	# 🔴 슬롯 수 초과 공지 차단 — 서브를 10개 실어 특성을 쌓는 것을 SUB_SLOT_COUNT에서 잘라낸다
+	var t_flood: Dictionary = gg.traits_of("", ["shared_acrobat", "warrior_swordmaster", "warrior_swordsman"], "warrior")
+	_check("특성: 서브 초과분 폐기(3개 공지 → 앞 2개만)",
+		is_equal_approx(float(t_flood.get("campfire_heal", -1.0)), 0.0))
+	# 🔴 같은 id를 메인·서브에 동시에 실어 두 자리를 먹는 것 차단(5스탯 이중 계상의 특성판)
+	_check("특성: 메인과 같은 id를 서브에 실어도 한 번만",
+		is_equal_approx(float(gg.traits_of("warrior_swordmaster",
+			["warrior_swordmaster"], "warrior").get("reach", -1.0)), 0.3))
+
+	# --- 장착 슬롯 (메인 1 + 서브 2) — GDD v2.0 §5 ---
+	gg.sub_job_exp["warrior_swordmaster"] = 0  # 해금 체인 대신 직접 보유시켜 슬롯만 검사
+	gg.sub_job_exp["shared_acrobat"] = 0
+	_check("슬롯: 검사를 메인으로", gg.set_main_sub_job("warrior_swordsman"))
+	_check("슬롯: 서브 0번에 검성", gg.set_sub_slot(0, "warrior_swordmaster"))
+	_check("슬롯: 메인과 같은 것을 서브에 = 거부", not gg.set_sub_slot(1, "warrior_swordsman"))
+	# 미보유 = sub_job_exp에 키가 없는 것. 도굴꾼은 이 시점에 보유시키지 않았다(곡예사만 지급).
+	_check("슬롯: 미보유 서브 거부", not gg.set_sub_slot(1, "shared_treasure_hunter"))
+	_check("슬롯: 모르는 id 거부", not gg.set_sub_slot(1, "bogus_sub"))
+	_check("슬롯: 공유는 서브에 가능", gg.set_sub_slot(1, "shared_acrobat"))
+	_check("슬롯: 장착 3개", gg.equipped_sub_jobs().size() == 3)
+	# 🔴 공지 페이로드는 **메인을 빼고** 서브만 실어야 한다 — 메인이 "ss"에 섞이면 수신 측
+	#   traits_of가 SUB_SLOT_COUNT에서 앞 2개만 취하므로 **진짜 서브 하나가 밀려 사라진다**
+	#   (dedup이 로컬에선 흡수해서 로컬 특성으론 안 드러난다 — 상대 화면에서만 갈라진다).
+	var ann: Array = gg.announced_sub_ids()
+	_check("공지: 서브 목록이 정확히 SUB_SLOT_COUNT개", ann.size() == 2)
+	_check("공지: 서브 목록에 메인이 섞이지 않는다", gg.main_sub_job_id not in ann)
+	_check("공지: 메인 id는 유효할 때만 실린다", gg.announced_main_id() == gg.main_sub_job_id)
+	# 🔴 메인 전환 시 그 자리를 서브에서 빼 준다 — 안 그러면 한 하위 직업이 두 자리를 먹는다
+	_check("슬롯: 서브에 낀 검성으로 메인 전환", gg.set_main_sub_job("warrior_swordmaster"))
+	_check("슬롯: 전환 후에도 장착은 3개(중복 없음)", gg.equipped_sub_jobs().size() == 3)
+	_check("슬롯: 전환 후 서브에 검성이 남지 않음",
+		"warrior_swordmaster" not in [gg.sub_slot_id(0), gg.sub_slot_id(1)])
+	# 🔴 예산이 슬롯에 묶이는 자리 — 낀 것만 5스탯에 들어간다(보유 전부가 아니라)
+	gg.set_sub_slot(0, "")
+	gg.set_sub_slot(1, "")
+	var only_main: Dictionary = gg.current_level_stats()
+	gg.set_sub_slot(0, "warrior_swordsman")
+	var with_sub: Dictionary = gg.current_level_stats()
+	_check("슬롯: 서브를 빼면 5스탯이 줄어든다(보유가 아니라 장착이 기준)",
+		float(with_sub.get("leech", 0.0)) > float(only_main.get("leech", -1.0)))
+	# 🔴 판 도중엔 슬롯이 안 바뀐다 (리뷰 I3) — 전투 중 해금이 빈 칸을 채우면 특성이 판 도중 켜지고,
+	#   내 로컬 판정 기하는 즉시 넓어지는데 호스트의 원격 아바타는 공지 도달(편도) 뒤에야 바뀐다
+	#   → 그 창에서 타격이 무음 거부되거나(사거리) 정당 변위가 clamp된다(구르기).
+	gg.set_main_sub_job("warrior_swordsman")
+	gg.set_sub_slot(0, "")
+	gg.set_sub_slot(1, "")
+	gg.begin_stage("chapter1", 0)
+	gg.autofill_sub_slots()
+	_check("슬롯: 판 도중 autofill이 슬롯을 안 건드린다(마을 전용 불변식)",
+		gg.sub_slot_id(0).is_empty() and gg.sub_slot_id(1).is_empty())
+	gg.leave_chapter()
+	gg.autofill_sub_slots()
+	_check("슬롯: 마을로 나오면 autofill이 빈 칸을 채운다", not gg.sub_slot_id(0).is_empty())
+	# 🔴 배선 계약 (리뷰 I-1) — 판 중 해금분이 슬롯에 껴지는 유일한 자리가 마을 진입의
+	#   grant_starting_sub_job이다. **이 함수를 부르면 빈 칸이 채워진다**를 여기서 고정한다.
+	#   ⚠ 이 테스트는 "main.gd가 그 함수를 부르는가"(호출자 배선)는 못 본다 — 실제로 챕터→마을
+	#   귀환 경로에 호출이 빠져 있었고 헤드리스는 그걸 통과시켰다(verify §3 사각). 실기로 확인해라.
+	gg.set_sub_slot(0, "")
+	gg.set_sub_slot(1, "")
+	gg.grant_starting_sub_job(gg.job_def("warrior"))
+	_check("배선: grant_starting_sub_job이 빈 서브 칸을 채운다(마을 진입 계약)",
+		not gg.sub_slot_id(0).is_empty())
+	# 🔴 손상/조작 세이브의 중복 슬롯 폐기 (리뷰 M1) — 안 막으면 한 칸이 조용히 죽고 패널은 둘 다 장착으로 그린다
+	var dup_snap: Dictionary = gg.to_save_dict()
+	dup_snap["sub_slots"] = ["warrior_swordmaster", "warrior_swordmaster"]
+	var gdup := GameStateScript.new() as Node
+	gdup.selected_job_id = "warrior"
+	gdup.from_save_dict(dup_snap)
+	_check("저장: 중복 서브 슬롯 → 한 칸만 남는다",
+		not (gdup.sub_slot_id(0) == gdup.sub_slot_id(1) and not gdup.sub_slot_id(0).is_empty()))
+	dup_snap["sub_slots"] = "손상된값"  # Array가 아닌 페이로드 (리뷰 M2)
+	var gbad := GameStateScript.new() as Node
+	gbad.from_save_dict(dup_snap)
+	_check("저장: sub_slots가 Array가 아니면 빈 칸으로 폐기(런타임 에러 없음)",
+		gbad.sub_slot_id(0).is_empty() and gbad.sub_slot_id(1).is_empty())
+	gdup.free()
+	gbad.free()
+	gg.set_main_sub_job("warrior_swordsman")
+	gg.set_sub_slot(0, "")
+	gg.set_sub_slot(1, "")
+	gg.sub_job_exp.erase("warrior_swordmaster")  # 이후 저장 검사에 영향 주지 않게 원복
+	gg.sub_job_exp.erase("shared_acrobat")
 
 	# 저장 — 필드 추가(버전 불변), 구 세이브 폴백, 조작 세이브 폐기
 	var gsnap: Dictionary = gg.to_save_dict()

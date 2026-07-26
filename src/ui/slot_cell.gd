@@ -133,6 +133,14 @@ func set_empty(slot_name: String = "", placeholder: Texture2D = null) -> void:
 	_restyle()
 
 
+# 아이콘 확대 방식 — 기본은 칸에 맞춰 늘리는 KEEP_ASPECT_CENTERED다(아이콘 = 칸 크기 전제).
+# 🔴 아이콘 원본이 칸보다 작으면 그 배율이 정수가 아니라 픽셀아트가 뭉개진다(24px 아이콘 / 28px 안쪽
+#   = 1.17배). 원본 크기 그대로 두려면 STRETCH_KEEP_CENTERED(=1배)를 넣어라 — 훈련소 패널이 쓴다.
+# 기본값은 그대로라 인벤·창고 표시는 변하지 않는다(추가만, 변경 없음).
+func set_icon_stretch(mode: int) -> void:
+	_icon.stretch_mode = mode
+
+
 func _restyle() -> void:
 	if _equipped:
 		add_theme_stylebox_override("panel", UiTheme.equipped_slot_box())
@@ -140,16 +148,31 @@ func _restyle() -> void:
 		add_theme_stylebox_override("panel", UiTheme.slot_box(_border, _filled, _hover))
 
 
+# 🔴 클릭은 **뗄 때** 발화한다 — 누를 때 emit하면 드래그를 시작해도 클릭 액션이 먼저 터진다.
+#   패널들의 클릭 핸들러는 예외 없이 GameState를 바꾸고 _refresh()로 그리드를 통째로 재생성하는데
+#   (창고·훈련소 공통), Godot은 마우스가 임계값만큼 **움직인 뒤에야** _get_drag_data를 부르므로
+#   그 시점엔 소스 셀이 이미 queue_free돼 **드래그가 통째로 성립하지 않는다**. 증상은 조작마다 다르다:
+#   창고 = "끌었는데 재료가 1개만 옮겨짐"(클릭 동작이 대신 실행), 훈련소 = "메인 칸에 놨는데 서브 칸에 들어감".
+#   에러는 어디에도 안 난다. 그래서 누름은 기억만 하고, 드래그로 전환되면 그 기억을 지운다.
+var _press_armed: bool = false
+
+
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and not payload.is_empty():
+		if mb.button_index != MOUSE_BUTTON_LEFT or payload.is_empty():
+			return
+		if mb.pressed:
+			_press_armed = true
+		elif _press_armed:
+			_press_armed = false
 			activated.emit(payload)
 
 
 func _get_drag_data(_pos: Vector2) -> Variant:
 	if not _draggable or payload.is_empty():
 		return null
+	_press_armed = false  # 드래그로 전환 — 뗄 때 클릭이 겹쳐 터지지 않게 (위 주석)
 	set_drag_preview(ItemUi.make_drag_preview(payload.get("tex") as Texture2D, 26.0))
 	return payload
 

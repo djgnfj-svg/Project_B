@@ -30,6 +30,61 @@ func _initialize() -> void:
 	failures += _check(CombatMath.is_roll_grant_ok(1000, 1720), "roll grant: 쿨다운 경과(720ms) 허용")
 	failures += _check(not CombatMath.is_roll_grant_ok(1000, 1000), "roll grant: 즉시 재요청(0ms) 거부")
 
+	# --- 하위 직업 특성 (GDD v2.0) — 카탈로그 clamp + 구르기 파생 ---
+	# 🔴 값은 네트워크로 안 온다(id만) — 여기 검사는 "데이터 실수와 상한 초과 주장을 어디서 자르나"다.
+	failures += _check(is_equal_approx(CombatMath.clamp_trait("roll_cd", 0.15), 0.15), "trait: 정상값 통과")
+	failures += _check(is_equal_approx(CombatMath.clamp_trait("roll_cd", 0.9),
+		float(CombatMath.TRAIT_MAX["roll_cd"])), "trait: 상한 초과 → TRAIT_MAX clamp")
+	failures += _check(is_equal_approx(CombatMath.clamp_trait("roll_cd", -0.5), 0.0), "trait: 음수 → 0 (디버프 주입 차단)")
+	failures += _check(is_equal_approx(CombatMath.clamp_trait("roll_cd", INF), 0.0), "trait: INF → 0 (유한성 가드)")
+	# 🔴 모르는 키는 상한 0이라 자동 폐기 — TRAIT_KEYS에 없는 축이 데이터 오타로 새어들지 않는다
+	failures += _check(is_equal_approx(CombatMath.clamp_trait("attack", 99.0), 0.0), "trait: 모르는 키 → 0 (축 경계 방어)")
+	var traits_in := {"reach": 0.3, "bogus": 5.0}
+	var traits_out := CombatMath.clamp_traits(traits_in)
+	failures += _check(is_equal_approx(float(traits_out.get("reach", -1.0)), 0.3), "trait: 묶음 clamp 정상 키 보존")
+	failures += _check(not traits_out.has("bogus"), "trait: 묶음 clamp가 모르는 키 폐기(TRAIT_KEYS 순회)")
+	failures += _check(is_equal_approx(float(traits_out.get("roll_cd", -1.0)), 0.0), "trait: 빠진 키는 0으로 채움(항등 폴백)")
+	# 구르기 파생 — 로컬 쿨과 호스트 그랜트 게이트가 같은 함수를 지난다(§3)
+	failures += _check(is_equal_approx(CombatMath.effective_roll_cooldown(0.0), CombatMath.ROLL_COOLDOWN_S),
+		"roll cd: 특성 0 = 항등(도입 전과 동일)")
+	failures += _check(is_equal_approx(CombatMath.effective_roll_cooldown(0.2), 0.64), "roll cd: −20% → 0.64s")
+	failures += _check(is_equal_approx(CombatMath.effective_roll_cooldown(0.9),
+		CombatMath.ROLL_COOLDOWN_S * (1.0 - float(CombatMath.TRAIT_MAX["roll_cd"]))),
+		"roll cd: 상한 초과 주장도 TRAIT_MAX까지만 (상시 무적 차단)")
+	# 🔴 게이트가 특성을 실제로 먹는지 — 안 먹으면 "굴러지는데 무적이 안 걸린다"가 된다(화면에 이유 안 드러남)
+	failures += _check(CombatMath.is_roll_grant_ok(1000, 1576, 0.2), "roll grant+특성: 짧아진 창(576ms) 허용")
+	failures += _check(not CombatMath.is_roll_grant_ok(1000, 1575, 0.2), "roll grant+특성: 창 직전(575ms) 거부")
+	failures += _check(not CombatMath.is_roll_grant_ok(1000, 1576, 0.0), "roll grant: 특성 0이면 576ms는 여전히 거부(항등 보존)")
+	failures += _check(is_equal_approx(CombatMath.effective_roll_speed(100.0, 0.0), 100.0 * CombatMath.ROLL_SPEED_MULT),
+		"roll speed: 특성 0 = 항등")
+	failures += _check(is_equal_approx(CombatMath.effective_roll_speed(100.0, 0.2), 100.0 * CombatMath.ROLL_SPEED_MULT * 1.2),
+		"roll speed: +20% 반영")
+	# 🔴 비율 보너스를 정수 수량에 살리는 소수 누적 — **리뷰 C1의 회귀 테스트**.
+	#   드랍 재료가 1~2개라 반올림/절삭하면 +15%가 **정확히 0**이 된다(실측). 잔량을 누적해야 산다.
+	var acc1 := CombatMath.accrue_bonus(1, 0.15, 0.0)
+	failures += _check(int(acc1.get("qty", -1)) == 1 and is_equal_approx(float(acc1.get("carry", -1.0)), 0.15),
+		"accrue: qty 1 + 15% → 이번엔 1, 잔량 0.15 (반올림이면 영원히 0이던 자리)")
+	var carry := 0.0
+	var got := 0
+	for _i in range(20):
+		var a := CombatMath.accrue_bonus(1, 0.15, carry)
+		got += int(a.get("qty", 0))
+		carry = float(a.get("carry", 0.0))
+	failures += _check(got == 23, "accrue: 1개 20회 × 15% → 23개 (기댓값 보존, 실제 +15%)")
+	failures += _check(int(CombatMath.accrue_bonus(4, 0.15, 0.0).get("qty", -1)) == 4,
+		"accrue: 큰 수량도 잔량만 쌓고 즉시 올리지 않는다(0.6 < 1)")
+	failures += _check(int(CombatMath.accrue_bonus(0, 0.15, 0.9).get("qty", -1)) == 0,
+		"accrue: 수량 0은 그대로(잔량도 보존)")
+	failures += _check(int(CombatMath.accrue_bonus(2, INF, 0.0).get("qty", -1)) == 2,
+		"accrue: INF 비율 → 항등(유한성 가드)")
+	failures += _check(is_equal_approx(float(CombatMath.accrue_bonus(2, 0.5, -5.0).get("carry", -1.0)), 0.0),
+		"accrue: 음수 잔량 주입 → 0으로 정규화")
+
+	# UI 문구는 카탈로그에서 파생 — 감소 축은 부호를 뒤집는다(표시와 실제가 갈라지지 않게)
+	failures += _check(CombatMath.trait_text("roll_cd", 0.15).ends_with("−15%"), "trait_text: 감소 축은 − 표기")
+	failures += _check(CombatMath.trait_text("reach", 0.3).ends_with("+30%"), "trait_text: 증가 축은 + 표기")
+	failures += _check(CombatMath.trait_text("", 0.3) == "", "trait_text: 특성 없음 = 빈 문자열")
+
 	# i-frame 창 — ROLL_TIME_S 0.25×1000 + GRACE 120 → 370ms
 	failures += _check(CombatMath.is_iframe_active(1000, 1000), "iframe: 그랜트 직후(0ms) 유효")
 	failures += _check(CombatMath.is_iframe_active(1000, 1370), "iframe: 창 경계(370ms) 유효")
@@ -62,6 +117,42 @@ func _initialize() -> void:
 	failures += _check(CombatMath.is_hit_in_reach(origin, Vector2(80.0, 0.0), job, 48.0), "reach+radius: 큰 보스 중심 80·반경48 → 표면(32) 적중")
 	failures += _check(not CombatMath.is_hit_in_reach(origin, Vector2(90.0, 0.0), job, 48.0), "reach+radius: 중심 90·반경48 → 표면(42>40) 거부")
 	failures += _check(CombatMath.is_hit_in_reach(origin, Vector2(40.0, 0.0), job), "reach+radius: 반경 기본 0 = 기존 동작 불변(40 허용)")
+
+	# --- 메인 전용 특성: 검기 파형(사거리) — §3 사거리 계약 (GDD v1.9) ---
+	# job.attack_range 20. reach +30% → 26 → 검증 한계 52. 상한(MAX_REACH_BONUS 0.5) → 30 → 한계 60.
+	failures += _check(is_equal_approx(CombatMath.effective_attack_range(job), 20.0),
+		"reach bonus: 기본값 0 = 항등(20)")
+	failures += _check(is_equal_approx(CombatMath.effective_attack_range(job, 0.3), 26.0),
+		"reach bonus: +30% = 26")
+	failures += _check(is_equal_approx(CombatMath.effective_attack_range(job, 5.0), 30.0),
+		"reach bonus: 상한 초과 주장(5.0) → +50%(30)로 clamp")
+	failures += _check(is_equal_approx(CombatMath.effective_attack_range(job, -2.0), 20.0),
+		"reach bonus: 음수 주장 → 0(사거리 디버프 주입 차단)")
+	failures += _check(is_equal_approx(CombatMath.effective_attack_range(job, INF), 20.0),
+		"reach bonus: INF(JSON 1e999) → 0 폴백")
+	# 판정 게이트에 실제로 걸리는가 — 특성 없으면 거부되던 거리가 특성으로 허용된다
+	failures += _check(not CombatMath.is_hit_in_reach(origin, Vector2(45.0, 0.0), job),
+		"reach bonus: 특성 없으면 45 거부(한계 40)")
+	failures += _check(CombatMath.is_hit_in_reach(origin, Vector2(45.0, 0.0), job, 0.0, 0.3),
+		"reach bonus: 특성 +30%면 45 허용(한계 52)")
+	failures += _check(not CombatMath.is_hit_in_reach(origin, Vector2(52.1, 0.0), job, 0.0, 0.3),
+		"reach bonus: +30%여도 한계 밖(52.1) 거부")
+	failures += _check(not CombatMath.is_hit_in_reach(origin, Vector2(60.1, 0.0), job, 0.0, 9.0),
+		"reach bonus: 상한 clamp 후 한계(60) 밖 거부 — 무한 사거리 주장 차단")
+	# 🔴 기하 3함수가 **같은 확장 사거리**에서 파생되는가 — 하나라도 job.attack_range를 직접 읽으면
+	#   판정과 표시가 갈라진다("맞는 곳 ≠ 보이는 곳"). 그 갈라짐을 여기서 잡는다.
+	failures += _check(is_equal_approx(
+			CombatMath.attack_center_offset(Vector2.RIGHT, job, 0.3).length(), 26.0 * 0.6),
+		"reach bonus: 공격 중심도 확장 사거리에서 파생(15.6)")
+	failures += _check(is_equal_approx(CombatMath.attack_radius(job, 0.3), 26.0 * 0.5),
+		"reach bonus: 판정 반경도 확장 사거리에서 파생(13.0)")
+	failures += _check(is_equal_approx(CombatMath.attack_radius(job), 10.0),
+		"reach bonus: 기하 기본값 0 = 기존 동작 불변(반경 10)")
+	# 적 몸 반경과 조합 — 둘 다 걸린다(보스 표면 + 확장 사거리)
+	failures += _check(CombatMath.is_hit_in_reach(origin, Vector2(99.0, 0.0), job, 48.0, 0.3),
+		"reach bonus+radius: 보스 표면(51) < 확장 한계(52) 적중")
+	failures += _check(not CombatMath.is_hit_in_reach(origin, Vector2(99.0, 0.0), job, 48.0),
+		"reach bonus+radius: 같은 거리도 특성 없으면 거부")
 
 	# --- 장비 스탯 (§3 하드 계약 — 제작/강화 UI·전투·HUD 공용 단일 소스) ---
 	failures += _check(CombatMath.calc_damage(job, 5) == 12, "calc_damage: 장비 보너스(+5) = 12")
@@ -187,6 +278,16 @@ func _initialize() -> void:
 		"extrapolate: Inf 속도 → 항등(오염 가드)")
 	failures += _check(is_equal_approx(CombatMath.extrapolate(Vector2.ZERO, Vector2(9999.0, 0.0), 1.0).length(),
 		CombatMath.LAG_MAX_LEAD_DIST), "extrapolate: 과대 속도 → 거리 상한으로 잘림")
+
+	# --- 위치 패킷 신선도 (P2P fast 채널 = unordered, 2026-07-26 리뷰 I3) ---
+	# 순서 뒤바뀜을 폐기하지 않으면 net_anchor와 net_anchor_lead가 **함께** 과거로 돌아가
+	# "둘 다 맞아야 확정"인 방어자 우대 규약이 무력화된다(§3). 폐기 조건을 지우면 아래가 빨개진다.
+	failures += _check(CombatMath.is_pos_seq_fresh(5, 4), "pos_seq: 다음 시퀀스 → 수용")
+	failures += _check(not CombatMath.is_pos_seq_fresh(4, 5), "pos_seq: 뒤바뀐 옛 패킷 → 폐기")
+	failures += _check(not CombatMath.is_pos_seq_fresh(5, 5), "pos_seq: 같은 시퀀스(중복 도착) → 폐기")
+	failures += _check(CombatMath.is_pos_seq_fresh(0, 99), "pos_seq: 미부착(0) → 항등 폴백(릴레이·구버전 호환)")
+	failures += _check(CombatMath.is_pos_seq_fresh(-3, 99), "pos_seq: 음수 오염 → 항등 폴백(폐기하지 않는다)")
+	failures += _check(CombatMath.is_pos_seq_fresh(1, 0), "pos_seq: 첫 패킷 → 수용")
 
 	# 🔴 방어자 우대 규약 — 낡은 좌표와 추정 좌표가 **둘 다** 안일 때만 적중.
 	# 이 4줄이 "피했는데 맞았다"의 회귀 방지선이다.
@@ -322,8 +423,12 @@ func _initialize() -> void:
 		# 🔴 외삽 상한 불변식(리뷰 I1, 2026-07-25): LAG_MAX_LEAD_DIST가 "최고 이속 × 구르기 배율 × 최대 lead"를
 		#   덮어야 한다. 짧으면 추정 좌표가 예고 안에 남아 "둘 다 맞아야 확정" 규약이 **맞는 쪽**으로 기울고,
 		#   빠르게 빠져나가는 피어가 다시 맞는다(2026-07-24에 고친 버그의 퇴행). 이속 상한을 올리면 여기가 빨개진다.
-		#   ROLL_SPEED_MULT(2.6)·POS_SEND_RATE(30Hz)는 player.gd const라 여기 상수로 미러한다.
-		var top_speed := CombatMath.effective_move_speed(j.move_speed, float(CombatMath.LEVEL_STAT_MAX["move"])) * 2.6
+		#   ⚠ v2.0: 구르기 배율은 **특성(roll_dist)까지 포함한 최댓값**이어야 한다 — 「돌진 본능」이 구르기를
+		#   길게 만드는데 여기서 빼면 상한이 실제 최대 외삽보다 작아져 같은 퇴행이 돌아온다.
+		#   POS_SEND_RATE(30Hz)만 player.gd const라 여기 상수로 미러한다(구르기 배율은 CombatMath로 이사).
+		var top_speed := CombatMath.effective_roll_speed(
+			CombatMath.effective_move_speed(j.move_speed, float(CombatMath.LEVEL_STAT_MAX["move"])),
+			float(CombatMath.TRAIT_MAX["roll_dist"]))
 		var max_lead_s := CombatMath.LAG_MAX_ONE_WAY_MS / 1000.0 + 1.0 / 30.0
 		if top_speed * max_lead_s > CombatMath.LAG_MAX_LEAD_DIST:
 			lead_ok = false

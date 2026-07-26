@@ -18,6 +18,11 @@ var _chapter_ids: Array[String] = []  # data/chapters/ 스캔 캐시
 var _material_ids: Array[String] = []    # data/materials/ 스캔 캐시
 var _equipment_ids: Array[String] = []   # data/equipment/ 스캔 캐시
 var _recipe_ids: Array[String] = []      # data/recipes/ 스캔 캐시
+# 「도굴」(drop_find) 소수 잔량 — kind -> float. **호스트만 쓴다**(DropAuthority가 읽고 쓴다).
+# 🔴 여기 두는 이유: DropAuthority는 씬 컴포넌트라 스테이지마다 새로 태어나 잔량이 버려진다.
+#   드랍 수량이 1~2라 잔량 1개분 손실이 곧 +15%를 ~+8%로 깎는다(리뷰 M-2). 판 단위로 들고 가야
+#   비율이 약속대로 나온다. **저장 대상 아님** — 런타임 진행 상태다(carried_party_hp와 같은 성격).
+var drop_find_frac: Dictionary = {}
 var _party_hp: Dictionary = {}  # peer_id -> 확정 HP — 챕터 내 스테이지 간 이월 (php 확정만 기록, player.gd 확정 경로가 쓴다)
 
 # --- 인벤토리/장비 (드랍·제작 2026-07-23) — 각 클라 자기 것만, 브라우저 로컬 저장(개인·비네트워크, GDD §3) ---
@@ -34,9 +39,14 @@ var storage_gold: int = 0
 var storage_materials: Dictionary = {}    # mat_id(String) -> qty(int)
 var storage_equipment: Dictionary = {}    # equip_id(String) -> level(int)
 
-# --- 직업 레벨 성장축 (2026-07-25, GDD v1.8) — 각 클라 자기 것(비네트워크), 저장 대상 ---
-# 계열(selected_job_id) 안의 하위 직업들이 5스탯을 담당한다. 효과 = 메인 온전 + 서브 합산 (GDD §5).
-var main_sub_job_id: String = ""   # 메인(활성) 하위 직업 — 마을에서만 변경 (GDD §5)
+# --- 직업 레벨 성장축 (2026-07-25, GDD v1.8) + 조립 축 (2026-07-26, GDD v2.0) ---
+# 각 클라 자기 것(비네트워크), 저장 대상. 계열(selected_job_id) 안의 하위 직업들이 5스탯을 담당한다.
+# 🔴 v2.0: 효과는 **보유 전부**가 아니라 **장착한 3칸**(메인 1 + 서브 2)에서만 나온다 (GDD §5).
+#   보유는 계속 늘고 EXP도 보유 전부에 적립되지만, 안 낀 것은 꺼져 있다("지금 안 쓰는 것").
+#   총 화력 예산이 보유 개수가 아니라 **슬롯 수**에 묶이면서 하위 직업 추가 시 재역산이 사라졌다.
+const SUB_SLOT_COUNT := 2          # 서브 슬롯 칸 수 — 늘리면 max_level_stats 상한이 함께 커진다(예산 재역산 1회 필요)
+var main_sub_job_id: String = ""   # 메인(활성) 하위 직업 — 마을에서만 변경 (GDD §5). 공유는 못 온다
+var sub_slot_ids: Array[String] = ["", ""]  # 서브 슬롯 — 빈 문자열 = 빈 칸. 계열/공유 둘 다 가능
 # 🔴 **레벨은 저장하지 않는다 — EXP에서 파생한다**(CombatMath.level_for_exp). 둘을 다 들고 있으면
 #   어긋난 상태가 생기고, 레벨은 G_STATS 스탯 공지의 근거라 어긋남이 곧 클라 간 스탯 발산이다.
 var sub_job_exp: Dictionary = {}   # sub_id(String) -> 누적 EXP(int). **키의 존재 = 보유(해금됨)**
@@ -115,6 +125,7 @@ func leave_chapter() -> void:
 	current_chapter_id = ""
 	current_stage_idx = -1
 	_party_hp.clear()
+	drop_find_frac.clear()  # 「도굴」 잔량은 판(챕터) 단위 — 마을로 나오면 리셋
 
 
 func in_chapter() -> bool:
@@ -232,6 +243,24 @@ func _bus() -> EventBusHub:
 	if not is_inside_tree():
 		return null  # -s 테스트(트리 밖)는 /root 절대경로 조회가 에러 — 오토로드는 항상 트리 안 (rules §5)
 	return get_node_or_null("/root/EventBus") as EventBusHub
+
+
+# 공유 하위 직업 해금을 스테이지 클리어에 매단다 (GDD v2.0 §6 — 보스/챕터 클리어로 연다).
+# 🔴 **여기서 연결하는 이유 = 저장 순서다.** SaveManager도 stage_cleared에 commit을 물려 두는데,
+#   Godot은 연결 순서대로 호출하고 오토로드 순서가 GameState(21행) → SaveManager(22행)라
+#   이 연결이 먼저 등록된다 → **해금이 그 판 저장에 포함된다.** 반대로 씬 컴포넌트에서 연결하면
+#   commit이 먼저 돌아 해금이 다음 클리어까지 저장되지 않는다(전멸하면 조용히 사라진다).
+# 🔴 호스트 가드가 없는 것도 의도다 — stage_cleared는 호스트 판정과 게스트 G_STAGE_CLEAR 수신
+#   양쪽에서 발화하므로 **각 클라가 자기 진행에 로컬로 해금**한다(EXP와 달리 새 메시지가 필요 없다).
+func _ready() -> void:
+	var b := _bus()
+	if b != null:
+		b.stage_cleared.connect(_on_stage_cleared)
+
+
+func _on_stage_cleared() -> void:
+	if is_last_stage():  # 마지막 칸 = 보스 (ChapterDef 관례, rules §4)
+		unlock_shared_sub_jobs()
 
 
 func _notify_inventory() -> void:
@@ -506,12 +535,34 @@ func sub_jobs_of_series(series_id: String) -> Array[String]:
 
 
 # 현재(또는 지정) 계열에서 **보유한** 하위 직업 — order 정렬. sub_job_exp의 키 = 보유.
+# ⚠ **계열 것만**이다(공유 제외) — 해금 체인·시작 지급이 계열 안에서만 돌기 때문.
+#   EXP 적립·UI 목록처럼 "쓸 수 있는 전부"가 필요하면 all_owned_sub_jobs를 써라.
 func owned_sub_jobs(series_id: String = "") -> Array[String]:
 	var series := series_id if not series_id.is_empty() else selected_job_id
 	var out: Array[String] = []
 	for sid: String in sub_jobs_of_series(series):
 		if sub_job_exp.has(sid):
 			out.append(sid)
+	return out
+
+
+# 공유 하위 직업(계열 무관·서브 전용, GDD v2.0) — order 정렬. 계열과 별개의 목록이다.
+func shared_sub_jobs() -> Array[String]:
+	return sub_jobs_of_series(SubJobDef.SERIES_SHARED)
+
+
+func owned_shared_sub_jobs() -> Array[String]:
+	var out: Array[String] = []
+	for sid: String in shared_sub_jobs():
+		if sub_job_exp.has(sid):
+			out.append(sid)
+	return out
+
+
+# 이 계열에서 **쓸 수 있는 보유분 전부** = 계열 보유 + 공유 보유. EXP 적립·훈련소 목록의 기준.
+func all_owned_sub_jobs(series_id: String = "") -> Array[String]:
+	var out := owned_sub_jobs(series_id)
+	out.append_array(owned_shared_sub_jobs())
 	return out
 
 
@@ -546,6 +597,153 @@ func main_sub_job() -> SubJobDef:
 	return d
 
 
+# --- 장착 슬롯 (GDD v2.0 §5) — 메인 1 + 서브 2 ---
+
+func sub_slot_id(index: int) -> String:
+	if index < 0 or index >= sub_slot_ids.size():
+		return ""
+	return sub_slot_ids[index]
+
+
+# 그 하위 직업을 **서브 칸에** 낄 수 있나 — 보유 + (계열 일치 또는 공유).
+func can_equip_sub(id: String) -> bool:
+	if not sub_job_exp.has(id):
+		return false
+	var d := sub_job_def(id)
+	return d != null and d.is_usable_by(selected_job_id)
+
+
+# 장착 중인 3개 — [메인] + 유효 서브. 🔴 여기서 **중복·미보유·타 계열·빈 칸을 전부 걸러낸다**:
+#   같은 하위 직업이 메인과 서브에 동시에 들어가면 5스탯이 이중 계상되고 특성이 두 자리로 켜진다.
+func equipped_sub_jobs() -> Array[String]:
+	var out: Array[String] = []
+	var main := main_sub_job()
+	if main != null:
+		out.append(main_sub_job_id)
+	for i: int in range(SUB_SLOT_COUNT):
+		var sid := sub_slot_id(i)
+		if sid.is_empty() or sid in out:
+			continue
+		if can_equip_sub(sid):
+			out.append(sid)
+	return out
+
+
+# 서브 칸 교체 — 마을에서만(메인 전환과 같은 이유: 판 도중 교체 = 상황별 취사선택 이득, GDD §5).
+# id "" = 비우기. 메인과 같은 것을 서브에 끼려 하면 거부(equipped_sub_jobs 필터의 선제 방어).
+func set_sub_slot(index: int, id: String) -> bool:
+	if in_chapter():
+		return false
+	if index < 0 or index >= SUB_SLOT_COUNT:
+		return false
+	if not id.is_empty():
+		if id == main_sub_job_id or not can_equip_sub(id):
+			return false
+		# 이미 다른 칸에 낀 것을 이 칸으로 → 두 칸을 맞바꾼다(같은 것이 두 칸을 먹지 않게)
+		for i: int in range(SUB_SLOT_COUNT):
+			if i != index and sub_slot_ids[i] == id:
+				sub_slot_ids[i] = sub_slot_ids[index]
+	if sub_slot_ids[index] == id:
+		return true
+	sub_slot_ids[index] = id
+	_notify_growth()
+	return true
+
+
+# 빈 서브 칸을 보유분으로 자동 채운다 — 레벨 높은 순. 새 판·해금 직후·구 세이브 로드에서 부른다.
+# 🔴 구 세이브에는 슬롯 필드가 없다 → 빈 칸으로 로드되는데, 그대로 두면 **이미 키운 하위 직업이
+#   전부 꺼진 채** 판에 들어가 "업데이트했더니 약해졌다"가 된다. 자동 채움이 그 폴백이다.
+func autofill_sub_slots() -> void:
+	# 🔴 **판 도중엔 절대 슬롯을 바꾸지 않는다** — set_sub_slot의 마을 전용 가드를 여기서도 건다.
+	#   전투 중 레벨업 해금(_try_unlock_next)이 빈 칸을 채우면 특성이 **판 도중 켜지고**, 그 순간
+	#   내 로컬 판정 기하는 즉시 넓어지는데 호스트의 원격 아바타는 G_STATS 도달(편도 70~200ms)
+	#   뒤에야 바뀐다 → 그 창에서 늘어난 사거리 타격이 **무음 거부**되고(화면엔 스윙만 나감),
+	#   roll_dist 쪽은 반대로 정당 변위가 clamp돼 "피했는데 맞았다"가 부분 재발한다(2026-07-24 버그).
+	#   해금 자체는 그대로 두고 슬롯 채움만 마을 진입(grant_starting_sub_job)으로 미룬다.
+	if in_chapter():
+		return
+	var equipped_now := equipped_sub_jobs()
+	var pool: Array[String] = []
+	for sid: String in all_owned_sub_jobs():
+		if sid not in equipped_now and can_equip_sub(sid):
+			pool.append(sid)
+	pool.sort_custom(func(a: String, b: String) -> bool: return sub_job_level(a) > sub_job_level(b))
+	var changed := false
+	for i: int in range(SUB_SLOT_COUNT):
+		var cur := sub_slot_id(i)
+		if not cur.is_empty() and cur != main_sub_job_id and can_equip_sub(cur):
+			continue  # 이미 유효한 칸은 존중
+		if pool.is_empty():
+			if not cur.is_empty():
+				sub_slot_ids[i] = ""  # 무효한 잔재(미보유·타 계열·메인과 중복)는 비운다
+				changed = true
+			continue
+		sub_slot_ids[i] = pool.pop_front()
+		changed = true
+	if changed:
+		_notify_growth()
+
+
+# --- 특성 리졸브 (GDD v2.0 §5·§6) ---
+# 🔴 **자리별로 하나씩만** 켠다 — 메인 id는 메인 특성, 서브 id는 서브 특성. 같은 하위 직업이라도
+#   자리가 다르면 다른 효과이고, 한 장이 두 개를 동시에 켜지는 않는다(SubJobDef.trait_at).
+# 🔴 값은 **id를 allowlist 리졸브해 로컬 .tres에서** 읽는다. 수치를 네트워크로 받으면 그게 곧
+#   스푸핑 표면이다(peer_weapon_id·projectile_params와 같은 철학 — rules §3).
+# 계열 불일치는 폐기 — 남의 계열 특성을 주장하는 공지를 버린다. 공유("*")는 어느 계열이든 통과하되
+#   **메인 자리에서는 SubJobDef.trait_at이 막는다**(서브 전용, GDD §5).
+# ⚠ 보유 여부는 **검증하지 않는다** — 원격 피어의 보유는 알 길이 없다(rules §2 4인/PvP 게이트 대상).
+#   atk/hp 공지와 같은 수준의 발신자 트러스트이고, 상한(TRAIT_MAX)이 최악을 묶는다.
+func traits_of(main_id: String, sub_ids: Array, series_id: String) -> Dictionary:
+	var out := CombatMath.empty_traits()
+	var seen: Array[String] = []
+	var add := func(sid: String, as_main: bool) -> void:
+		if sid.is_empty() or sid in seen:
+			return
+		var d := sub_job_def(sid)
+		if d == null or not d.is_usable_by(series_id):
+			return
+		seen.append(sid)
+		var t := d.trait_at(as_main)
+		if t.is_empty():
+			return
+		var key := str(t["key"])
+		if key in CombatMath.TRAIT_KEYS:  # 모르는 키(데이터 오타)는 조용히 폐기 — clamp_traits 관용구 미러
+			out[key] = float(out[key]) + float(t["value"])
+	add.call(main_id, true)
+	var n := 0
+	for v: Variant in sub_ids:
+		if n >= SUB_SLOT_COUNT:
+			break  # 🔴 슬롯 수 초과분은 버린다 — 공지에 서브를 10개 실어 특성을 쌓는 것 차단
+		n += 1
+		add.call(str(v), false)
+	return CombatMath.clamp_traits(out)
+
+
+# 내 활성 특성 — 로컬 판정 기하·연출·훈련소 패널·자기 공지가 전부 이 값을 쓴다.
+# 🔴 입력은 **`equipped_sub_jobs()`(필터를 지난 목록)** 이지 `sub_slot_ids`(원본)가 아니다.
+#   원본을 넘기면 traits_of가 보유 검증을 안 하므로 슬롯에 미보유·중복 id가 남는 순간
+#   **특성은 켜지는데 5스탯(current_level_stats)은 안 들어가는** 상태가 된다 — 같은 화면이
+#   서로 다른 근거를 보게 된다. 두 함수가 같은 목록에서 파생돼야 그 클래스가 구조적으로 사라진다.
+func active_traits() -> Dictionary:
+	return traits_of(announced_main_id(), announced_sub_ids(), selected_job_id)
+
+
+# 공지용 메인 id — 무효(타 계열 진행분·미보유)면 빈 문자열. 🔴 `main_sub_job_id` 원본을 그대로
+# 보내면 "나는 0으로 계산하는데 상대에겐 id를 보내는" 상태가 된다(수신 측 계열 필터가 같은 결과를
+# 내서 지금은 무해하지만, 같은 것을 두 근거로 계산하는 구조가 남는다 — active_traits와 통일).
+func announced_main_id() -> String:
+	return main_sub_job_id if main_sub_job() != null else ""
+
+
+# 공지용(그리고 특성 리졸브용) 서브 id 목록 — 필터를 지난 것만. equipped_sub_jobs()가 메인을
+# 맨 앞에 두므로 그 한 칸만 덜어낸다. 🔴 `sub_slot_ids` 원본을 직접 쓰지 마라(위 이유).
+func announced_sub_ids() -> Array[String]:
+	var eq := equipped_sub_jobs()
+	if main_sub_job() != null and not eq.is_empty() and eq[0] == main_sub_job_id:
+		return eq.slice(1)
+	return eq
+
+
 # HUD EXP 바 — 메인 하위 직업의 {level, cur, need}. 미보유 = 0/0/0(표기 없음).
 func main_exp_progress() -> Dictionary:
 	var d := main_sub_job()
@@ -571,6 +769,7 @@ func grant_starting_sub_job(job: JobDef) -> void:
 		if main_sub_job_id not in owned:
 			main_sub_job_id = owned[0]
 			_notify_growth()
+		autofill_sub_slots()  # 구 세이브(슬롯 필드 없음)·계열 전환 뒤 빈 칸을 보유분으로 채운다
 		return
 	if job.starting_sub_job_id.is_empty():
 		return  # 성장축이 없는 계열(데이터 미작성) — 조용히 넘어간다(전 슬라이스 호환)
@@ -584,16 +783,19 @@ func grant_starting_sub_job(job: JobDef) -> void:
 		return
 	sub_job_exp[sid] = 0
 	main_sub_job_id = sid
+	autofill_sub_slots()  # 공유 하위 직업을 이미 보유 중이면(다른 계열에서 얻음) 바로 서브 칸에
 	_notify_growth()
 
 
-# EXP 적립 — 현재 계열 **보유 전부**에 동일 적립 (GDD §6 계열 공용 풀).
+# EXP 적립 — 현재 계열 **보유 전부 + 공유 보유 전부**에 동일 적립 (GDD §6 계열 공용 풀).
+# 🔴 **장착 여부와 무관하다** — 안 낀 것도 자란다("키운 것이 사라지는 게 아니라 지금 안 쓰는 것", GDD §5).
+#   여기에 equipped 필터를 넣으면 슬롯 교체가 곧 성장 포기가 되어 조립이 벌이 된다.
 # 반환 = 레벨/해금이 변했나 → 호출부가 이때만 G_STATS 재공지를 트리거한다(킬마다 재공지 방지).
-# ⚠ 다른 계열의 진행분은 건드리지 않는다 — 전사로 키운 EXP가 궁수 판에서 섞이지 않는다.
+# ⚠ 다른 계열의 진행분은 건드리지 않는다 — 전사로 키운 EXP가 궁수 판에서 섞이지 않는다(공유는 예외 = 항상 받는다).
 func add_exp(amount: int) -> bool:
 	if amount <= 0:
 		return false
-	var owned := owned_sub_jobs()
+	var owned := all_owned_sub_jobs()
 	if owned.is_empty():
 		return false
 	var before := {}
@@ -632,6 +834,7 @@ func _try_unlock_next() -> bool:
 		var d := sub_job_def(sid)
 		if d != null and d.order == main.order + 1:
 			sub_job_exp[sid] = 0
+			autofill_sub_slots()  # 빈 칸이 있으면 바로 낀다 — 해금하고도 꺼져 있는 것을 방지
 			var b := _bus()
 			if b != null:
 				b.sub_job_unlocked.emit(sid)
@@ -639,7 +842,28 @@ func _try_unlock_next() -> bool:
 	return false
 
 
+# 공유 하위 직업 해금 — 보스/챕터 클리어로 연다 (GDD v2.0 §6, 계열 레벨이 조건이 될 수 없으므로).
+# 현재 페이싱 = **챕터1 보스 첫 처치에 보유 안 한 공유 전부**(= 2개 동시). 보유가 슬롯을 넘어야
+#   조립이 시작되기 때문이다. 공유가 3개 이상으로 늘면 여기에 "2회 완주" 단계를 나눈다.
+# 멱등 — 이미 보유한 것은 건드리지 않는다(두 번째 클리어에서 EXP가 0으로 리셋되지 않게).
+func unlock_shared_sub_jobs() -> bool:
+	var changed := false
+	var b := _bus()
+	for sid: String in shared_sub_jobs():
+		if sub_job_exp.has(sid):
+			continue
+		sub_job_exp[sid] = 0
+		changed = true
+		if b != null:
+			b.sub_job_unlocked.emit(sid)
+	if changed:
+		autofill_sub_slots()
+		_notify_growth()
+	return changed
+
+
 # 메인 전환 — 마을에서만(GDD §5). 판 도중 전환은 상황별 스탯 취사선택 이득이라 거부한다.
+# 🔒 **공유 하위 직업은 메인이 될 수 없다**(GDD v2.0 §5) — 계열 불일치 검사가 그대로 막는다("*" != 계열).
 func set_main_sub_job(id: String) -> bool:
 	if in_chapter():
 		return false
@@ -647,19 +871,27 @@ func set_main_sub_job(id: String) -> bool:
 		return false  # 미보유
 	var d := sub_job_def(id)
 	if d == null or d.series_id != selected_job_id:
-		return false  # 타 계열 거부
+		return false  # 타 계열·공유 거부
 	if main_sub_job_id == id:
 		return true
+	var prev := main_sub_job_id
 	main_sub_job_id = id
+	# 새 메인이 서브 칸에 껴 있었다면 그 칸을 이전 메인으로 넘긴다 — 자리 맞바꿈(칸이 비지 않게).
+	for i: int in range(SUB_SLOT_COUNT):
+		if sub_slot_ids[i] == id:
+			sub_slot_ids[i] = prev if (not prev.is_empty() and can_equip_sub(prev)) else ""
+	autofill_sub_slots()  # 빈 칸 보정 (자체 _notify_growth 포함이지만 아래에서 한 번 더 쏴도 무해)
 	_notify_growth()
 	return true
 
 
 # 현재 레벨 스탯 {crit, crit_dmg, haste, move, leech} — 전투(호스트 확정)·공지·UI 공용 (단일 소스 CombatMath).
+# 🔴 v2.0: **장착한 3칸만** 센다(보유 전부가 아니라). 이게 예산을 슬롯 수에 묶는 그 자리다 —
+#   여기서 all_owned로 되돌리면 하위 직업을 늘릴 때마다 총량이 부풀어 재역산 부채가 되살아난다.
 func current_level_stats() -> Dictionary:
 	var levels := {}
 	var defs := {}
-	for sid: String in owned_sub_jobs():
+	for sid: String in equipped_sub_jobs():
 		var d := sub_job_def(sid)
 		if d == null:
 			continue
@@ -671,33 +903,56 @@ func current_level_stats() -> Dictionary:
 # 데이터에서 유도한 이론상 최대 레벨 스탯 — G_STATS "lv" 수신 clamp의 현실 상한 (max_equip_stats 미러).
 # 계열별로 "그 계열 하위 직업 전부를 만레벨·전부 메인 취급"한 관대한 합 → 정직한 최대치(서브 가중 < 1)는
 # 절대 안 잘리고, 임의 수 주입만 막는다. 하드 상한(CombatMath.LEVEL_STAT_MAX)과 이중 방어.
+# 🔴 v2.0 재유도: 상한은 **슬롯 기준**이다 — 「가장 센 계열 하나를 메인(가중 1) + 그 다음 센
+#   SUB_SLOT_COUNT개를 서브(가중 w)」. 하위 직업이 몇 개든 낄 수 있는 것은 3개뿐이므로
+#   **콘텐츠가 늘어도 상한이 안 부푼다**(v1.8~v1.9의 "보유 전부 합산" 상한이 개수에 비례해
+#   넓어지던 문제 = 2026-07-25 리뷰 I2의 구조적 해소).
+#   서브 후보에는 **공유 하위 직업도 들어간다**(서브 칸에 낄 수 있으므로) — 메인 후보는 계열 것만.
+#   키마다 독립으로 상위 N을 고르므로 실제 조합보다 관대하지만, 정직한 최대치는 절대 안 잘린다.
 func max_level_stats() -> Dictionary:
-	var sums := {}   # series -> {key: Σ 만레벨 스텝}
-	var tops := {}   # series -> {key: 단일 최대 만레벨 스텝}
+	var series_vals := {}   # series -> {key: Array[float] 만레벨 스텝들}
+	var shared_vals := {}   # key -> Array[float]
+	for key: String in CombatMath.LEVEL_STAT_KEYS:
+		shared_vals[key] = [] as Array[float]
 	for sid: String in sub_job_ids():
 		var d := sub_job_def(sid)
 		if d == null:
 			continue
 		var s := CombatMath.sub_job_stat_at_level(d, d.max_level)
-		var sum_t: Dictionary = sums.get(d.series_id, {})
-		var top_t: Dictionary = tops.get(d.series_id, {})
+		if d.is_shared():
+			for key: String in CombatMath.LEVEL_STAT_KEYS:
+				(shared_vals[key] as Array).append(float(s[key]))
+			continue
+		if not series_vals.has(d.series_id):
+			var t := {}
+			for key: String in CombatMath.LEVEL_STAT_KEYS:
+				t[key] = [] as Array[float]
+			series_vals[d.series_id] = t
 		for key: String in CombatMath.LEVEL_STAT_KEYS:
-			sum_t[key] = float(sum_t.get(key, 0.0)) + float(s[key])
-			top_t[key] = maxf(float(top_t.get(key, 0.0)), float(s[key]))
-		sums[d.series_id] = sum_t
-		tops[d.series_id] = top_t
+			((series_vals[d.series_id] as Dictionary)[key] as Array).append(float(s[key]))
 	var out := CombatMath.empty_level_stats()
 	var w := CombatMath.SUB_JOB_WEIGHT
-	for series: String in sums:
-		var sum_t: Dictionary = sums[series]
-		var top_t: Dictionary = tops[series]
+	var desc := func(a: float, b: float) -> bool: return a > b
+	for series: String in series_vals:
+		var per_key: Dictionary = series_vals[series]
 		for key: String in CombatMath.LEVEL_STAT_KEYS:
-			# 정직한 최대치 = 가장 센 하나를 메인(가중 1) + 나머지 전부 서브(가중 w) = w·Σ + (1-w)·max.
-			#   "전부 메인" 합산으로 잡으면 하위 직업 개수에 비례해 상한이 부풀어, 조작 게스트가 주장할 수
-			#   있는 여유가 콘텐츠와 함께 조용히 넓어진다 (2026-07-25 리뷰 I2).
-			var cap := w * float(sum_t[key]) + (1.0 - w) * float(top_t[key])
+			var mine: Array = (per_key[key] as Array).duplicate()
+			mine.sort_custom(desc)
+			if mine.is_empty():
+				continue
+			var cap := float(mine[0])                     # 메인 = 계열 최강 1개(가중 1)
+			var pool: Array = mine.slice(1)               # 나머지 계열 것 + 공유 전부가 서브 후보
+			pool.append_array(shared_vals[key] as Array)
+			pool.sort_custom(desc)
+			for i: int in range(mini(SUB_SLOT_COUNT, pool.size())):
+				cap += w * float(pool[i])
 			out[key] = maxf(float(out[key]), cap)
 	return out
+
+# ⚠ 특성에는 max_level_stats 같은 "데이터 유도 상한"이 없다 — **필요가 없기 때문**이다.
+#   5스탯은 수치가 G_STATS로 오지만(그래서 데이터 상한이 필요), 특성은 **id만** 오고 값은 각자
+#   자기 data/subjobs에서 읽는다(traits_of). 조작 공지가 넣을 수 있는 최악은 "가진 척한 id"이고
+#   그 값도 결국 로컬 데이터라 CombatMath.TRAIT_MAX 하나로 충분히 묶인다.
 
 
 # --- 창고 넣기/빼기 (각 클라 로컬 — 네트워크 0개, inventory_changed로 UI 갱신) ---
@@ -788,6 +1043,8 @@ func clear_inventory() -> void:
 	# 성장축도 함께 리셋 — 파일만 지우고 오토로드 메모리를 안 지우면 옛 진행이 다음 저장에 도로 써진다(rules §5)
 	main_sub_job_id = ""
 	sub_job_exp.clear()
+	for i: int in range(SUB_SLOT_COUNT):
+		sub_slot_ids[i] = ""  # 슬롯도 같이 — 안 지우면 미보유 id가 남아 다음 판 첫 공지에 실린다
 	_notify_growth()  # 인벤 알림과 대칭 — 안 쏘면 HUD 레벨 표기가 스테일로 남는다
 
 
@@ -806,6 +1063,9 @@ func to_save_dict() -> Dictionary:
 		# 레벨은 저장 대상이 아니다 — EXP에서 파생(위 sub_job_exp 주석).
 		"main_sub": main_sub_job_id,
 		"sub_exp": sub_job_exp.duplicate(),
+		# 조립 축 (GDD v2.0) — 장착 서브 칸. 같은 규칙으로 **버전은 올리지 않는다**:
+		# 구 세이브엔 키가 없어 빈 칸으로 읽히고, autofill_sub_slots가 보유분으로 채운다.
+		"sub_slots": sub_slot_ids.duplicate(),
 	}
 
 
@@ -855,5 +1115,22 @@ func from_save_dict(d: Dictionary) -> void:
 	var ms := str(d.get("main_sub", ""))
 	if sub_job_exp.has(ms):
 		main_sub_job_id = ms  # 보유분이 아니면 비워 둔다 — grant_starting_sub_job이 첫 하위 직업으로 보정
+	# 장착 서브 칸 (GDD v2.0) — 보유분만 통과시킨다. 구 세이브엔 키가 없어 전부 빈 칸이 되고,
+	# 마을 진입의 grant_starting_sub_job → autofill_sub_slots가 보유분으로 채운다("약해지지 않게").
+	# ⚠ 여기서 can_equip_sub(계열 검사)까지 걸지 않는 이유: 로드 시점엔 selected_job_id가 아직
+	#   이 세이브의 계열이 아닐 수 있다. 계열 필터는 사용 시점(equipped_sub_jobs)이 매번 다시 건다.
+	# ⚠ 타입 가드 — 조작 세이브가 `"sub_slots": "x"`를 넣으면 Array 대입이 런타임 에러다(lv류 미러).
+	var slots_v: Variant = d.get("sub_slots", [])
+	var slots: Array = (slots_v as Array) if slots_v is Array else []
+	var seen_slots: Array[String] = []
+	for i: int in range(SUB_SLOT_COUNT):
+		var sid := str(slots[i]) if i < slots.size() else ""
+		# 🔴 중복도 폐기한다 — 손상 세이브의 ["a","a"]는 한 칸을 조용히 죽이고(둘 다 유효해 보여
+		#   autofill이 건너뛴다) 훈련소 패널은 두 칸 다 장착으로 그린다.
+		if sid.is_empty() or sid == main_sub_job_id or sid in seen_slots or not sub_job_exp.has(sid):
+			sub_slot_ids[i] = ""
+			continue
+		seen_slots.append(sid)
+		sub_slot_ids[i] = sid
 	_notify_inventory()
 	_notify_growth()

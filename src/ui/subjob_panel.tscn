@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://src/ui/subjob_panel.gd" id="1"]
+[ext_resource type="Script" path="res://src/ui/slot_grid.gd" id="2"]
 
 [node name="SubJobPanel" type="CanvasLayer"]
 layer = 11
@@ -24,19 +25,19 @@ grow_vertical = 2
 mouse_filter = 2
 
 [node name="Dialog" type="PanelContainer" parent="Center"]
-custom_minimum_size = Vector2(400, 292)
+custom_minimum_size = Vector2(404, 0)
 layout_mode = 2
 
 [node name="Margin" type="MarginContainer" parent="Center/Dialog"]
 layout_mode = 2
-theme_override_constants/margin_left = 14
-theme_override_constants/margin_top = 10
-theme_override_constants/margin_right = 14
-theme_override_constants/margin_bottom = 10
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 8
 
 [node name="VBox" type="VBoxContainer" parent="Center/Dialog/Margin"]
 layout_mode = 2
-theme_override_constants/separation = 6
+theme_override_constants/separation = 5
 
 [node name="TitleRow" type="HBoxContainer" parent="Center/Dialog/Margin/VBox"]
 layout_mode = 2
@@ -45,7 +46,7 @@ theme_override_constants/separation = 8
 [node name="Title" type="Label" parent="Center/Dialog/Margin/VBox/TitleRow"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "훈련소 · 하위 직업"
+text = "훈련소 · 하위 직업 조립"
 
 [node name="CloseBtn" type="Button" parent="Center/Dialog/Margin/VBox/TitleRow"]
 unique_name_in_owner = true
@@ -54,74 +55,69 @@ layout_mode = 2
 focus_mode = 0
 text = "닫기"
 
-[node name="MainBar" type="PanelContainer" parent="Center/Dialog/Margin/VBox"]
-layout_mode = 2
-
-[node name="MainMargin" type="MarginContainer" parent="Center/Dialog/Margin/VBox/MainBar"]
-layout_mode = 2
-theme_override_constants/margin_left = 8
-theme_override_constants/margin_top = 4
-theme_override_constants/margin_right = 8
-theme_override_constants/margin_bottom = 4
-
-[node name="MainBox" type="VBoxContainer" parent="Center/Dialog/Margin/VBox/MainBar/MainMargin"]
-layout_mode = 2
-theme_override_constants/separation = 3
-
-[node name="MainRow" type="HBoxContainer" parent="Center/Dialog/Margin/VBox/MainBar/MainMargin/MainBox"]
-layout_mode = 2
-theme_override_constants/separation = 8
-
-[node name="MainLabel" type="Label" parent="Center/Dialog/Margin/VBox/MainBar/MainMargin/MainBox/MainRow"]
+[node name="SlotRow" type="HBoxContainer" parent="Center/Dialog/Margin/VBox"]
 unique_name_in_owner = true
 layout_mode = 2
-size_flags_horizontal = 3
-text = "메인 —"
-
-[node name="ExpLabel" type="Label" parent="Center/Dialog/Margin/VBox/MainBar/MainMargin/MainBox/MainRow"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_font_sizes/font_size = 10
-vertical_alignment = 2
-
-[node name="ExpBar" type="ProgressBar" parent="Center/Dialog/Margin/VBox/MainBar/MainMargin/MainBox"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 6)
-layout_mode = 2
-value = 0.0
-show_percentage = false
+theme_override_constants/separation = 12
+alignment = 1
 
 [node name="StatBar" type="PanelContainer" parent="Center/Dialog/Margin/VBox"]
 layout_mode = 2
 
 [node name="StatMargin" type="MarginContainer" parent="Center/Dialog/Margin/VBox/StatBar"]
 layout_mode = 2
-theme_override_constants/margin_left = 8
-theme_override_constants/margin_top = 4
-theme_override_constants/margin_right = 8
-theme_override_constants/margin_bottom = 4
+theme_override_constants/margin_left = 6
+theme_override_constants/margin_top = 2
+theme_override_constants/margin_right = 6
+theme_override_constants/margin_bottom = 2
 
-[node name="StatLabel" type="Label" parent="Center/Dialog/Margin/VBox/StatBar/StatMargin"]
+[node name="StatBox" type="VBoxContainer" parent="Center/Dialog/Margin/VBox/StatBar/StatMargin"]
+layout_mode = 2
+theme_override_constants/separation = 1
+
+[node name="StatLabel" type="Label" parent="Center/Dialog/Margin/VBox/StatBar/StatMargin/StatBox"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_font_sizes/font_size = 10
+theme_override_constants/line_spacing = 0
+theme_override_font_sizes/font_size = 9
 autowrap_mode = 3
 
-[node name="ListScroll" type="ScrollContainer" parent="Center/Dialog/Margin/VBox"]
-custom_minimum_size = Vector2(0, 148)
+[node name="TraitLabel" type="Label" parent="Center/Dialog/Margin/VBox/StatBar/StatMargin/StatBox"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_constants/line_spacing = 0
+theme_override_font_sizes/font_size = 9
+autowrap_mode = 3
+
+[node name="NoticeLabel" type="Label" parent="Center/Dialog/Margin/VBox"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_override_constants/line_spacing = 0
+theme_override_font_sizes/font_size = 9
+autowrap_mode = 3
+
+[node name="OwnedScroll" type="ScrollContainer" parent="Center/Dialog/Margin/VBox"]
+custom_minimum_size = Vector2(0, 80)
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
-[node name="SubList" type="VBoxContainer" parent="Center/Dialog/Margin/VBox/ListScroll"]
+[node name="OwnedGrid" type="GridContainer" parent="Center/Dialog/Margin/VBox/OwnedScroll"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_constants/separation = 8
+theme_override_constants/h_separation = 4
+theme_override_constants/v_separation = 4
+columns = 9
+script = ExtResource("2")
+zone = "owned"
 
-[node name="WeightLabel" type="Label" parent="Center/Dialog/Margin/VBox"]
+[node name="HintLabel" type="Label" parent="Center/Dialog/Margin/VBox"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_font_sizes/font_size = 10
+theme_override_constants/line_spacing = 0
+theme_override_font_sizes/font_size = 9
 autowrap_mode = 3

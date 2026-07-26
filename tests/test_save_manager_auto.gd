@@ -78,6 +78,24 @@ func _initialize() -> void:
 	_check("SAVE_VERSION == 1 고정 (올리면 배포본 세이브가 조용히 전멸 — GDD §6·rules §5)",
 		int(SaveManagerScript.SAVE_VERSION) == 1)
 
+	# 🔴 **오토로드 순서 트립와이어** (조립 축 v2.0, 리뷰 M6) — 공유 하위 직업 해금은 GameState가
+	# `stage_cleared`에 물려 있고, SaveManager도 같은 시그널에 `commit`을 문다. Godot은 **연결 순서**대로
+	# 호출하고 그 순서는 곧 오토로드 등록 순서다 → GameState가 SaveManager보다 **앞**에 있어야
+	# 해금이 그 판 저장에 포함된다. 뒤집히면 에러 없이 "보스를 깼는데 다음 판에 곡예사가 없다"가 된다.
+	var proj := FileAccess.get_file_as_string("res://project.godot")
+	var i_gs := proj.find("GameState=")
+	var i_sm := proj.find("SaveManager=")
+	_check("오토로드 순서: GameState가 SaveManager보다 앞 (해금이 그 판 commit에 포함되는 전제)",
+		i_gs >= 0 and i_sm >= 0 and i_gs < i_sm)
+
+	# 공유 하위 직업 해금이 저장을 타고 살아남나 — 위 순서 가정의 결과물 검증(보스 클리어 시나리오).
+	gs.unlock_shared_sub_jobs()
+	_check("보스 클리어: 공유 하위 직업 해금(곡예사)", gs.has_sub_job("shared_acrobat"))
+	sm.commit()
+	gs.sub_job_exp.erase("shared_acrobat")  # 메모리만 날려 로드 경로를 강제
+	sm.reload()
+	_check("공유 해금이 저장 라운드트립을 통과한다", gs.has_sub_job("shared_acrobat"))
+
 	sm.free()
 	gs.free()
 

@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://b83oei7d6vwyc"
+path="res://.godot/imported/shared_treasure_hunter.aseprite-f388ae44113c2b28fd6eea8305e5ad1b.res"
+
+[deps]
+
+source_file="res://assets/aseprite/shared_treasure_hunter.aseprite"
+dest_files=["res://.godot/imported/shared_treasure_hunter.aseprite-f388ae44113c2b28fd6eea8305e5ad1b.res"]
+
+[params]
+

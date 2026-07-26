@@ -9,11 +9,132 @@ static func calc_damage(job: JobDef, bonus_attack: int = 0) -> int:
 	return job.attack_damage + bonus_attack
 
 
+# --- 메인 전용 특성: 검기 파형(평타 사거리) — 단일 소스 (§3) ---
+# GDD §5·§6 v1.9: **메인** 하위 직업의 특성만 발동한다(서브는 5스탯만 합산된다).
+# 🔴 레벨로 자라지 않는 켜짐/꺼짐 값이라 LEVEL_STAT_KEYS 루프에 **얹지 않는다** — 얹으면 서브 가중(×0.4)이
+#   곱해져 "메인 전용"이 조용히 깨지고, 레벨 곱까지 타 예산 밖 스탯이 레벨 스탯 상한 검증에 섞인다.
+# 🔴 아래 사거리 3함수(is_hit_in_reach·attack_center_offset·attack_radius)는 **전부 이 함수를 지난다.**
+#   haste_scale과 같은 이유다 — 배율 함수를 공유하는 것 자체가 "맞는 곳 = 보이는 곳" 계약의 증명이고,
+#   한 곳이라도 job.attack_range를 직접 읽으면 파형이 판정과 표시 중 한쪽에만 걸린다.
+const MAX_REACH_BONUS := 0.5  # 하드 상한 +50% (GDD §6) — 근접이 원거리가 되는 것 + 공지 스푸핑 차단
+
+
+# --- 하위 직업 특성 카탈로그 (GDD v2.0 §6) — 단일 소스 (§3) ---
+# 🔴 특성 = **(효과 키, 값)** 이다. 키마다 적용 지점이 **1곳**뿐이고, 새 하위 직업이 기존 키를
+#   재사용하면 순수 데이터 한 장이다(rules §4). 키를 늘릴 때만 코드가 늘어난다.
+# 와이어/데이터 공용 키 = 아래 문자열 **그대로**(SubJobDef.main/sub_trait_key · clamp 키).
+#   LEVEL_STAT_KEYS와 같은 관용구 — 별도 매핑 표를 만들면 그게 두 번째 진실원이 되어 갈라진다.
+# 🔒 여기 들어올 수 있는 것 = **합계 데미지에 곱해지지 않는 축**뿐이다(GDD §6 예산).
+#   공격력·체력(장비 축)·공속·치명(5스탯 축)을 키로 추가하는 변경은 기획 변경이 선행 조건이다.
+const TRAIT_KEYS: Array[String] = ["reach", "roll_cd", "roll_dist", "campfire_heal", "kill_move", "drop_find"]
+
+# 키별 **하드 상한** — 같은 키를 메인·서브가 같이 밀면 합산된 뒤 여기서 잘린다.
+# 🔴 상한을 두는 이유는 키마다 다르다(GDD §6에 근거를 남겼다):
+#   reach — 무한이면 근접이 원거리가 되어 "직업 = 플레이 방식의 변환"이 무너진다(전사 42 → 63).
+#   roll_cd — 🔴 **가장 인색하게 잡는다.** i-frame 창 0.37s(ROLL_TIME_S + GRACE) / 쿨 0.8s이라
+#     **정직한 플레이의 무적 시간이 이미 46%**다. −30%면 0.56s 쿨 = 66%, −40%면 0.48s = 77%로
+#     사실상 상시 무적이 되어 §5 "패턴을 읽고 구른다"가 "계속 구른다"가 된다.
+#     ⚠ **호스트 게이트 기준으로는 더 높다** — `is_roll_grant_ok`가 지터 여유로 ×0.9를 곱하므로
+#     연타하는 클라의 상한은 특성 0에서 370/720 = **51%**, −30%에서 370/504 = **73%**다.
+#     (그 여유는 지연 환경에서 정당한 구르기를 거부하지 않기 위한 것 — 협동 2인이라 수용한다.
+#      이 축을 더 열 때는 66%가 아니라 **73% 쪽 숫자**를 기준으로 봐라.)
+#   나머지 — 자원·회복·기동이라 상한은 "데이터 실수와 공지 스푸핑 차단"이 목적이다.
+const TRAIT_MAX: Dictionary = {
+	"reach": MAX_REACH_BONUS,  # 평타 사거리 증가율
+	"roll_cd": 0.3,            # 구르기 쿨다운 **감소**율 (0.3 = −30%)
+	"roll_dist": 0.3,          # 구르기 거리 증가율 — 🔴 원격 변위 clamp도 같이 유도한다(§3 이동속도 계약)
+	"campfire_heal": 0.6,      # 모닥불 회복 속도 증가율
+	# 🔴 kill_move는 5스탯 `move`와 **같은 축이라 더해진 뒤 함께** LEVEL_STAT_MAX["move"](0.3)에서 잘린다
+	#   (`player._move_speed`). 그래서 상한을 그 여유 안쪽으로 좁게 잡는다 — 넓게 잡으면 이속을 키운
+	#   플레이어에게서 「광란」이 조용히 사라진다(표시는 +15%인데 실제 0). 이 부등식은
+	#   test_game_state_auto의 트립와이어가 지킨다: 데이터 최대 move + 이 값 ≤ LEVEL_STAT_MAX["move"].
+	#   ⚠ 별도 축으로 분리하고 싶으면 LAG_MAX_LEAD_DIST를 함께 재유도해야 한다(115 → ~150).
+	"kill_move": 0.15,         # 적 처치 후 일시 이동속도 증가율
+	"drop_find": 0.3,          # 골드·재료 드랍량 증가율
+}
+
+const KILL_MOVE_TIME_S := 3.0  # 처치 후 이속 버프 지속(연출/손맛값 — §0 예외, 사용자가 조인다)
+
+
+# 🔴 비율 보너스를 **정수 수량**에 적용하는 단일 소스 — 소수 잔량을 누적해 1 이상일 때만 올린다.
+#   피흡(`combat_authority._leech_frac`)과 **같은 관용구**이고, 같은 이유로 필요하다:
+#   드랍 수량이 1~2라 `round(1 × 1.15) = 1`이 되어 **+15%가 정확히 0**이 된다(리뷰 C1에서 실측).
+#   반올림/절삭 어느 쪽도 작은 수량에서 비율을 죽인다 — 기댓값을 보존하려면 잔량을 들고 가야 한다.
+# carry는 호출부(호스트)가 보관한다 — CombatMath는 상태를 안 쥔다(테스트 결정론).
+static func accrue_bonus(base_qty: int, rate: float, carry: float) -> Dictionary:
+	var c := carry if (is_finite(carry) and carry > 0.0) else 0.0
+	if base_qty <= 0 or not is_finite(rate) or rate <= 0.0:
+		return {"qty": base_qty, "carry": c}
+	var total := c + float(base_qty) * rate
+	var whole := int(floor(total))
+	return {"qty": base_qty + whole, "carry": total - float(whole)}
+
+
+# 특성 한 칸 clamp — 유한성 가드 먼저(JSON 1e999 → INF, clamp_level_stat과 같은 철학).
+# 음수는 0 — 디버프 주입 차단. **모르는 키는 0**(TRAIT_MAX에 없으면 상한 0이라 자동 폐기).
+static func clamp_trait(key: String, value: float) -> float:
+	if not is_finite(value):
+		return 0.0
+	return clampf(value, 0.0, float(TRAIT_MAX.get(key, 0.0)))
+
+
+# 특성 묶음 clamp — 🔴 **payload가 아니라 TRAIT_KEYS를 순회한다**(clamp_level_stats 관용구):
+# 모르는 키는 자동 폐기되고, 빠진 키는 0.0으로 채워져 하류가 항등 폴백을 얻는다.
+static func clamp_traits(traits: Dictionary) -> Dictionary:
+	var out := {}
+	for key: String in TRAIT_KEYS:
+		out[key] = clamp_trait(key, float(traits.get(key, 0.0)))
+	return out
+
+
+# 빈 특성(전부 0) — 특성 없음/미공지 경로의 항등 폴백.
+static func empty_traits() -> Dictionary:
+	var out := {}
+	for key: String in TRAIT_KEYS:
+		out[key] = 0.0
+	return out
+
+
+# 🔴 UI 문구는 **여기서 파생**한다 — 훈련소 패널이 특성 설명을 하드코딩하면 값과 문구가 갈라져
+#   "표시는 +30%인데 실제는 +10%"가 된다(rules §2 게이트가 요구한 것). 이름만 데이터(SubJobDef).
+const TRAIT_LABEL: Dictionary = {
+	"reach": "평타 사거리",
+	"roll_cd": "구르기 쿨다운",
+	"roll_dist": "구르기 거리",
+	"campfire_heal": "모닥불 회복 속도",
+	"kill_move": "처치 후 이동속도",
+	"drop_find": "골드·재료 드랍",
+}
+# 값이 클수록 "줄어드는" 축 — 부호를 뒤집어 표기한다(쿨다운 −15%).
+const TRAIT_REDUCTION: Array[String] = ["roll_cd"]
+
+
+static func trait_text(key: String, value: float) -> String:
+	if key.is_empty() or not TRAIT_LABEL.has(key):
+		return ""
+	var v := clamp_trait(key, value)
+	var sign_s := "−" if key in TRAIT_REDUCTION else "+"
+	return "%s %s%d%%" % [str(TRAIT_LABEL[key]), sign_s, int(round(v * 100.0))]
+
+
+# 유한성 가드 먼저(JSON 1e999 → INF, clamp_level_stat과 같은 철학). 음수는 0 — 사거리 디버프 주입 차단.
+# 🔴 상한은 TRAIT_MAX["reach"] 하나에서 온다 — 사본을 만들면 특성 상한과 사거리 상한이 갈라진다.
+static func clamp_reach(reach: float) -> float:
+	return clamp_trait("reach", reach)
+
+
+# reach = 그 피어가 공지한 메인 하위 직업에서 **호스트가 로컬 리졸브한** 특성값(peer_sync.peer_reach_bonus).
+# 0 = 항등 = 특성 없음/도입 전과 완전히 동일.
+static func effective_attack_range(job: JobDef, reach: float = 0.0) -> float:
+	return job.attack_range * (1.0 + clamp_reach(reach))
+
+
 # 호스트의 적중 요청 검증 — 공격자 위치 기준 사거리 내인가 (지연 감안 여유 배율).
 # enemy_radius = 적 몸 반경 — 중심거리에서 빼 준다. 거대 보스(radius ~48)는 중심이 멀어
 # "붙어도 사거리 밖"이 되므로 몸통 표면까지로 판정한다 (기본 0 = 기존 잔몹 동작 불변).
-static func is_hit_in_reach(attacker_pos: Vector2, enemy_pos: Vector2, job: JobDef, enemy_radius: float = 0.0) -> bool:
-	return attacker_pos.distance_to(enemy_pos) - enemy_radius <= job.attack_range * 2.0
+static func is_hit_in_reach(attacker_pos: Vector2, enemy_pos: Vector2, job: JobDef,
+		enemy_radius: float = 0.0, reach: float = 0.0) -> bool:
+	return attacker_pos.distance_to(enemy_pos) - enemy_radius <= effective_attack_range(job, reach) * 2.0
 
 
 # 히트 기하 — 단일 소스 (§3). 실제 판정(원형 질의)과 공격 FX 위치가 같은 함수를 부른다.
@@ -22,12 +143,12 @@ const ATTACK_CENTER_SCALE := 0.6  # 공격 중심까지의 거리 = range * 이 
 const ATTACK_RADIUS_SCALE := 0.5  # 판정 반경 = range * 이 값
 
 
-static func attack_center_offset(dir: Vector2, job: JobDef) -> Vector2:
-	return dir * (job.attack_range * ATTACK_CENTER_SCALE)
+static func attack_center_offset(dir: Vector2, job: JobDef, reach: float = 0.0) -> Vector2:
+	return dir * (effective_attack_range(job, reach) * ATTACK_CENTER_SCALE)
 
 
-static func attack_radius(job: JobDef) -> float:
-	return job.attack_range * ATTACK_RADIUS_SCALE
+static func attack_radius(job: JobDef, reach: float = 0.0) -> float:
+	return effective_attack_range(job, reach) * ATTACK_RADIUS_SCALE
 
 
 # 한 스윙이 여러 적을 치는 것은 허용하되(SAME_SWING_MS 안), 스윙 간격은 쿨다운(지터 여유 0.9배)을 강제.
@@ -48,11 +169,30 @@ static func is_hit_cooldown_ok(last_confirm_msec: int, now_msec: int, job: JobDe
 const ROLL_TIME_S := 0.25
 const ROLL_COOLDOWN_S := 0.8
 const ROLL_IFRAME_GRACE_MS := 120  # 지연 여유 — 사거리 검증 2.0배 완충과 같은 철학
+# 구르기 이동 배율 — 로컬 이동·원격 변위 clamp·LAG_MAX_LEAD_DIST 유도가 **전부 이 상수 하나**를 읽는다.
+# (player.gd에 있던 것을 v2.0에서 여기로 이사: roll_dist 특성이 붙으면서 세 곳의 유도가 갈라질 자리가 됐다.)
+const ROLL_SPEED_MULT := 2.6
+
+
+# 유효 구르기 쿨다운 — roll_cd 특성(0.15 = −15%)만큼 짧아진다. 0 = 항등(특성 도입 전과 동일).
+# 🔴 로컬 쿨(player)과 호스트 그랜트 검증이 **같은 함수**를 지난다 — 사본을 만들면 게스트가
+#   "내 화면에선 굴러지는데 무적이 안 걸리는" 상태가 되고, 그건 화면에 이유가 안 드러난다.
+static func effective_roll_cooldown(roll_cd: float = 0.0) -> float:
+	return ROLL_COOLDOWN_S * (1.0 - clamp_trait("roll_cd", roll_cd))
+
+
+# 유효 구르기 속도 — roll_dist 특성만큼 빨라진다(= ROLL_TIME_S가 고정이므로 곧 거리 증가).
+# 🔴 로컬 이동·원격 변위 clamp가 같은 유도식을 쓴다(§3 이동속도 계약과 같은 이유) —
+#   원격 clamp만 기본값으로 남기면 정당하게 길어진 구르기가 깎여 외삽이 과소평가되고,
+#   2026-07-24에 고친 "피했는데 맞았다"가 roll_dist 보유자에게 부분 재발한다.
+static func effective_roll_speed(base_move_speed: float, roll_dist: float = 0.0) -> float:
+	return base_move_speed * ROLL_SPEED_MULT * (1.0 + clamp_trait("roll_dist", roll_dist))
 
 
 # 호스트의 구르기 그랜트 검증 — 쿨다운(지터 여유 0.9배) 강제. 스팸해도 정직한 구르기 이상의 무적을 못 얻는다.
-static func is_roll_grant_ok(last_grant_msec: int, now_msec: int) -> bool:
-	return now_msec - last_grant_msec >= int(ROLL_COOLDOWN_S * 0.9 * 1000.0)
+# roll_cd = 그 피어가 공지한 하위 직업에서 **호스트가 로컬 리졸브한** 특성값(peer_sync.peer_traits).
+static func is_roll_grant_ok(last_grant_msec: int, now_msec: int, roll_cd: float = 0.0) -> bool:
+	return now_msec - last_grant_msec >= int(effective_roll_cooldown(roll_cd) * 0.9 * 1000.0)
 
 
 # 그랜트된 i-frame 창이 현재 유효한가 (호스트가 데미지 확정 직전에 조회).
@@ -220,14 +360,18 @@ static func is_hit_in_cone(pt: Vector2, apex: Vector2, facing: float, half_angle
 #   PvP가 생기면 이 관대함이 표면이 된다 → rules §2 4인/PvP 게이트에서 재검토.
 const LAG_MAX_ONE_WAY_MS := 200.0   # 편도 지연 인정 상한 — 조작 피어가 큰 RTT를 주장해 보스 예고를
                                     # 무한 지연시키거나 외삽을 뻥튀기하는 것 차단 (신뢰 경계 §3)
-const LAG_MAX_LEAD_DIST := 90.0     # 외삽 거리 상한(px) — 지연 스파이크 한 번이 판정을 화면 밖으로 날리지 않게.
-# 🔴 유도식(성장축 2026-07-25 재산정): 최고 이속 × ROLL_SPEED_MULT × 최대 lead
-#   = (110 × (1+LEVEL_STAT_MAX["move"]=0.3)) × 2.6 × (LAG_MAX_ONE_WAY_MS 0.2s + 송신주기 1/30s) ≈ 87px → 90.
+const LAG_MAX_LEAD_DIST := 115.0    # 외삽 거리 상한(px) — 지연 스파이크 한 번이 판정을 화면 밖으로 날리지 않게.
+# 🔴 유도식(조립축 2026-07-26 재산정): 최고 이속 × 최대 구르기 배율 × 최대 lead
+#   = (110 × (1+LEVEL_STAT_MAX["move"]=0.3)) × (2.6 × (1+TRAIT_MAX["roll_dist"]=0.3))
+#     × (LAG_MAX_ONE_WAY_MS 0.2s + 송신주기 1/30s) ≈ 113px → 115.
+#   ⚠ **roll_dist 특성이 구르기 배율을 키우므로 여기가 같이 커진다** — 안 키우면 정당하게 길어진
+#   구르기가 외삽에서 과소평가돼 "피했는데 맞았다"가 부분 재발한다(아래 ⚠와 같은 실패 모드).
 #   ⚠ 상한을 무한정 키울 수도 없다 — 두 목적이 충돌한다(스파이크 억제는 작기를, 정당 외삽 커버는 크기를 요구).
 #   그래서 이속 하드 상한을 0.3으로 조여 균형을 잡았다.
 #   ⚠ 이 값이 실제 최대 외삽보다 **작으면** 추정 좌표가 예고 안에 남아 "둘 다 맞아야 확정" 규약이
 #   맞는 쪽으로 기운다 → 빠르게 빠져나가는 피어가 다시 맞는다(2026-07-24에 고친 버그의 부분 퇴행).
-#   이속 상한(LEVEL_STAT_MAX["move"])이나 직업 move_speed를 올리면 여기도 재유도해라 —
+#   이속 상한(LEVEL_STAT_MAX["move"])·구르기 거리 상한(TRAIT_MAX["roll_dist"])·직업 move_speed 중
+#   무엇을 올리든 여기도 재유도해라 —
 #   test_combat_math_auto의 데이터 전수 불변식이 그때 빨개진다.
 
 # 편도 지연 = RTT의 절반. 음수·NaN·스파이크를 상한으로 눌러 판정에 쓸 수 있는 값으로 정규화한다.
@@ -251,6 +395,22 @@ static func lag_lead_s(last_recv_msec: int, now_msec: int, one_way_ms: float) ->
 		return 0.0
 	var since_ms := float(maxi(now_msec - last_recv_msec, 0))
 	return (since_ms + clamp_one_way_ms(one_way_ms)) / 1000.0
+
+
+# 위치 패킷 신선도 — 순서가 뒤바뀐 G_POS를 폐기해 판정 앵커가 과거로 되돌아가는 것을 막는다.
+# 🔴 **왜 필요한가 (P2P 직결 도입, 2026-07-26):** fast 데이터 채널은 unordered(유실 허용)라 위치 패킷이
+#   뒤바뀌어 도착할 수 있다. 릴레이(TCP)에선 구조적으로 불가능했던 상황이다. 뒤늦게 도착한 옛 패킷을
+#   적용하면 `_remote_target`과 `_remote_vel`이 **함께** 한 틱 과거로 돌아가는데, 그러면
+#   `net_anchor()`(낡은 좌표)와 `net_anchor_lead()`(추정 좌표)가 **같은 방향으로** 틀려
+#   "둘 다 맞아야 확정"인 방어자 우대 규약(is_strike_hit_lagged)이 무력화된다 — 규약은 두 좌표가
+#   **서로 다른 방향**으로 틀릴 때만 방어자를 보호하기 때문이다. 결과는 "빠져나왔는데 맞았다"의 부분 재발.
+# ⚠ 변위 clamp(player.apply_remote_pos)는 이걸 못 막는다 — 되돌아가는 거리가 한 송신 간격분(~4px)이라
+#   상한(~13px) 안에 들어와 그냥 통과한다. 그래서 순서를 **명시적으로** 봐야 한다.
+# seq <= 0 = 시퀀스 미부착(릴레이 경로·구버전) → 항등 폴백으로 전부 통과시킨다.
+static func is_pos_seq_fresh(seq: int, last_seq: int) -> bool:
+	if seq <= 0:
+		return true
+	return seq > last_seq
 
 
 # 마지막 관측 속도로 추정한 "지금" 위치. 거리 상한(LAG_MAX_LEAD_DIST)으로 폭주를 막는다.

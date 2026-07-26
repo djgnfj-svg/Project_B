@@ -1,18 +1,26 @@
-[gd_resource type="Resource" script_class="SubJobDef" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="SubJobDef" load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://src/core/sub_job_def.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/subjobs/warrior_swordsman.png" id="2"]
 
 [resource]
 script = ExtResource("1")
 id = "warrior_swordsman"
 display_name = "검사"
 description = "기본에 충실한 전사의 길. 오래 버티고 꾸준히 움직인다 — 피흡과 이동속도가 오른다."
+icon = ExtResource("2")
 series_id = "warrior"
 order = 0
 unlocks_next_at = 3
 max_level = 5
-crit_per_level = 0.02
-crit_dmg_per_level = 0.05
-haste_per_level = 0.02
-move_per_level = 0.025
-leech_per_level = 0.01
+crit_per_level = 0.015
+crit_dmg_per_level = 0.035
+haste_per_level = 0.015
+move_per_level = 0.02
+leech_per_level = 0.009
+main_trait_name = "굳건한 자세"
+main_trait_key = "roll_cd"
+main_trait_value = 0.2
+sub_trait_name = "몸에 밴 검술"
+sub_trait_key = "campfire_heal"
+sub_trait_value = 0.4

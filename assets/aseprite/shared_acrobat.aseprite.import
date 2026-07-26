@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://bbcpuy3sgv1db"
+path="res://.godot/imported/shared_acrobat.aseprite-1030c94b1b471f559cbbc7917576665e.res"
+
+[deps]
+
+source_file="res://assets/aseprite/shared_acrobat.aseprite"
+dest_files=["res://.godot/imported/shared_acrobat.aseprite-1030c94b1b471f559cbbc7917576665e.res"]
+
+[params]
+

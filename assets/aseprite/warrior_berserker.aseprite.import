@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://bydmub0skmx60"
+path="res://.godot/imported/warrior_berserker.aseprite-e5a43f12d90ce3db32b15844e211a54f.res"
+
+[deps]
+
+source_file="res://assets/aseprite/warrior_berserker.aseprite"
+dest_files=["res://.godot/imported/warrior_berserker.aseprite-e5a43f12d90ce3db32b15844e211a54f.res"]
+
+[params]
+

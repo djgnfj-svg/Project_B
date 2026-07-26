@@ -428,8 +428,13 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			# 적 몸 반경 반영 — 거대 보스(radius ~48)는 중심이 멀어 표면까지로 판정 (§3, 기존 잔몹 영향 미미).
 			var reach_def := entry["def"] as EnemyDef
 			var reach_radius := reach_def.body_radius if reach_def != null else 0.0
+			# 🔴 특성(검기 파형)의 사거리 보너스도 **공격자 아바타에서** 읽는다 — 공속·치명·피흡과
+			#   같은 소스다(위 _confirm_damage 주석: peer_level_stats류는 호스트 자신 항목이 없어
+			#   검성 호스트가 자기 파형 사거리를 못 받고 "내 파형은 헛치는데 게스트는 맞는다"가 된다).
+			#   아바타 값은 로컬=GameState 리졸브·원격=공지 id 리졸브라 신뢰 경계는 그대로다(수치 무전송).
 			if CombatMath.is_hit_in_reach(
-					attacker.net_anchor(), (entry["root"] as Node2D).global_position, attacker.job, reach_radius):
+					attacker.net_anchor(), (entry["root"] as Node2D).global_position, attacker.job,
+					reach_radius, attacker.trait_value("reach")):
 				_confirm_damage(entry["health"] as HealthComponent, attacker.job, from_id)
 		NetSchema.G_SHOOT:
 			if not Net.is_host() or _stage_over:
@@ -487,8 +492,12 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			# 신뢰 경계(rules §3): 쿨다운 검증 통과 시에만 i-frame 창 부여 — 스팸 = 무시.
 			# 수용된 한계: 조작 클라가 그랜트 창 중 공격하는 것은 막지 않는다 — naive하게 막으면
 			# 정직한 "구르기 직후 공격"이 GRACE+지연 시프트로 오탐 거부된다 (2인 협동이라 실익 낮음).
+			# 🔴 구르기 쿨 특성(roll_cd)도 **구른 아바타에서** 읽는다 — 사거리·공속과 같은 소스다.
+			#   여기가 좁으면 곡예사/검사가 자기 화면에선 굴러지는데 무적이 안 걸린다("맞을 리 없는데
+			#   맞았다") — 로컬 쿨(player)과 이 게이트가 같은 effective_roll_cooldown을 지나야 한다(§3).
 			var now_roll := Time.get_ticks_msec()
-			if CombatMath.is_roll_grant_ok(int(_roll_grant_msec.get(from_id, -1000000000)), now_roll):
+			if CombatMath.is_roll_grant_ok(int(_roll_grant_msec.get(from_id, -1000000000)), now_roll,
+					roller.trait_value("roll_cd")):
 				_roll_grant_msec[from_id] = now_roll
 		NetSchema.G_PLAYER_HP:
 			if Net.is_host() or from_id != NetSchema.HOST_ID:

@@ -15,7 +15,7 @@ const PlayerActor := preload("res://src/player/player.gd")
 var _players: Dictionary = {}  # peer_id -> PlayerActor
 var _peer_jobs: Dictionary = {}  # peer_id -> 잠긴 직업 id — "시작 시 선택·이후 고정"(GDD §5) 강제
 var _pos_seen: Dictionary = {}  # peer_id -> true — 첫 G_POS 수신 시 재공지 트리거 (공지 유실 경합 복구)
-var _peer_stats: Dictionary = {}  # peer_id -> {atk, hp, weapon, lv} — 장비 스탯 + 레벨 5스탯 공지(G_STATS). 스폰 전 도착 시 버퍼링(_peer_jobs 미러)
+var _peer_stats: Dictionary = {}  # peer_id -> {atk, hp, weapon, lv, ms, ss} — 장비 스탯 + 레벨 5스탯 + 장착 하위 직업 id(메인 ms / 서브 ss) 공지(G_STATS). 스폰 전 도착 시 버퍼링(_peer_jobs 미러)
 
 
 func _ready() -> void:
@@ -72,6 +72,21 @@ func peer_level_stats(peer_id: int) -> Dictionary:
 	return lv_v as Dictionary
 
 
+# 그 피어의 활성 특성 {reach, roll_cd, …}. 미공지/특성 없음 = 전부 0(항등).
+# 🔴 공지된 것은 **id뿐**(메인 "ms" + 서브 "ss")이고 값은 내 data/subjobs에서 리졸브한다
+#   (peer_weapon_id 철학 §3 — 수치를 받으면 그게 곧 스푸핑 표면이다).
+#   계열은 그 피어가 G_JOB으로 공지한 직업 — 남의 계열 특성을 주장하면 traits_of가 폐기한다.
+#   G_JOB이 아직 안 왔으면(계열 미상) 0 = 특성 꺼짐 쪽으로 떨어진다. 첫 G_POS 재공지가 곧 복구하고,
+#   그때까지는 "정당한 특성을 잠깐 못 받는" 보수적 방향이라 안전하다(그 반대는 스푸핑 허용).
+func peer_traits(peer_id: int) -> Dictionary:
+	var st_v: Variant = _peer_stats.get(peer_id)
+	if st_v == null:
+		return CombatMath.empty_traits()
+	var st := st_v as Dictionary
+	return GameState.traits_of(
+		str(st.get("ms", "")), st.get("ss", []) as Array, str(_peer_jobs.get(peer_id, "")))
+
+
 func _spawn(peer_id: int, is_local: bool) -> void:
 	if peer_id == 0 or _players.has(peer_id):
 		return
@@ -95,6 +110,7 @@ func _spawn(peer_id: int, is_local: bool) -> void:
 		p.set_level_stats(st.get("lv", {}) as Dictionary)  # 레벨 5스탯도 같은 버퍼에서(공짜)
 		# 무기 겉모습(표시용) — id는 allowlist 리졸브(모르면 null→직업 기본 무기 폴백)
 		p.set_weapon_visual(GameState.equip_def(str(st.get("weapon", ""))))
+		p.set_traits(peer_traits(peer_id))  # 하위 직업 특성 — 같은 버퍼에서
 	_players[peer_id] = p
 	# 스폰 완료 공지 — 호스트가 챕터 이월 HP를 재확정하는 입구 (CombatAuthority). 잡 반영 뒤에 emit.
 	EventBus.player_spawned.emit(peer_id, p)
@@ -112,7 +128,12 @@ func _announce_stats() -> void:
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_STATS,
 		"atk": int(s["attack"]), "hp": int(s["hp"]),
 		"weapon": GameState.equipped_id(EquipDef.SLOT_WEAPON),  # 착용 무기 id (표시용, 원격 겉모습)
-		"lv": GameState.current_level_stats()})  # 직업 레벨 5스탯 (호스트가 치명/피흡/공속 확정에 사용)
+		"lv": GameState.current_level_stats(),  # 직업 레벨 5스탯 (호스트가 치명/피흡/공속 확정에 사용)
+		# 장착 하위 직업 id — **수치가 아니라 id만** 보낸다(GDD v2.0 특성). 수신 측이 자기 data/subjobs에서
+		# 리졸브해 특성값을 얻는다(peer_weapon_id 철학 §3 — 수치를 받으면 그게 곧 스푸핑 표면).
+		# "ms" = 메인(메인 특성) · "ss" = 서브 칸(서브 특성). 자리가 곧 어느 특성이 켜지는지를 정한다.
+		"ms": GameState.announced_main_id(),  # "ss"와 같은 소스(필터 통과분) — active_traits와 근거 통일
+		"ss": GameState.announced_sub_ids()})  # 🔴 원본 슬롯이 아니라 **필터 통과분**(active_traits와 같은 소스)
 
 
 # 로컬 장비 스탯을 내 플레이어에 반영(max_hp) + 공지. 스폰·인벤 변동 시.
@@ -124,6 +145,10 @@ func _apply_local_stats() -> void:
 		lp.set_level_stats(GameState.current_level_stats())  # 내 레벨 스탯 반영(호스트면 자기 판정 입력)
 		# 로컬 무기 겉모습 = 내가 착용한 무기 (미착용이면 null → 직업 기본)
 		lp.set_weapon_visual(GameState.equip_def(GameState.equipped_id(EquipDef.SLOT_WEAPON)))
+		# 🔴 내 특성은 _peer_stats가 아니라 GameState에서 온다 — **Net에 루프백이 없어 로컬 항목이
+		#   아예 없다.** 성장축 리뷰 Critical(호스트 자기 공속이 게이트에 안 들어가 자기 타격이 걸러졌던 것)과
+		#   같은 함정이라, 치명·피흡·공속과 소스를 통일해 둔다.
+		lp.set_traits(GameState.active_traits())
 	_announce_stats()
 
 
@@ -175,7 +200,10 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 				float(data.get("a", 0.0)),
 				int(data.get("c", 0)),  # 차지 상태(법사 지팡이) — 표시 전용, 실제 발사 레벨은 G_SHOOT를 호스트가 재검증
 				# 속도 — 호스트 지연 보상 외삽의 입력(§3). 수신부가 유한성·이동 상한으로 clamp한다
-				Vector2(float(data.get("vx", 0.0)), float(data.get("vy", 0.0))))
+				Vector2(float(data.get("vx", 0.0)), float(data.get("vy", 0.0))),
+				# 송신 시퀀스 — P2P fast 채널(unordered)의 순서 뒤바뀜을 수신부가 폐기하는 근거(§3).
+				# 키가 없으면 0 = 항등 폴백(릴레이 경로·구버전 클라와 그대로 호환).
+				int(data.get("n", 0)))
 			if not _pos_seen.has(from_id):
 				# 첫 G_POS = 상대가 같은 씬에서 듣고 있다는 증명 — 씬 전환 중 드랍된 공지를 재전송
 				_pos_seen[from_id] = true
@@ -204,11 +232,19 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			var lv_raw: Variant = data.get("lv", {})
 			var lv := CombatMath.clamp_level_stats(
 				(lv_raw as Dictionary) if lv_raw is Dictionary else {}, GameState.max_level_stats())
-			_peer_stats[from_id] = {"atk": atk, "hp": hp, "weapon": wid, "lv": lv}
+			# 하위 직업 id는 **문자열로 보관하고 리졸브는 조회 시점에** 한다(peer_traits).
+			# 여기서 값으로 바꿔 두면 G_STATS가 G_JOB보다 먼저 도착한 순간 계열을 몰라 0으로 굳는다.
+			# "ss"는 Array가 아니면 빈 배열로 — 오염 페이로드가 traits_of에 들어가지 않게(lv의 Dictionary 가드 미러).
+			# 개수 초과분은 traits_of가 SUB_SLOT_COUNT에서 잘라낸다(특성 쌓기 차단).
+			var ss_raw: Variant = data.get("ss", [])
+			_peer_stats[from_id] = {"atk": atk, "hp": hp, "weapon": wid, "lv": lv,
+				"ms": str(data.get("ms", "")),
+				"ss": (ss_raw as Array) if ss_raw is Array else []}
 			if _players.has(from_id):
 				_players[from_id].set_equip_stats(atk, hp)
 				_players[from_id].set_level_stats(lv)
 				_players[from_id].set_weapon_visual(GameState.equip_def(wid))
+				_players[from_id].set_traits(peer_traits(from_id))  # 원격 특성 — 연출·판정 기하 공용
 		NetSchema.G_ATK:
 			if _players.has(from_id):
 				var dir := Vector2(float(data.get("dx", 1.0)), float(data.get("dy", 0.0)))

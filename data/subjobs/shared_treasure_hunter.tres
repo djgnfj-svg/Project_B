@@ -1,0 +1,23 @@
+[gd_resource type="Resource" script_class="SubJobDef" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://src/core/sub_job_def.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/subjobs/shared_treasure_hunter.png" id="2"]
+
+[resource]
+script = ExtResource("1")
+id = "shared_treasure_hunter"
+display_name = "도굴꾼"
+description = "떨어진 것을 놓치지 않는 눈. 어느 계열이든 몸에 배는 요령 — 서브로만 얹힌다."
+icon = ExtResource("2")
+series_id = "*"
+order = 1
+unlocks_next_at = 99
+max_level = 5
+crit_per_level = 0.005
+crit_dmg_per_level = 0.02
+haste_per_level = 0.005
+move_per_level = 0.005
+leech_per_level = 0.003
+sub_trait_name = "도굴"
+sub_trait_key = "drop_find"
+sub_trait_value = 0.15

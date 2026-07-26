@@ -26,7 +26,7 @@ const FAIL_SERVER_FULL := "server_full"  # 서버 전체 방 상한 (Workers 릴
 
 # 게임 페이로드 (data 내부). "k" = 종류.
 const KEY_KIND := "k"
-const G_POS := "pos"                  # {k, s, x, y, f, a, c, vx, vy}  자기 캐릭터 위치+좌우 플립+조준각(a, 라디안 — 무기 표시 전용, 판정 아님) (각자 자기 것만 보낸다). s = 씬 id — 다른 씬 피어의 유령 스폰 방지. c = 현재 차지 레벨(0~3, 법사 지팡이 — 원격 차지 오브 표시 전용, 판정 아님. 실제 발사 레벨은 G_SHOOT "c"를 호스트가 별도 검증). vx/vy = 현재 속도(px/s) — 호스트가 지연 보상 외삽에 쓴다(CombatMath.extrapolate). 속도는 이동 상한으로 clamp되고 외삽 결과도 거리 상한이 있어, 부풀려 보내도 "방어자 우대" 규약상 회피가 관대해질 뿐 피해를 못 만든다 (§3 지연 보상)
+const G_POS := "pos"                  # {k, n, s, x, y, f, a, c, vx, vy}  n = 송신 시퀀스(단조 증가) — 🔴 **P2P fast 채널이 unordered**라 순서가 뒤바뀐 위치 패킷이 앵커를 과거로 되돌릴 수 있다(릴레이 TCP에선 구조적으로 불가능했던 결함). 되돌아간 앵커는 net_anchor와 net_anchor_lead를 **같은 방향으로 함께** 낡게 만들어 "둘 다 맞아야 확정"인 방어자 우대 규약을 무력화한다 → 수신부가 CombatMath.is_pos_seq_fresh로 폐기. 0/미부착 = 항등 폴백(구버전·릴레이 경로). 자기 캐릭터 위치+좌우 플립+조준각(a, 라디안 — 무기 표시 전용, 판정 아님) (각자 자기 것만 보낸다). s = 씬 id — 다른 씬 피어의 유령 스폰 방지. c = 현재 차지 레벨(0~3, 법사 지팡이 — 원격 차지 오브 표시 전용, 판정 아님. 실제 발사 레벨은 G_SHOOT "c"를 호스트가 별도 검증). vx/vy = 현재 속도(px/s) — 호스트가 지연 보상 외삽에 쓴다(CombatMath.extrapolate). 속도는 이동 상한으로 clamp되고 외삽 결과도 거리 상한이 있어, 부풀려 보내도 "방어자 우대" 규약상 회피가 관대해질 뿐 피해를 못 만든다 (§3 지연 보상)
 const G_ATK := "atk"                  # {k, dx, dy}   공격 연출 (방향) — 판정 아님, 원격 표시용
 const G_JOB := "job"                  # {k, job}      직업 공지 (id 문자열) — 스테이지 입장·피어 합류 시. 수신 측은 자기 data/jobs에서 리졸브(모르는 id = 기본 직업)
 const G_STATS := "stats"              # {k, atk, hp, weapon, lv}  장비 총 스탯 + 착용 무기 id + **레벨 스탯** 공지. atk/hp = 호스트가 데미지/HP 확정에 사용(트러스트=발신자, clamp). weapon = 원격 무기 겉모습(표시 전용, allowlist 리졸브만). lv = 직업 레벨 5스탯 {crit, crit_dmg, haste, move, leech} — 키는 CombatMath.LEVEL_STAT_KEYS 그대로, 호스트가 치명/피흡/공속 확정에 쓰므로 수신 측이 **키 목록을 순회**해 데이터 유도 상한(GameState.max_level_stats)으로 clamp한다(모르는 키 자동 폐기). 4인/PvP 전 검증 게이트(rules §2)
@@ -75,6 +75,22 @@ const G_COOP_RES := "cres"            # {k, ok}  호스트→전원: 파훼 결�
 #   Net이 소비하는 메시지에 이름을 붙일 땐 기존 테스트/게임 kind와 겹치지 않는지 먼저 grep해라.
 const G_PING := "nping"               # {k, t}  발신자→상대: t = 발신자의 로컬 usec 타임스탬프(그대로 돌려받을 불투명 값)
 const G_PONG := "npong"               # {k, t}  수신 즉시 에코 — 원 발신자가 (지금 − t)로 RTT를 계산한다. 시계 동기화 불필요(자기 시계만 씀)
+
+# P2P 직결 시그널링 (2026-07-26) — 게임 메시지 경로에서 릴레이를 걷어내기 위한 WebRTC 협상.
+# 🔴 **이 두 메시지만 릴레이를 탄다.** 연결 수립 후의 게임 페이로드는 전부 DataChannel 직결로 흐른다
+#   (릴레이 왕복 ~207ms → 직결 10~40ms, 실측 근거는 rules §5). 협상은 연결당 몇 통뿐이라 저빈도.
+# ⚠ G_PING/G_PONG과 같이 **Net이 소비한다** — net_msg로 게임 로직에 올리지 않는다. 이름은 기존 kind와
+#   겹치지 않는지 grep으로 확인했다(rules §5 "nping" 사고 재발 방지).
+const G_RTC_SDP := "rtcsdp"           # {k, ty, sdp}      offer/answer 교환. ty = "offer"|"answer"(그 외 폐기)
+const G_RTC_ICE := "rtcice"           # {k, m, i, n}      ICE 후보. m=media·i=index·n=name(후보 문자열)
+# 🔴 릴레이 유지용 keepalive — **직결이 열리면 릴레이로 나가는 프레임이 0이 된다**는 함정의 대응(리뷰 C1).
+#   릴레이 Worker는 `seen`(그 소켓이 마지막으로 보낸 시각) 기준 3분 무수신을 좀비로 간주해 연결을 끊는데,
+#   P2P 성공 후엔 게임 트래픽이 전부 직결로 빠져 그 조건이 **상시 성립**한다 → 3분마다 방이 끊기고
+#   `net_disconnected` → 로비 복귀 → 챕터 진행·이월 HP 소실. ⚠ 로컬 릴레이(server/relay/relay.gd)엔
+#   유휴 스윕이 없어 `dev_local.sh`에선 **영원히 재현되지 않는다** — 배포본에서만 터진다.
+# ⚠ RTT 계측(G_PING)과 **의도적으로 분리**한다 — keepalive는 릴레이 왕복(~207ms)이라 이걸로 RTT를 재면
+#   직결 지연 추정이 릴레이 값으로 오염돼 지연 보상(§3)이 과보상한다. 그래서 응답도 없는 단방향이다.
+const G_KEEP := "nkeep"               # {k}  발신자→방: 릴레이 소켓 살아있음 통보. 수신 측은 Net이 소비하고 버린다(무동작)
 
 # 씬 id — G_SCENE 페이로드·G_POS "s" 필드의 값. main의 씬 매핑·각 씬 PeerSync.scene_id와 짝 (단일 소스)
 const SCENE_VILLAGE := "village"

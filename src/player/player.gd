@@ -19,11 +19,18 @@ const REMOTE_LERP_SPEED := 12.0
 # 30Hz로 올려 17ms로 줄인다. 2인 기준 피어당 ~3.5KB/s라 릴레이 부담은 무시 가능.
 const POS_SEND_RATE := 30.0
 const REMOTE_TINT := Color(1.0, 0.75, 0.75)
-const ROLL_SPEED_MULT := 2.6
 const GHOST_ALPHA := 0.4
 const ATTACK_FX_DELAY := 0.07        # 예비동작이 끝나고 스윕이 시작될 때 궤적을 표시
 const ATTACK_FX_TIME := 0.18         # 궤적 잔상 페이드 시간
 const SWOOSH_TEX_RADIUS := 46.0      # swoosh_arc.png의 호 바깥 반지름(px) — FX 스케일 기준 (텍스처와 미러)
+# 검기 파형 (검성 메인 특성, GDD v1.9) — **표시 전용**. 평타 스윙과 같은 프레임에 태어나 앞으로 뻗는다.
+# 🔴 파형은 판정을 만들지 않는다 — 판정은 확장된 사거리를 쓴 원형 질의 하나뿐이고, 파형은 그 사거리가
+#   왜 늘었는지를 눈에 보여주는 것이다(GDD §6: 파형 자체 데미지 없음). 그래서 도달 거리를 연출값으로
+#   따로 두지 않고 **항상 기하(attack_center_offset+attack_radius)에서 파생**한다 — 여기 값을 키워
+#   더 멀리 보이게 만들면 "보이는 곳 ≠ 맞는 곳"이 된다.
+const WAVE_FX_TIME := 0.22           # 파형이 뻗어 사라지기까지 (연출값 — 사용자 실기 튜닝, §0 예외)
+const WAVE_TEX_HALF_H := 12.0        # sword_wave.png 세로 반높이(px) — 판정 반경 정합 스케일 기준 (텍스처와 미러)
+const WAVE_START_RATIO := 0.55       # 파형이 태어나는 지점 = 기본 사거리 도달점 × 이 비율 (스윙 궤적 안에서 출발)
 # ⚠ 미러(rules §3): 스윙 창은 모든 JobDef.attack_cooldown보다 짧아야 한다 (전사 0.4s) —
 #   원격 창-잠금 가드(play_attack_fx)가 정당한 연속 공격의 스윙을 무시하지 않으려면.
 #   이 3상수는 무장 해제/폴백 기본값이고, 무기별 실값은 EquipDef.swing_time/arc/lunge(→ _swing_*).
@@ -58,6 +65,11 @@ var equip_hp_bonus: int = 0   # 착용 장비 체력 보너스 — max_hp = job.
 # 호스트가 치명 굴림·피흡 적립·공속 검증에 **자기가 clamp한 이 값**을 읽는다 (combat_authority).
 # 장비 스탯(위 2개)과 **분리돼 있다** — 축 경계(GDD §6 🔒): 레벨은 공격력·체력을 건드리지 않는다.
 var level_stats: Dictionary = {}
+# 하위 직업 특성 {reach, roll_cd, roll_dist, campfire_heal, kill_move, drop_find} (GDD v2.0 §5,
+# G_STATS "ms"/"ss" 공지 → 각 클라가 자기 data/subjobs에서 리졸브한 값).
+# 🔴 5스탯과 분리: 레벨로 자라지 않고 **낀 자리에 따라** 켜지므로 level_stats에 섞으면 서브 가중·레벨 곱이 붙는다.
+var traits: Dictionary = {}
+var _kill_move_left: float = 0.0  # 「광란」(kill_move) 남은 지속 — 로컬 연출/이동 전용(네트워크 0)
 
 # 무기 겉모습 — 착용 무기(EquipDef.weapon_texture)에서 그린다. 미착용이면 직업 기본 무기로 폴백.
 # _weapon_grip은 _update_weapon이 매 프레임 참조 → 착용/직업에 따라 바뀌므로 멤버로 보관(job.weapon_grip 직참 금지).
@@ -85,6 +97,8 @@ var _charge_sfx: String = "charge_step"  # 단계 상승 효과음 id (무기별
 var _remote_target: Vector2 = Vector2.ZERO
 var _remote_flip: bool = false
 var _remote_vel: Vector2 = Vector2.ZERO  # G_POS "vx/vy" — 호스트 지연 보상 외삽의 입력 (§3). 수신 시 이동 상한으로 clamp
+var _pos_seq: int = 0                   # 내 G_POS 송신 시퀀스(단조 증가) — 수신부 순서 뒤바뀜 폐기의 근거
+var _last_pos_seq: int = 0              # 이 원격 피어에게서 받은 마지막 시퀀스 — 이보다 낮으면 옛 패킷
 var _send_accum: float = 0.0
 var _attack_cd_left: float = 0.0
 var _roll_time_left: float = 0.0
@@ -92,6 +106,11 @@ var _roll_cd_left: float = 0.0
 var _roll_dir: Vector2 = Vector2.RIGHT
 var _fx_left: float = 0.0
 var _fx_delay_left: float = 0.0
+# 검기 파형 진행 상태 (표시 전용) — 방향·출발/도착 거리를 스윙 시점에 굳혀 두고 선형 보간한다.
+var _wave_left: float = 0.0
+var _wave_dir: Vector2 = Vector2.RIGHT
+var _wave_from: float = 0.0
+var _wave_to: float = 0.0
 var _fx_dir: Vector2 = Vector2.RIGHT
 var _attack_queued: bool = false
 var _shot_seq: int = 0          # 로컬 발사 카운터 — 투사체 고유 id "my_id:seq" 생성 (shoot/charge 무기)
@@ -119,6 +138,7 @@ var _prev_hp: int = 0  # 피격 손맛(combat_impact 감소량) 계산용 — hp
 
 @onready var _sprite: AnimatedSprite2D = $Sprite
 @onready var _attack_fx: Sprite2D = $AttackFx
+@onready var _wave_fx: Sprite2D = $WaveFx  # 검기 파형(메인 특성) — 표시 전용
 @onready var _health: HealthComponent = $Health
 @onready var _weapon_pivot: Node2D = $WeaponPivot
 @onready var _weapon: Sprite2D = $WeaponPivot/Weapon
@@ -142,6 +162,10 @@ func _ready() -> void:
 	# @onready 자식에 의존하는 무기 표시값(차지 오브 텍스처) 재적용 — set_weapon_visual이 _ready 전에
 	# 불리는 경로가 생겨도 오브가 조용히 무텍스처로 남지 않게 (현 호출 경로는 전부 ready 이후, 심층 방어)
 	_apply_weapon_feel(_weapon_override)
+	# 「광란」(kill_move) 트리거 — 적 사망 표시 훅에 매단다(손맛 계층 규약: 이미 모든 클라에서
+	# 1회씩 발화하는 훅을 재사용 → **네트워크 메시지 0개**). 원격 인스턴스는 자기 좌표를 수신으로
+	# 받으므로 버프를 굴릴 필요가 없다 — 대신 clamp는 _max_move_speed가 항상 관대하게 잡는다.
+	EventBus.entity_died.connect(_on_entity_died)
 
 
 func setup(p_peer_id: int, p_is_local: bool, spawn_pos: Vector2, p_scene_id: String) -> void:
@@ -192,6 +216,34 @@ func set_level_stats(stats: Dictionary) -> void:
 	_refresh_growth_derived()
 
 
+# 하위 직업 특성 반영 (GDD v2.0 §5).
+# 로컬 = GameState.active_traits() · 원격 = 그 피어가 공지한 하위 직업 id들을 리졸브한 값
+# (둘 다 peer_sync가 넣는다 — 로컬은 _peer_stats에 항목이 없으므로 GameState에서 직접).
+# 🔴 **호스트는 판정에 쓸 특성을 항상 "공격자 아바타"에서 읽는다**(combat_authority) — 이 인스턴스가
+#   그 단일 소스다. peer_sync._peer_stats에는 로컬 항목이 영원히 없어서(Net 루프백 없음) 그쪽을
+#   읽으면 "내 것만 안 먹힌다"가 된다 — 2026-07-25 공속 Critical과 같은 함정.
+# 🔴 reach 하나가 **판정 기하·스워시 크기·파형 연출을 동시에** 움직인다(§3 사거리 계약).
+#   한쪽만 받으면 "맞는 곳 ≠ 보이는 곳"이 되고, 그건 에러 없이 손맛으로만 드러난다.
+# 여기서 한 번 더 clamp한다(수신부 clamp와 이중) — set_level_stats와 같은 규약.
+func set_traits(t: Dictionary) -> void:
+	traits = CombatMath.clamp_traits(t)
+
+
+# 이 아바타의 특성값 — 모르는 키/미설정은 0(항등).
+func trait_value(key: String) -> float:
+	return float(traits.get(key, 0.0))
+
+
+# 「광란」(kill_move) — 적이 쓰러지면 잠깐 빨라진다. **로컬 아바타만** 굴린다(원격은 좌표를 수신으로 받는다).
+# 🔴 협동이라 **누가 막타를 냈는지 묻지 않는다** — EXP 전원 동일 지급과 같은 철학이고, 막타는 호스트만
+#   아는 정보라 게스트에게 알리려면 새 메시지가 필요하다(그만한 값이 안 나온다).
+func _on_entity_died(kind: String, _world_pos: Vector2) -> void:
+	if not is_local or kind != "enemy":
+		return
+	if trait_value("kill_move") > 0.0:
+		_kill_move_left = CombatMath.KILL_MOVE_TIME_S
+
+
 # 레벨 스탯에서 파생되는 표시/이동 값을 다시 계산한다. 입력이 둘(레벨 스탯 변동·무기 교체)이라
 # 반드시 한 함수로 모은다 — 한쪽에서만 갱신하면 무기를 바꾼 뒤 공속이 사라지는 식으로 조용히 갈라진다.
 # 🔴 스윙 창·차지 스텝에 쿨다운과 **같은 배율**(haste_scale)을 곱하는 것이 §3 계약이다:
@@ -214,7 +266,47 @@ func _haste() -> float:
 func _move_speed() -> float:
 	if job == null:
 		return 0.0
-	return CombatMath.effective_move_speed(job.move_speed, float(level_stats.get("move", 0.0)))
+	# 「광란」(kill_move) — 적을 처치한 뒤 잠깐 빨라진다. 5스탯 move와 **같은 축이라 더해서** 넘긴다:
+	# 그러면 원격 변위 clamp·외삽 상한도 자동으로 같은 값을 보고(_roll_speed 경유), 빨라진 정당
+	# 이동이 깎이지 않는다(§3 이동속도 계약). 상한은 effective_move_speed 안의 clamp_move가 건다.
+	var m := float(level_stats.get("move", 0.0))
+	if _kill_move_left > 0.0:
+		m += trait_value("kill_move")
+	return CombatMath.effective_move_speed(job.move_speed, m)
+
+
+# 🔴 **clamp 전용 상한** — kill_move를 타이머와 무관하게 **항상** 포함한다.
+#   버프 창은 각 클라의 로컬 타이머라 호스트의 원격 인스턴스와 몇십 ms 어긋날 수 있는데,
+#   clamp가 그 순간 좁으면 빨라진 정당 이동이 깎여 외삽이 과소평가되고 "피했는데 맞았다"가
+#   부분 재발한다(§3). clamp는 상한이므로 관대한 쪽으로 틀리는 것이 안전한 방향이다.
+func _max_move_speed() -> float:
+	if job == null:
+		return 0.0
+	return CombatMath.effective_move_speed(
+		job.move_speed, float(level_stats.get("move", 0.0)) + trait_value("kill_move"))
+
+
+# 이 아바타의 구르기 속도 — 로컬 이동용(현재 버프 상태 반영).
+func _roll_speed() -> float:
+	return CombatMath.effective_roll_speed(_move_speed(), trait_value("roll_dist"))
+
+
+# 원격 속도/변위 clamp용 구르기 상한 — 위와 같은 유도식에 관대한 이동 상한을 넣는다(§3).
+func _max_roll_speed() -> float:
+	return CombatMath.effective_roll_speed(_max_move_speed(), trait_value("roll_dist"))
+
+
+# 구르기 쿨 남은 비율 0.0~1.0 (1 = 방금 굴러 꽉 참, 0 = 지금 구를 수 있음). **HUD 표시 전용 읽기 접근자**
+# — 상태를 바꾸지 않는다. (특성 축 절반이 구르기에 걸리는데 남은 쿨이 안 보이면 −%가 체감되지 않는다, GDD v2.0)
+# 🔴 분모는 상수 ROLL_COOLDOWN_S가 아니라 **현재 특성이 반영된 유효 쿨**이다 — 상수로 나누면
+#   roll_cd 특성이 켜졌을 때 바가 끝까지 안 차 "감소가 안 걸린 것처럼" 보인다(§3 단일 소스와 같은 이유).
+func roll_cooldown_ratio() -> float:
+	if _roll_cd_left <= 0.0:
+		return 0.0
+	var total := CombatMath.effective_roll_cooldown(trait_value("roll_cd"))
+	if total <= 0.0:
+		return 0.0
+	return clampf(_roll_cd_left / total, 0.0, 1.0)
 
 
 # 무기 겉모습 적용 — 착용 무기(equip)의 텍스처/그립, 없으면(null·텍스처 없음) 직업 기본 무기로 폴백.
@@ -364,6 +456,8 @@ func _update_life_state(p_hp: int) -> void:
 		_dust.emitting = false
 		_attack_fx.visible = false
 		_fx_delay_left = 0.0  # 예약된 궤적도 취소 — 시체에서 스워시가 뜨지 않게
+		_wave_fx.visible = false
+		_wave_left = 0.0      # 날아가던 검기 파형도 정리 (스워시와 같은 이유)
 		_roll_time_left = 0.0
 		_remote_roll_left = 0.0
 		_attack_anim_left = 0.0  # 사망 직전 발동한 공격 스윙이 고스트에 남지 않게
@@ -404,18 +498,25 @@ func _tick_timers(delta: float) -> void:
 	_remote_roll_left = maxf(0.0, _remote_roll_left - delta)
 	_attack_anim_left = maxf(0.0, _attack_anim_left - delta)
 	_recoil_left = maxf(0.0, _recoil_left - delta)
+	_kill_move_left = maxf(0.0, _kill_move_left - delta)
 	_orb_pop_left = maxf(0.0, _orb_pop_left - delta)
 	if _fx_delay_left > 0.0:
 		_fx_delay_left -= delta
 		if _fx_delay_left <= 0.0:
 			# 궤적 표시 — 플레이어 중심 회전, 크기는 판정 기하(§3 단일 소스)에서 파생해 "맞는 곳=보이는 곳" 유지
-			var reach := CombatMath.attack_center_offset(_fx_dir, job).length() + CombatMath.attack_radius(job)
+			# 🔴 reach 특성을 여기에도 넘긴다 — 판정만 넓히면 늘어난 사거리가 화면에 안 보인다.
+			var rb := trait_value("reach")
+			var reach := CombatMath.attack_center_offset(_fx_dir, job, rb).length() \
+				+ CombatMath.attack_radius(job, rb)
 			_attack_fx.rotation = _fx_dir.angle()
 			_attack_fx.position = Vector2.ZERO
 			_attack_fx.scale = Vector2.ONE * (reach / _swoosh_radius)  # 무기별 궤적 반지름 정합(§3)
 			_attack_fx.modulate = _fx_color(1.0)
 			_attack_fx.visible = true
 			_fx_left = ATTACK_FX_TIME
+			if rb > 0.0:
+				_start_wave(reach)  # 검기 파형 — 늘어난 사거리 끝(reach)까지 나아간다
+	_tick_wave(delta)  # 파형 진행은 딜레이 블록 **밖** — 안에 두면 예약 창에서만 움직이다 얼어붙는다
 	if _fx_left > 0.0:
 		_fx_left -= delta
 		_attack_fx.modulate = _fx_color(clampf(_fx_left / ATTACK_FX_TIME, 0.0, 1.0))
@@ -519,7 +620,7 @@ func _local_move(delta: float) -> void:
 			return
 	if _roll_time_left > 0.0:
 		_roll_time_left -= delta
-		velocity = _roll_dir * _move_speed() * ROLL_SPEED_MULT  # 구르기는 늪 슬로우 예외(이속 보너스로 거리도 늘어난다, GDD §6)
+		velocity = _roll_dir * _roll_speed()  # 구르기는 늪 슬로우 예외(이속·roll_dist가 거리를 늘린다, GDD §6)
 	else:
 		# 걷기만 늪 배율 적용. 기 모으는 중(charge 무기)이면 추가로 느려진다 — 모으는 대가(사용자 확정)
 		var charge_mult := CHARGE_MOVE_MULT if _charging else 1.0
@@ -527,7 +628,9 @@ func _local_move(delta: float) -> void:
 		if _alive and Input.is_action_just_pressed("roll") and _roll_cd_left <= 0.0:
 			_roll_dir = dir if dir != Vector2.ZERO else _aim_dir()
 			_roll_time_left = CombatMath.ROLL_TIME_S
-			_roll_cd_left = CombatMath.ROLL_COOLDOWN_S
+			# 🔴 로컬 쿨과 호스트 그랜트 검증(is_roll_grant_ok)이 **같은 함수**를 지난다(§3) —
+			#   사본을 만들면 "굴러지는데 무적이 안 걸리는" 상태가 되고 화면에 이유가 안 드러난다.
+			_roll_cd_left = CombatMath.effective_roll_cooldown(trait_value("roll_cd"))
 			EventBus.player_roll.emit(global_position)  # 구르기 SFX (로컬)
 			# 구르기 선언 — 호스트가 쿨다운 검증 후 i-frame 창 부여 (방향은 연출용)
 			Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ROLL, "dx": _roll_dir.x, "dy": _roll_dir.y})
@@ -609,9 +712,10 @@ func _swing_attack(dir: Vector2) -> void:
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ATK, "dx": dir.x, "dy": dir.y})
 	# 판정: 조준 방향 원형 질의 (Area 노드 대신 즉시 질의 — 프레임 지연 없음)
 	# 기하는 CombatMath 단일 소스 — FX 위치(_show_attack_fx)와 같은 함수라 어긋나지 않는다
-	var center := global_position + CombatMath.attack_center_offset(dir, job)
+	# reach 특성(검기 파형) — 판정도 FX도 같은 값을 받는다(§3 사거리 계약)
+	var center := global_position + CombatMath.attack_center_offset(dir, job, trait_value("reach"))
 	var shape := CircleShape2D.new()
-	shape.radius = CombatMath.attack_radius(job)
+	shape.radius = CombatMath.attack_radius(job, trait_value("reach"))
 	var params := PhysicsShapeQueryParameters2D.new()
 	params.shape = shape
 	params.transform = Transform2D(0.0, center)
@@ -654,6 +758,38 @@ func _aim_dir() -> Vector2:
 func _show_attack_fx(dir: Vector2) -> void:
 	_fx_dir = dir
 	_fx_delay_left = ATTACK_FX_DELAY
+
+
+# 검기 파형 발진 (메인 특성 보유자만) — 스윙 궤적 안에서 태어나 확장 사거리 끝(tip)까지 나아간다.
+# tip은 호출부가 그 프레임 스워시에 쓴 것과 **같은 기하 계산 결과**다 — 그래서 파형이 멈추는 곳이
+# 곧 판정이 닿는 곳이다(§3). 로컬·원격 모두 이 경로를 지난다(원격은 그 피어가 공지한 특성으로).
+func _start_wave(tip: float) -> void:
+	if job == null:
+		return
+	# 출발점은 **특성 없는 기본 사거리** 기준 — 파형이 "기본 도달점 밖으로 더 나아가는" 것으로 읽히게.
+	var base_tip := CombatMath.attack_center_offset(_fx_dir, job).length() + CombatMath.attack_radius(job)
+	_wave_dir = _fx_dir
+	_wave_from = base_tip * WAVE_START_RATIO
+	_wave_to = tip
+	_wave_left = WAVE_FX_TIME
+	_wave_fx.rotation = _fx_dir.angle()
+	# 파형 두께 = 판정 반경 — 스워시와 같은 이유로 텍스처 실측(WAVE_TEX_HALF_H)에 맞춘다
+	_wave_fx.scale = Vector2.ONE * (CombatMath.attack_radius(job, trait_value("reach")) / WAVE_TEX_HALF_H)
+	_wave_fx.position = _wave_dir * _wave_from
+	_wave_fx.modulate = _fx_color(1.0)
+	_wave_fx.visible = true
+
+
+# 파형 진행 — 앞으로 밀며 페이드. 무기 틴트(_fx_color)를 그대로 쓴다(§4: 중립 텍스처 + swing_color).
+func _tick_wave(delta: float) -> void:
+	if _wave_left <= 0.0:
+		return
+	_wave_left -= delta
+	var t := 1.0 - clampf(_wave_left / WAVE_FX_TIME, 0.0, 1.0)
+	_wave_fx.position = _wave_dir * lerpf(_wave_from, _wave_to, t)
+	_wave_fx.modulate = _fx_color(1.0 - t * t)  # 끝에서 빠르게 흩어진다
+	if _wave_left <= 0.0:
+		_wave_fx.visible = false
 
 
 # 네트워크 검증용 좌표 — 원격은 lerp된 표시 좌표가 아니라 (클램프된) 최신 수신 좌표를 쓴다.
@@ -711,8 +847,11 @@ func _send_pos(delta: float) -> void:
 	_send_accum += delta
 	if _send_accum >= 1.0 / POS_SEND_RATE:
 		_send_accum = 0.0
+		_pos_seq += 1
 		Net.send_game({
 			NetSchema.KEY_KIND: NetSchema.G_POS,
+			# 송신 시퀀스 — P2P fast 채널이 unordered라 순서 뒤바뀜을 수신부가 걸러야 한다 (§3, CombatMath.is_pos_seq_fresh).
+			"n": _pos_seq,
 			"s": scene_id,
 			"x": global_position.x,
 			"y": global_position.y,
@@ -732,7 +871,13 @@ func _send_pos(delta: float) -> void:
 # 원격 위치 반영 — 메시지 간 변위를 최대 이동 속도로 클램프한다.
 # 호스트의 사거리 검증(§3)이 이 표시 좌표를 기준으로 하므로, 클램프 없이는 순간이동 스푸핑으로 검증이 무력화된다.
 func apply_remote_pos(pos: Vector2, flip: bool, aim: float, charge_code: int = 0,
-		vel: Vector2 = Vector2.ZERO) -> void:
+		vel: Vector2 = Vector2.ZERO, seq: int = 0) -> void:
+	# 🔴 순서 뒤바뀜 폐기 — **속도·조준각·차지까지 포함해 통째로** 버린다(맨 앞에서 return).
+	#   옛 패킷의 vel만 새겨도 외삽이 과거 속도로 돌아가 방어자 우대가 무력화된다 (§3).
+	if not CombatMath.is_pos_seq_fresh(seq, _last_pos_seq):
+		return
+	if seq > 0:
+		_last_pos_seq = seq
 	# Inf/NaN 주입 가드 — JSON은 1e999 같은 오버플로를 Inf로 파싱한다. lerp_angle(유한, INF)=NaN이
 	# 한 발로 _aim_angle을 영구 오염시키고, pos 쪽은 net_anchor()를 타 호스트 판정까지 닿는다 (리뷰 Important).
 	if is_finite(aim):
@@ -752,7 +897,7 @@ func apply_remote_pos(pos: Vector2, flip: bool, aim: float, charge_code: int = 0
 	# ⚠ 무효값이면 0으로 떨어뜨린다(이전 속도 유지 금지) — 정지한 피어를 계속 미끄러뜨리면
 	#   추정 좌표가 실제와 벌어져 "방어자 우대"가 과하게 관대해진다.
 	if is_finite(vel.x) and is_finite(vel.y):
-		var max_speed := _move_speed() * ROLL_SPEED_MULT  # 🔴 이속 보너스 반영 — 안 하면 지연 보상이 부분 퇴행한다(§3)
+		var max_speed := _max_roll_speed()  # 🔴 이속·kill_move·roll_dist 반영 — 안 하면 지연 보상이 부분 퇴행한다(§3)
 		_remote_vel = vel.limit_length(max_speed)
 	else:
 		_remote_vel = Vector2.ZERO
@@ -761,7 +906,7 @@ func apply_remote_pos(pos: Vector2, flip: bool, aim: float, charge_code: int = 0
 	var now := Time.get_ticks_msec()
 	if _last_remote_msec >= 0:
 		var dt := maxf(float(now - _last_remote_msec) / 1000.0, 1.0 / POS_SEND_RATE)
-		var max_disp := _move_speed() * ROLL_SPEED_MULT * REMOTE_MAX_SPEED_MULT * dt  # 속도 상한과 같은 유도식(갈라지면 한쪽만 튜닝된다)
+		var max_disp := _max_roll_speed() * REMOTE_MAX_SPEED_MULT * dt  # 속도 상한과 같은 유도식(갈라지면 한쪽만 튜닝된다)
 		var delta := pos - _remote_target
 		if delta.length() > max_disp:
 			pos = _remote_target + delta.normalized() * max_disp
