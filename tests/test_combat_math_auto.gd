@@ -63,6 +63,42 @@ func _initialize() -> void:
 	failures += _check(not CombatMath.is_hit_in_reach(origin, Vector2(90.0, 0.0), job, 48.0), "reach+radius: 중심 90·반경48 → 표면(42>40) 거부")
 	failures += _check(CombatMath.is_hit_in_reach(origin, Vector2(40.0, 0.0), job), "reach+radius: 반경 기본 0 = 기존 동작 불변(40 허용)")
 
+	# --- 메인 전용 특성: 검기 파형(사거리) — §3 사거리 계약 (GDD v1.9) ---
+	# job.attack_range 20. reach +30% → 26 → 검증 한계 52. 상한(MAX_REACH_BONUS 0.5) → 30 → 한계 60.
+	failures += _check(is_equal_approx(CombatMath.effective_attack_range(job), 20.0),
+		"reach bonus: 기본값 0 = 항등(20)")
+	failures += _check(is_equal_approx(CombatMath.effective_attack_range(job, 0.3), 26.0),
+		"reach bonus: +30% = 26")
+	failures += _check(is_equal_approx(CombatMath.effective_attack_range(job, 5.0), 30.0),
+		"reach bonus: 상한 초과 주장(5.0) → +50%(30)로 clamp")
+	failures += _check(is_equal_approx(CombatMath.effective_attack_range(job, -2.0), 20.0),
+		"reach bonus: 음수 주장 → 0(사거리 디버프 주입 차단)")
+	failures += _check(is_equal_approx(CombatMath.effective_attack_range(job, INF), 20.0),
+		"reach bonus: INF(JSON 1e999) → 0 폴백")
+	# 판정 게이트에 실제로 걸리는가 — 특성 없으면 거부되던 거리가 특성으로 허용된다
+	failures += _check(not CombatMath.is_hit_in_reach(origin, Vector2(45.0, 0.0), job),
+		"reach bonus: 특성 없으면 45 거부(한계 40)")
+	failures += _check(CombatMath.is_hit_in_reach(origin, Vector2(45.0, 0.0), job, 0.0, 0.3),
+		"reach bonus: 특성 +30%면 45 허용(한계 52)")
+	failures += _check(not CombatMath.is_hit_in_reach(origin, Vector2(52.1, 0.0), job, 0.0, 0.3),
+		"reach bonus: +30%여도 한계 밖(52.1) 거부")
+	failures += _check(not CombatMath.is_hit_in_reach(origin, Vector2(60.1, 0.0), job, 0.0, 9.0),
+		"reach bonus: 상한 clamp 후 한계(60) 밖 거부 — 무한 사거리 주장 차단")
+	# 🔴 기하 3함수가 **같은 확장 사거리**에서 파생되는가 — 하나라도 job.attack_range를 직접 읽으면
+	#   판정과 표시가 갈라진다("맞는 곳 ≠ 보이는 곳"). 그 갈라짐을 여기서 잡는다.
+	failures += _check(is_equal_approx(
+			CombatMath.attack_center_offset(Vector2.RIGHT, job, 0.3).length(), 26.0 * 0.6),
+		"reach bonus: 공격 중심도 확장 사거리에서 파생(15.6)")
+	failures += _check(is_equal_approx(CombatMath.attack_radius(job, 0.3), 26.0 * 0.5),
+		"reach bonus: 판정 반경도 확장 사거리에서 파생(13.0)")
+	failures += _check(is_equal_approx(CombatMath.attack_radius(job), 10.0),
+		"reach bonus: 기하 기본값 0 = 기존 동작 불변(반경 10)")
+	# 적 몸 반경과 조합 — 둘 다 걸린다(보스 표면 + 확장 사거리)
+	failures += _check(CombatMath.is_hit_in_reach(origin, Vector2(99.0, 0.0), job, 48.0, 0.3),
+		"reach bonus+radius: 보스 표면(51) < 확장 한계(52) 적중")
+	failures += _check(not CombatMath.is_hit_in_reach(origin, Vector2(99.0, 0.0), job, 48.0),
+		"reach bonus+radius: 같은 거리도 특성 없으면 거부")
+
 	# --- 장비 스탯 (§3 하드 계약 — 제작/강화 UI·전투·HUD 공용 단일 소스) ---
 	failures += _check(CombatMath.calc_damage(job, 5) == 12, "calc_damage: 장비 보너스(+5) = 12")
 	failures += _check(CombatMath.calc_damage(job, 0) == 7, "calc_damage: 보너스 0 = 기존 항등 폴백")

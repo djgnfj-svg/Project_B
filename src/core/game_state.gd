@@ -546,6 +546,23 @@ func main_sub_job() -> SubJobDef:
 	return d
 
 
+# --- 메인 전용 특성 리졸브 (GDD v1.9 §5) ---
+# 🔴 **메인 하나만** 본다 — 보유분을 순회해 합산하면 "메인 전용"이 조용히 깨진다(서브도 켜진다).
+# 🔴 값은 **id를 allowlist 리졸브해 로컬 .tres에서** 읽는다. 수치를 네트워크로 받으면 그게 곧
+#   스푸핑 표면이다(peer_weapon_id·projectile_params와 같은 철학 — rules §3).
+# series_id 불일치는 0 — 남의 계열 특성을 주장하는 공지를 폐기한다(main_sub_job의 계열 가드 미러).
+func reach_bonus_of(sub_job_id: String, series_id: String) -> float:
+	var d := sub_job_def(sub_job_id)
+	if d == null or d.series_id != series_id:
+		return 0.0
+	return CombatMath.clamp_reach(d.main_reach_bonus)
+
+
+# 내 메인 특성 — 로컬 판정 기하·파형 연출·훈련소 패널·자기 공지가 전부 이 값을 쓴다.
+func main_reach_bonus() -> float:
+	return reach_bonus_of(main_sub_job_id, selected_job_id)
+
+
 # HUD EXP 바 — 메인 하위 직업의 {level, cur, need}. 미보유 = 0/0/0(표기 없음).
 func main_exp_progress() -> Dictionary:
 	var d := main_sub_job()

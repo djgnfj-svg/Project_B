@@ -29,6 +29,17 @@ extends Resource
 @export var move_per_level: float = 0.0      # 이동속도 증가율(0.03 = +3%)
 @export var leech_per_level: float = 0.0     # 피흡 비율(0.012 = 준 데미지의 1.2%)
 
+# --- 메인 전용 특성 (GDD v1.9 §5·§6) ---
+# 🔒 **메인으로 뒀을 때만** 발동한다 — 서브로 두면 위 5스탯만 합산되고 여기는 꺼진다.
+#   그래서 레벨 곱도, 서브 가중(SUB_JOB_WEIGHT)도 타지 않는다(켜짐/꺼짐뿐).
+# 🔒 특성 경계: **무기·모션·조작을 바꾸는 값은 여기 넣지 마라** — 그건 2차 전직(비범위 §10)이다.
+#   공격력·체력도 금지(장비 축). 하위 직업당 특성은 **최대 1개**(GDD §5) — 필드가 늘면 그 규약을 먼저 본다.
+@export_group("메인 전용 특성")
+# 검기 파형 = 평타 사거리 증가율(0.3 = +30%). 0 = 특성 없음(항등).
+# 파형은 **자체 데미지가 없다** — 평타 판정의 도달 거리만 늘어나므로 화력 예산 밖이다(GDD §6).
+# 상한은 CombatMath.MAX_REACH_BONUS(+50%)가 강제한다 — 여기에 더 큰 값을 써도 그 위로는 안 올라간다.
+@export_range(0.0, 0.5, 0.01) var main_reach_bonus: float = 0.0
+
 
 # 키 → 레벨당 증가값. CombatMath.LEVEL_STAT_KEYS 루프의 진입점 — 모르는 키는 0.0(항등).
 func step(key: String) -> float:

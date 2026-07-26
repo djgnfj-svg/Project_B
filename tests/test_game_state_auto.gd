@@ -195,11 +195,15 @@ func _initialize() -> void:
 	gg.selected_job_id = "warrior"
 	_check("하위 직업 스캔에 warrior_swordsman", "warrior_swordsman" in gg.sub_job_ids())
 	_check("하위 직업 스캔에 warrior_berserker", "warrior_berserker" in gg.sub_job_ids())
+	_check("하위 직업 스캔에 warrior_swordmaster(검성)", "warrior_swordmaster" in gg.sub_job_ids())
 	_check("하위 직업 경로 조작 → null", gg.sub_job_def("../../src/core/net_schema") == null)
 	_check("모르는 하위 직업 id → null", gg.sub_job_def("bogus_sub") == null)
 	var series: Array = gg.sub_jobs_of_series("warrior")  # gg는 Node 캐스트라 반환 타입 추론 불가 — 명시
-	_check("계열 목록 = order 정렬(검사 → 광전사)",
-		series.size() == 2 and series[0] == "warrior_swordsman" and series[1] == "warrior_berserker")
+	# order 정렬 = 해금 체인의 순서 그대로. 계열에 하위 직업을 더하면 이 줄도 같이 늘린다
+	# (부등호로 느슨하게 두면 순서가 뒤집혀도 통과해 해금 체인이 조용히 어긋난다).
+	_check("계열 목록 = order 정렬(검사 → 광전사 → 검성)",
+		series.size() == 3 and series[0] == "warrior_swordsman" and series[1] == "warrior_berserker" \
+		and series[2] == "warrior_swordmaster")
 	_check("타 계열(archer) 하위 직업 없음(미작성 = 스트레치)", gg.sub_jobs_of_series("archer").is_empty())
 
 	# 지급 — 멱등(grant_starting_loadout 미러)
@@ -268,6 +272,38 @@ func _initialize() -> void:
 		float(caps["crit"]) <= float(CombatMath.LEVEL_STAT_MAX["crit"]))
 	_check("정직한 만성장 ≤ 데이터 유도 상한",
 		float(gg.current_level_stats()["crit"]) <= float(caps["crit"]))
+
+	# 🔴 GDD §6 총 화력 예산 트립와이어 — max_level_stats()가 곧 "메인 만레벨 + 나머지 전부 서브 만레벨"의
+	#   정직한 최대치라 예산과 직접 비교된다. **하위 직업을 추가하고 스텝 재역산을 잊으면 여기서 빨개진다**
+	#   ("데이터 한 장"이 아니라 "재역산이 딸린 한 장" — GDD §6·§7). 하드 상한(LEVEL_STAT_MAX)은 스푸핑
+	#   방어선이라 예산보다 넉넉하다 — 그래서 그 검사만으로는 예산 초과를 못 잡는다.
+	var budget := {"crit": 0.20, "crit_dmg": 0.50, "haste": 0.25, "move": 0.15, "leech": 0.06}
+	for key: String in budget:
+		var got := float(caps.get(key, -1.0))
+		_check("예산 %s: 만성장 %.3f ≤ GDD %.2f" % [key, got, float(budget[key])],
+			got >= 0.0 and got <= float(budget[key]) + 0.0005)
+
+	# --- 메인 전용 특성(검기 파형) 리졸브 — GDD v1.9 §5 ---
+	# 🔴 네트워크로 오가는 것은 **하위 직업 id뿐**이고 값은 로컬 .tres에서 나온다(peer_weapon_id 철학).
+	#   그래서 여기 검사는 곧 호스트가 원격 주장을 어떻게 거르는지의 검사다.
+	_check("특성: 검성 = 평타 사거리 +30%",
+		is_equal_approx(gg.reach_bonus_of("warrior_swordmaster", "warrior"), 0.3))
+	_check("특성: 검사는 특성 없음(0 = 항등)",
+		is_equal_approx(gg.reach_bonus_of("warrior_swordsman", "warrior"), 0.0))
+	_check("특성: 타 계열 주장(archer가 검성) 폐기",
+		is_equal_approx(gg.reach_bonus_of("warrior_swordmaster", "archer"), 0.0))
+	_check("특성: 모르는 id 폐기", is_equal_approx(gg.reach_bonus_of("bogus_sub", "warrior"), 0.0))
+	_check("특성: 경로 조작 폐기",
+		is_equal_approx(gg.reach_bonus_of("../../src/core/net_schema", "warrior"), 0.0))
+	# 🔴 "메인일 때만" 계약 — 보유·서브로는 절대 안 켜진다(켜지면 서브 합산 예산 계산이 무너진다)
+	_check("특성: 메인이 검사면 파형 꺼짐", is_equal_approx(gg.main_reach_bonus(), 0.0))
+	gg.sub_job_exp["warrior_swordmaster"] = 0  # 해금 체인 대신 직접 보유시켜 메인 전환만 검사
+	_check("특성: 검성을 보유해도 **서브**면 꺼짐(메인 전용)", is_equal_approx(gg.main_reach_bonus(), 0.0))
+	_check("특성: 검성으로 메인 전환", gg.set_main_sub_job("warrior_swordmaster"))
+	_check("특성: 메인이 검성이면 파형 켜짐(+30%)", is_equal_approx(gg.main_reach_bonus(), 0.3))
+	gg.set_main_sub_job("warrior_swordsman")
+	_check("특성: 메인을 되돌리면 다시 꺼짐", is_equal_approx(gg.main_reach_bonus(), 0.0))
+	gg.sub_job_exp.erase("warrior_swordmaster")  # 이후 저장 검사에 영향 주지 않게 원복
 
 	# 저장 — 필드 추가(버전 불변), 구 세이브 폴백, 조작 세이브 폐기
 	var gsnap: Dictionary = gg.to_save_dict()

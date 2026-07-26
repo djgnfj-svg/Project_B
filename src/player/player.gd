@@ -24,6 +24,14 @@ const GHOST_ALPHA := 0.4
 const ATTACK_FX_DELAY := 0.07        # 예비동작이 끝나고 스윕이 시작될 때 궤적을 표시
 const ATTACK_FX_TIME := 0.18         # 궤적 잔상 페이드 시간
 const SWOOSH_TEX_RADIUS := 46.0      # swoosh_arc.png의 호 바깥 반지름(px) — FX 스케일 기준 (텍스처와 미러)
+# 검기 파형 (검성 메인 특성, GDD v1.9) — **표시 전용**. 평타 스윙과 같은 프레임에 태어나 앞으로 뻗는다.
+# 🔴 파형은 판정을 만들지 않는다 — 판정은 확장된 사거리를 쓴 원형 질의 하나뿐이고, 파형은 그 사거리가
+#   왜 늘었는지를 눈에 보여주는 것이다(GDD §6: 파형 자체 데미지 없음). 그래서 도달 거리를 연출값으로
+#   따로 두지 않고 **항상 기하(attack_center_offset+attack_radius)에서 파생**한다 — 여기 값을 키워
+#   더 멀리 보이게 만들면 "보이는 곳 ≠ 맞는 곳"이 된다.
+const WAVE_FX_TIME := 0.22           # 파형이 뻗어 사라지기까지 (연출값 — 사용자 실기 튜닝, §0 예외)
+const WAVE_TEX_HALF_H := 12.0        # sword_wave.png 세로 반높이(px) — 판정 반경 정합 스케일 기준 (텍스처와 미러)
+const WAVE_START_RATIO := 0.55       # 파형이 태어나는 지점 = 기본 사거리 도달점 × 이 비율 (스윙 궤적 안에서 출발)
 # ⚠ 미러(rules §3): 스윙 창은 모든 JobDef.attack_cooldown보다 짧아야 한다 (전사 0.4s) —
 #   원격 창-잠금 가드(play_attack_fx)가 정당한 연속 공격의 스윙을 무시하지 않으려면.
 #   이 3상수는 무장 해제/폴백 기본값이고, 무기별 실값은 EquipDef.swing_time/arc/lunge(→ _swing_*).
@@ -58,6 +66,9 @@ var equip_hp_bonus: int = 0   # 착용 장비 체력 보너스 — max_hp = job.
 # 호스트가 치명 굴림·피흡 적립·공속 검증에 **자기가 clamp한 이 값**을 읽는다 (combat_authority).
 # 장비 스탯(위 2개)과 **분리돼 있다** — 축 경계(GDD §6 🔒): 레벨은 공격력·체력을 건드리지 않는다.
 var level_stats: Dictionary = {}
+# 메인 전용 특성(검기 파형) = 평타 사거리 증가율 (GDD v1.9 §5, G_STATS "ms" 공지 → 로컬 리졸브).
+# 🔴 5스탯과 분리: 레벨로 자라지 않고 **메인일 때만** 켜지므로 level_stats에 섞으면 서브 가중이 곱해진다.
+var reach_bonus: float = 0.0
 
 # 무기 겉모습 — 착용 무기(EquipDef.weapon_texture)에서 그린다. 미착용이면 직업 기본 무기로 폴백.
 # _weapon_grip은 _update_weapon이 매 프레임 참조 → 착용/직업에 따라 바뀌므로 멤버로 보관(job.weapon_grip 직참 금지).
@@ -92,6 +103,11 @@ var _roll_cd_left: float = 0.0
 var _roll_dir: Vector2 = Vector2.RIGHT
 var _fx_left: float = 0.0
 var _fx_delay_left: float = 0.0
+# 검기 파형 진행 상태 (표시 전용) — 방향·출발/도착 거리를 스윙 시점에 굳혀 두고 선형 보간한다.
+var _wave_left: float = 0.0
+var _wave_dir: Vector2 = Vector2.RIGHT
+var _wave_from: float = 0.0
+var _wave_to: float = 0.0
 var _fx_dir: Vector2 = Vector2.RIGHT
 var _attack_queued: bool = false
 var _shot_seq: int = 0          # 로컬 발사 카운터 — 투사체 고유 id "my_id:seq" 생성 (shoot/charge 무기)
@@ -118,6 +134,7 @@ var _prev_hp: int = 0  # 피격 손맛(combat_impact 감소량) 계산용 — hp
 
 @onready var _sprite: AnimatedSprite2D = $Sprite
 @onready var _attack_fx: Sprite2D = $AttackFx
+@onready var _wave_fx: Sprite2D = $WaveFx  # 검기 파형(메인 특성) — 표시 전용
 @onready var _health: HealthComponent = $Health
 @onready var _weapon_pivot: Node2D = $WeaponPivot
 @onready var _weapon: Sprite2D = $WeaponPivot/Weapon
@@ -189,6 +206,16 @@ func _apply_max_hp() -> void:
 func set_level_stats(stats: Dictionary) -> void:
 	level_stats = CombatMath.clamp_level_stats(stats)
 	_refresh_growth_derived()
+
+
+# 메인 전용 특성(검기 파형) = 평타 사거리 증가율 (GDD v1.9 §5).
+# 로컬 = GameState.main_reach_bonus() · 원격 = 그 피어가 공지한 메인 하위 직업 id를 리졸브한 값
+# (둘 다 peer_sync가 넣는다 — 로컬은 _peer_stats에 항목이 없으므로 GameState에서 직접).
+# 🔴 이 값 하나가 **판정 기하·스워시 크기·파형 연출을 동시에** 움직인다(§3 사거리 계약).
+#   한쪽만 reach를 받으면 "맞는 곳 ≠ 보이는 곳"이 되고, 그건 에러 없이 손맛으로만 드러난다.
+# 5스탯이 아니므로 level_stats에 섞지 않는다 — 섞으면 서브 가중·레벨 곱이 붙어 "메인 전용"이 깨진다.
+func set_reach_bonus(v: float) -> void:
+	reach_bonus = CombatMath.clamp_reach(v)
 
 
 # 레벨 스탯에서 파생되는 표시/이동 값을 다시 계산한다. 입력이 둘(레벨 스탯 변동·무기 교체)이라
@@ -363,6 +390,8 @@ func _update_life_state(p_hp: int) -> void:
 		_dust.emitting = false
 		_attack_fx.visible = false
 		_fx_delay_left = 0.0  # 예약된 궤적도 취소 — 시체에서 스워시가 뜨지 않게
+		_wave_fx.visible = false
+		_wave_left = 0.0      # 날아가던 검기 파형도 정리 (스워시와 같은 이유)
 		_roll_time_left = 0.0
 		_remote_roll_left = 0.0
 		_attack_anim_left = 0.0  # 사망 직전 발동한 공격 스윙이 고스트에 남지 않게
@@ -408,13 +437,18 @@ func _tick_timers(delta: float) -> void:
 		_fx_delay_left -= delta
 		if _fx_delay_left <= 0.0:
 			# 궤적 표시 — 플레이어 중심 회전, 크기는 판정 기하(§3 단일 소스)에서 파생해 "맞는 곳=보이는 곳" 유지
-			var reach := CombatMath.attack_center_offset(_fx_dir, job).length() + CombatMath.attack_radius(job)
+			# 🔴 reach_bonus(메인 특성)를 여기에도 넘긴다 — 판정만 넓히면 늘어난 사거리가 화면에 안 보인다.
+			var reach := CombatMath.attack_center_offset(_fx_dir, job, reach_bonus).length() \
+				+ CombatMath.attack_radius(job, reach_bonus)
 			_attack_fx.rotation = _fx_dir.angle()
 			_attack_fx.position = Vector2.ZERO
 			_attack_fx.scale = Vector2.ONE * (reach / _swoosh_radius)  # 무기별 궤적 반지름 정합(§3)
 			_attack_fx.modulate = _fx_color(1.0)
 			_attack_fx.visible = true
 			_fx_left = ATTACK_FX_TIME
+			if reach_bonus > 0.0:
+				_start_wave(reach)  # 검기 파형 — 늘어난 사거리 끝(reach)까지 나아간다
+	_tick_wave(delta)  # 파형 진행은 딜레이 블록 **밖** — 안에 두면 예약 창에서만 움직이다 얼어붙는다
 	if _fx_left > 0.0:
 		_fx_left -= delta
 		_attack_fx.modulate = _fx_color(clampf(_fx_left / ATTACK_FX_TIME, 0.0, 1.0))
@@ -604,9 +638,10 @@ func _swing_attack(dir: Vector2) -> void:
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ATK, "dx": dir.x, "dy": dir.y})
 	# 판정: 조준 방향 원형 질의 (Area 노드 대신 즉시 질의 — 프레임 지연 없음)
 	# 기하는 CombatMath 단일 소스 — FX 위치(_show_attack_fx)와 같은 함수라 어긋나지 않는다
-	var center := global_position + CombatMath.attack_center_offset(dir, job)
+	# reach_bonus = 메인 특성(검기 파형) — 판정도 FX도 같은 값을 받는다(§3 사거리 계약)
+	var center := global_position + CombatMath.attack_center_offset(dir, job, reach_bonus)
 	var shape := CircleShape2D.new()
-	shape.radius = CombatMath.attack_radius(job)
+	shape.radius = CombatMath.attack_radius(job, reach_bonus)
 	var params := PhysicsShapeQueryParameters2D.new()
 	params.shape = shape
 	params.transform = Transform2D(0.0, center)
@@ -649,6 +684,38 @@ func _aim_dir() -> Vector2:
 func _show_attack_fx(dir: Vector2) -> void:
 	_fx_dir = dir
 	_fx_delay_left = ATTACK_FX_DELAY
+
+
+# 검기 파형 발진 (메인 특성 보유자만) — 스윙 궤적 안에서 태어나 확장 사거리 끝(tip)까지 나아간다.
+# tip은 호출부가 그 프레임 스워시에 쓴 것과 **같은 기하 계산 결과**다 — 그래서 파형이 멈추는 곳이
+# 곧 판정이 닿는 곳이다(§3). 로컬·원격 모두 이 경로를 지난다(원격은 자기 공지 reach_bonus로).
+func _start_wave(tip: float) -> void:
+	if job == null:
+		return
+	# 출발점은 **특성 없는 기본 사거리** 기준 — 파형이 "기본 도달점 밖으로 더 나아가는" 것으로 읽히게.
+	var base_tip := CombatMath.attack_center_offset(_fx_dir, job).length() + CombatMath.attack_radius(job)
+	_wave_dir = _fx_dir
+	_wave_from = base_tip * WAVE_START_RATIO
+	_wave_to = tip
+	_wave_left = WAVE_FX_TIME
+	_wave_fx.rotation = _fx_dir.angle()
+	# 파형 두께 = 판정 반경 — 스워시와 같은 이유로 텍스처 실측(WAVE_TEX_HALF_H)에 맞춘다
+	_wave_fx.scale = Vector2.ONE * (CombatMath.attack_radius(job, reach_bonus) / WAVE_TEX_HALF_H)
+	_wave_fx.position = _wave_dir * _wave_from
+	_wave_fx.modulate = _fx_color(1.0)
+	_wave_fx.visible = true
+
+
+# 파형 진행 — 앞으로 밀며 페이드. 무기 틴트(_fx_color)를 그대로 쓴다(§4: 중립 텍스처 + swing_color).
+func _tick_wave(delta: float) -> void:
+	if _wave_left <= 0.0:
+		return
+	_wave_left -= delta
+	var t := 1.0 - clampf(_wave_left / WAVE_FX_TIME, 0.0, 1.0)
+	_wave_fx.position = _wave_dir * lerpf(_wave_from, _wave_to, t)
+	_wave_fx.modulate = _fx_color(1.0 - t * t)  # 끝에서 빠르게 흩어진다
+	if _wave_left <= 0.0:
+		_wave_fx.visible = false
 
 
 # 네트워크 검증용 좌표 — 원격은 lerp된 표시 좌표가 아니라 (클램프된) 최신 수신 좌표를 쓴다.

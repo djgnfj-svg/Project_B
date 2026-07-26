@@ -9,11 +9,35 @@ static func calc_damage(job: JobDef, bonus_attack: int = 0) -> int:
 	return job.attack_damage + bonus_attack
 
 
+# --- 메인 전용 특성: 검기 파형(평타 사거리) — 단일 소스 (§3) ---
+# GDD §5·§6 v1.9: **메인** 하위 직업의 특성만 발동한다(서브는 5스탯만 합산된다).
+# 🔴 레벨로 자라지 않는 켜짐/꺼짐 값이라 LEVEL_STAT_KEYS 루프에 **얹지 않는다** — 얹으면 서브 가중(×0.4)이
+#   곱해져 "메인 전용"이 조용히 깨지고, 레벨 곱까지 타 예산 밖 스탯이 레벨 스탯 상한 검증에 섞인다.
+# 🔴 아래 사거리 3함수(is_hit_in_reach·attack_center_offset·attack_radius)는 **전부 이 함수를 지난다.**
+#   haste_scale과 같은 이유다 — 배율 함수를 공유하는 것 자체가 "맞는 곳 = 보이는 곳" 계약의 증명이고,
+#   한 곳이라도 job.attack_range를 직접 읽으면 파형이 판정과 표시 중 한쪽에만 걸린다.
+const MAX_REACH_BONUS := 0.5  # 하드 상한 +50% (GDD §6) — 근접이 원거리가 되는 것 + 공지 스푸핑 차단
+
+
+# 유한성 가드 먼저(JSON 1e999 → INF, clamp_level_stat과 같은 철학). 음수는 0 — 사거리 디버프 주입 차단.
+static func clamp_reach(reach: float) -> float:
+	if not is_finite(reach):
+		return 0.0
+	return clampf(reach, 0.0, MAX_REACH_BONUS)
+
+
+# reach = 그 피어가 공지한 메인 하위 직업에서 **호스트가 로컬 리졸브한** 특성값(peer_sync.peer_reach_bonus).
+# 0 = 항등 = 특성 없음/도입 전과 완전히 동일.
+static func effective_attack_range(job: JobDef, reach: float = 0.0) -> float:
+	return job.attack_range * (1.0 + clamp_reach(reach))
+
+
 # 호스트의 적중 요청 검증 — 공격자 위치 기준 사거리 내인가 (지연 감안 여유 배율).
 # enemy_radius = 적 몸 반경 — 중심거리에서 빼 준다. 거대 보스(radius ~48)는 중심이 멀어
 # "붙어도 사거리 밖"이 되므로 몸통 표면까지로 판정한다 (기본 0 = 기존 잔몹 동작 불변).
-static func is_hit_in_reach(attacker_pos: Vector2, enemy_pos: Vector2, job: JobDef, enemy_radius: float = 0.0) -> bool:
-	return attacker_pos.distance_to(enemy_pos) - enemy_radius <= job.attack_range * 2.0
+static func is_hit_in_reach(attacker_pos: Vector2, enemy_pos: Vector2, job: JobDef,
+		enemy_radius: float = 0.0, reach: float = 0.0) -> bool:
+	return attacker_pos.distance_to(enemy_pos) - enemy_radius <= effective_attack_range(job, reach) * 2.0
 
 
 # 히트 기하 — 단일 소스 (§3). 실제 판정(원형 질의)과 공격 FX 위치가 같은 함수를 부른다.
@@ -22,12 +46,12 @@ const ATTACK_CENTER_SCALE := 0.6  # 공격 중심까지의 거리 = range * 이 
 const ATTACK_RADIUS_SCALE := 0.5  # 판정 반경 = range * 이 값
 
 
-static func attack_center_offset(dir: Vector2, job: JobDef) -> Vector2:
-	return dir * (job.attack_range * ATTACK_CENTER_SCALE)
+static func attack_center_offset(dir: Vector2, job: JobDef, reach: float = 0.0) -> Vector2:
+	return dir * (effective_attack_range(job, reach) * ATTACK_CENTER_SCALE)
 
 
-static func attack_radius(job: JobDef) -> float:
-	return job.attack_range * ATTACK_RADIUS_SCALE
+static func attack_radius(job: JobDef, reach: float = 0.0) -> float:
+	return effective_attack_range(job, reach) * ATTACK_RADIUS_SCALE
 
 
 # 한 스윙이 여러 적을 치는 것은 허용하되(SAME_SWING_MS 안), 스윙 간격은 쿨다운(지터 여유 0.9배)을 강제.

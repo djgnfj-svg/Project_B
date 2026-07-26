@@ -428,8 +428,13 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			# 적 몸 반경 반영 — 거대 보스(radius ~48)는 중심이 멀어 표면까지로 판정 (§3, 기존 잔몹 영향 미미).
 			var reach_def := entry["def"] as EnemyDef
 			var reach_radius := reach_def.body_radius if reach_def != null else 0.0
+			# 🔴 메인 특성(검기 파형)의 사거리 보너스도 **공격자 아바타에서** 읽는다 — 공속·치명·피흡과
+			#   같은 소스다(위 _confirm_damage 주석: peer_level_stats류는 호스트 자신 항목이 없어
+			#   검성 호스트가 자기 파형 사거리를 못 받고 "내 파형은 헛치는데 게스트는 맞는다"가 된다).
+			#   아바타 값은 로컬=GameState 리졸브·원격=공지 id 리졸브라 신뢰 경계는 그대로다(수치 무전송).
 			if CombatMath.is_hit_in_reach(
-					attacker.net_anchor(), (entry["root"] as Node2D).global_position, attacker.job, reach_radius):
+					attacker.net_anchor(), (entry["root"] as Node2D).global_position, attacker.job,
+					reach_radius, attacker.reach_bonus):
 				_confirm_damage(entry["health"] as HealthComponent, attacker.job, from_id)
 		NetSchema.G_SHOOT:
 			if not Net.is_host() or _stage_over:
