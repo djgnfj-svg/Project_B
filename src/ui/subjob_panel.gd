@@ -202,9 +202,14 @@ func _make_owned_row(sid: String, d: SubJobDef) -> Control:
 	name_lbl.add_theme_color_override(&"font_color", UiTheme.ACCENT if is_main else UiTheme.TEXT)
 	info.add_child(name_lbl)
 
+	# 행에는 **수치만** 둔다 — flavor 설명(d.description)은 hover 툴팁에만(_sub_tooltip).
+	# 목록에서 고를 때 필요한 건 "이 갈래가 뭘 올려주나"지 분위기 문장이 아니다(사용자 확정 2026-07-26).
 	info.add_child(_make_wrap_label(_growth_text(d), UiTheme.TEXT))
-	if not d.description.is_empty():
-		info.add_child(_make_wrap_label(d.description, UiTheme.TEXT_DIM))
+	# 메인 전용 특성 — 켜짐(메인)이면 액센트, 꺼짐이면 흐리게. 이 대비가 "메인으로 둬야 켜진다"를
+	# 목록에서 바로 읽히게 한다(GDD v1.9 §5 — 메인 선택을 스탯 비교에서 플레이 감각 선택으로).
+	var trait_line := _trait_text(d, is_main)
+	if not trait_line.is_empty():
+		info.add_child(_make_wrap_label(trait_line, UiTheme.ACCENT if is_main else UiTheme.TEXT_DIM))
 	row.add_child(info)
 
 	row.add_child(_make_main_button(sid, is_main))
@@ -248,6 +253,10 @@ func _make_locked_row(sid: String, d: SubJobDef) -> Control:
 	info.add_child(name_lbl)
 
 	info.add_child(_make_wrap_label(_lock_text(d), UiTheme.TEXT_DIM))
+	# 잠긴 갈래도 특성은 예고한다 — "저걸 열면 뭐가 생기나"가 해금 동기다(GDD §6 레벨업 = 콘텐츠 해금).
+	var locked_trait := _trait_text(d, false)
+	if not locked_trait.is_empty():
+		info.add_child(_make_wrap_label(locked_trait, UiTheme.TEXT_DIM))
 	row.add_child(info)
 
 	# 버튼 자리에 상태 라벨 — 보유 행과 폭을 맞춰 목록이 흔들리지 않게
@@ -283,6 +292,19 @@ func _growth_parts(d: SubJobDef) -> Array[String]:
 			continue
 		parts.append("%s +%.1f%s" % [_stat_name(key), step * 100.0, _stat_unit(key)])
 	return parts
+
+
+# 메인 전용 특성 한 줄 (GDD v1.9 §5). 특성 없는 갈래는 빈 문자열 → 호출부가 줄 자체를 안 만든다.
+# ⚠ 특성 이름·문구는 아직 코드에 있다 — 현재 특성이 사거리 하나뿐이라서다(SubJobDef 필드도 하나).
+#   두 번째 특성이 생기면 이름/문구를 SubJobDef로 옮긴다(하위 직업당 최대 1개 규약은 그대로).
+# 값은 CombatMath.clamp_reach를 지나 표시한다 — 데이터에 상한 초과값이 적혀 있어도 **실제 걸리는 값**만
+#   보여주기 위해서다(UI가 게임보다 후한 수치를 약속하면 그게 곧 거짓말이다).
+func _trait_text(d: SubJobDef, is_main: bool) -> String:
+	if is_zero_approx(d.main_reach_bonus):
+		return ""
+	var pct := roundi(CombatMath.clamp_reach(d.main_reach_bonus) * 100.0)
+	var head := "특성 발동" if is_main else "메인 지정 시"
+	return "%s — 검기 파형: 평타 사거리 +%d%%" % [head, pct]
 
 
 func _growth_text(d: SubJobDef) -> String:
@@ -340,6 +362,9 @@ func _sub_tooltip(sid: String, d: SubJobDef, owned: bool) -> String:
 	var growth := _growth_parts(d)
 	if not growth.is_empty():
 		lines.append("레벨마다  " + " · ".join(growth))
+	var trait_line := _trait_text(d, is_main)
+	if not trait_line.is_empty():
+		lines.append(trait_line)
 	if not d.description.is_empty():
 		lines.append("")
 		lines.append(d.description)
@@ -368,8 +393,10 @@ func _make_line(text: String, font_size: int) -> Label:
 
 # 보조 줄(성장 요약·설명·잠김 안내) — 🔴 autowrap 필수: 안 감으면 긴 줄의 최소 폭이
 # 컨테이너를 밀어 Dialog가 640 뷰포트를 넘어간다(잘려 보이는데 에러는 없다).
+# 크기 9 = Galmuri9의 설계 크기(픽셀 퍼펙트) + line_spacing 0 → 이름 줄보다 확실히 얇게 깔린다.
 func _make_wrap_label(text: String, color: Color) -> Label:
-	var l := _make_line(text, 10)
+	var l := _make_line(text, 9)
+	l.add_theme_constant_override(&"line_spacing", 0)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	l.custom_minimum_size = Vector2(80, 0)  # wrap 하한 — 0이면 한 글자 폭까지 줄어든다
 	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
