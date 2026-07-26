@@ -6,15 +6,24 @@ extends Camera2D
 # EventBus 구독은 씬 스크립트라 전역 식별자 허용 (rules §5 — 헤드리스 -s 대상 아님).
 # 연출값 (rules §0 예외).
 
+# 🔴 확대 배율 (사용자 요청 2026-07-26: 16px 전환 후 "좀더 확대해줘").
+# 16px 아트를 640×360에 그대로 그리면 캐릭터가 화면 세로의 1/22라 너무 작다 → 카메라를 당긴다.
+# **정수 배율이라 픽셀이 안 뭉갠다.** HUD는 CanvasLayer라 이 줌의 영향을 안 받아 선명하게 남는다.
+# ⚠ 월드 좌표는 그대로다 — 보이는 범위가 절반이 되므로 맵이 그만큼 넓게 느껴지고, 같은
+#   move_speed도 화면에선 2배 빠르게 보인다. 답답하거나 빠르면 이동속도·사거리를 조인다(실기 튜닝).
+const ZOOM := 2.0
+
 const SHAKE_DECAY := 14.0   # 초당 감쇠량(클수록 빨리 잦아든다)
-const SHAKE_MAX := 7.0      # 오프셋 상한(px) — 640×360이라 과하면 멀미
+# ⚠ 아래 두 상한은 **줌 좌표계**다 — offset에 zoom이 곱해져 화면에 나가므로, 확대 배율만큼
+#   나눠야 체감이 유지된다. 안 그러면 확대한 만큼 화면이 더 크게 흔들려 멀미가 난다.
+const SHAKE_MAX := 3.5      # 오프셋 상한 — 640×360 / ZOOM 2배 기준
 const SMOOTH_SPEED := 9.0   # 위치 추적 부드러움
 # combat_impact 종류별 기본 셰이크 강도 (내가 맞으면 더 크게)
 const IMPACT_SHAKE := {"enemy": 1.5, "player": 3.0}
 const CRIT_SHAKE_MULT := 1.6  # 치명타 셰이크 가중 (성장축 2026-07-25 — 연출값, rules §0 예외)
 # 방향성 반동 (사용자 요청 2026-07-26: "카메라가 좀더 쫀득해야함 — 반동이 필요").
 # 셰이크와 **다른 축**이라 따로 쌓고 offset에서 합친다: 셰이크는 무작위 진동, 반동은 방향이 읽히는 밀림.
-const KICK_MAX := 9.0        # 반동 변위 상한(px) — 셰이크와 합쳐도 화면이 안 무너지는 선
+const KICK_MAX := 4.5        # 반동 변위 상한 — 셰이크와 합쳐도 화면이 안 무너지는 선(줌 좌표계)
 const KICK_DECAY := 34.0     # 밀린 뒤 되돌아오는 속도(px/s). 셰이크보다 훨씬 빨라야 "톡" 치는 느낌
 const KICK_SMOOTH := 26.0    # 밀리는 순간의 부드러움 — 즉시 점프하면 프레임 튀듯 보인다
 
@@ -24,6 +33,7 @@ var _kick_target: Vector2 = Vector2.ZERO # 목표 변위 — 여기로 빠르게
 
 
 func _ready() -> void:
+	zoom = Vector2(ZOOM, ZOOM)
 	position_smoothing_enabled = true
 	position_smoothing_speed = SMOOTH_SPEED
 	EventBus.combat_impact.connect(_on_impact)
