@@ -9,6 +9,8 @@ extends CanvasLayer
 #  - 다이얼로그 안 컨트롤(슬라이더·체크·닫기)만 클릭을 받는다.
 # ⚠ 이 파일은 UI 씬 스크립트라 전역 오토로드(Audio) 식별자 직접 접근 OK (헤드리스 -s 대상 아님, rules §5).
 
+const UiTheme := preload("res://src/ui/ui_theme.gd")  # UI 톤 단일 소스 (rules §0: class_name 대신 preload)
+
 @onready var _slider: HSlider = %Slider
 @onready var _value_label: Label = %ValueLabel
 @onready var _mute_check: CheckButton = %MuteCheck
@@ -22,6 +24,7 @@ var _overlay: Control = null  # 확인창/직업목록 서브 오버레이 (한 
 
 func _ready() -> void:
 	visible = false
+	$Center.theme = UiTheme.get_theme()  # 공용 테마 (로비·HUD·제작 패널과 통일)
 	_slider.value_changed.connect(_on_slider_changed)
 	_slider.drag_started.connect(func() -> void: _dragging = true)
 	_slider.drag_ended.connect(_on_drag_ended)
@@ -50,19 +53,21 @@ func close() -> void:
 func _refresh_actions() -> void:
 	var in_village := get_tree().get_first_node_in_group("village") != null
 	# 마을로 가기 — 마을에선 숨김, 스테이지에선 호스트만 (씬 전환 = 호스트 권한, rules §3)
+	# ⚠ 라벨에 이모지를 쓰지 않는다 — 픽셀 폰트(Galmuri9)에 없어 시스템 폰트로 폴백되고, 그 한 글자 때문에
+	#   이 화면만 톤이 튄다(웹에선 OS마다 모양도 다르다). 상태는 괄호 문구로 말한다.
 	_village_btn.visible = not in_village
 	_village_btn.disabled = not Net.is_host()
-	_village_btn.text = "🏘 마을로 가기" if Net.is_host() else "🏘 마을로 가기 (방장만)"
+	_village_btn.text = "마을로 가기" if Net.is_host() else "마을로 가기 (방장만)"
 	# 직업 변경 — 마을에서만 (전투 스테이지에선 스탯 취사선택 악용 방지로 잠금)
 	_job_btn.disabled = not in_village
-	_job_btn.text = "🧑 직업 변경" if in_village else "🧑 직업 변경 (마을에서만)"
+	_job_btn.text = "직업 변경" if in_village else "직업 변경 (마을에서만)"
 
 
 func _on_village_pressed() -> void:
 	var vb := _make_overlay("마을로 돌아갈까요?\n현재 스테이지 진행은 사라집니다.")
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 12)
+	row.add_theme_constant_override("separation", UiTheme.GAP_SECTION)
 	var yes := _mk_btn("예", 72)
 	yes.pressed.connect(func() -> void:
 		_dismiss_overlay()
@@ -99,6 +104,7 @@ func _make_overlay(title: String) -> VBoxContainer:
 	_dismiss_overlay()
 	_overlay = Control.new()
 	_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_overlay.theme = UiTheme.get_theme()  # CanvasLayer 자식이라 상속이 안 온다 — 여기서 직접 건다
 	var bg := ColorRect.new()
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bg.color = Color(0, 0, 0, 0.6)
@@ -110,15 +116,13 @@ func _make_overlay(title: String) -> VBoxContainer:
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size = Vector2(220, 0)
 	center.add_child(panel)
-	var margin := MarginContainer.new()
-	for side: String in ["left", "top", "right", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 14)
+	var margin := MarginContainer.new()  # 안쪽 패딩은 PanelContainer 스타일박스가 소유한다(ui_theme PAD_PANEL)
 	panel.add_child(margin)
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 8)
+	vb.add_theme_constant_override("separation", UiTheme.GAP_SECTION)
 	margin.add_child(vb)
 	var t := Label.new()
-	t.text = title
+	t.text = title  # 확인 문구는 두 줄짜리 본문이라 제목 등급을 씌우지 않는다(본문 12px 그대로)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(t)
 	add_child(_overlay)  # CanvasLayer 자식 — Center보다 뒤에 추가돼 위에 그려진다
@@ -135,7 +139,7 @@ func _mk_btn(text: String, min_w: int) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.focus_mode = Control.FOCUS_NONE
-	b.custom_minimum_size = Vector2(min_w, 30)
+	b.custom_minimum_size = Vector2(min_w, 28)  # 씬의 액션 버튼 높이와 같은 등급
 	return b
 
 

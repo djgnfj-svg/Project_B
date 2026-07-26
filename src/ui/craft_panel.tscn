@@ -29,10 +29,6 @@ layout_mode = 2
 
 [node name="Margin" type="MarginContainer" parent="Center/Dialog"]
 layout_mode = 2
-theme_override_constants/margin_left = 14
-theme_override_constants/margin_top = 10
-theme_override_constants/margin_right = 14
-theme_override_constants/margin_bottom = 10
 
 [node name="VBox" type="VBoxContainer" parent="Center/Dialog/Margin"]
 layout_mode = 2
@@ -45,6 +41,7 @@ theme_override_constants/separation = 8
 [node name="Title" type="Label" parent="Center/Dialog/Margin/VBox/TitleRow"]
 layout_mode = 2
 size_flags_horizontal = 3
+theme_type_variation = &"TitleLabel"
 text = "제작 · 강화"
 
 [node name="CloseBtn" type="Button" parent="Center/Dialog/Margin/VBox/TitleRow"]
@@ -56,13 +53,10 @@ text = "닫기"
 
 [node name="InvBar" type="PanelContainer" parent="Center/Dialog/Margin/VBox"]
 layout_mode = 2
+theme_type_variation = &"InnerPanel"
 
 [node name="InvMargin" type="MarginContainer" parent="Center/Dialog/Margin/VBox/InvBar"]
 layout_mode = 2
-theme_override_constants/margin_left = 8
-theme_override_constants/margin_top = 4
-theme_override_constants/margin_right = 8
-theme_override_constants/margin_bottom = 4
 
 [node name="InvRow" type="HBoxContainer" parent="Center/Dialog/Margin/VBox/InvBar/InvMargin"]
 unique_name_in_owner = true

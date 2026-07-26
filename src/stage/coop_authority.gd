@@ -584,6 +584,7 @@ func _build_prompt() -> void:
 	slayer.layer = 9
 	add_child(slayer)
 	_status = Label.new()
+	_status.mouse_filter = Control.MOUSE_FILTER_IGNORE  # 장식 — 아래 게임 클릭을 먹지 않게 (rules §5)
 	_status.position = Vector2(6, 4)
 	_status.add_theme_color_override("font_color", Color(0.7, 1.0, 0.6))
 	_status.add_theme_color_override("font_outline_color", Color(0, 0, 0))
@@ -630,6 +631,9 @@ func _build_prompt() -> void:
 
 func _mk_label(parent: Node, top: float, size: int, col: Color, outline: int) -> Label:
 	var l := Label.new()
+	# 🔴 안내 라벨은 장식이다 — 기본 STOP이면 480px 폭 밴드가 보스전 도중 그 아래 클릭(공격)을 통째로
+	#    먹는다. 부모(center/clayer)가 IGNORE여도 자식엔 전파되지 않는다 (rules §5 1번 함정).
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	l.offset_left = -240.0
@@ -687,6 +691,7 @@ func _refresh_keys() -> void:
 		c.queue_free()
 	for i in _seq.size():
 		var l := Label.new()
+		l.mouse_filter = Control.MOUSE_FILTER_IGNORE  # 장식 (rules §5)
 		l.text = SYMS[_seq[i]]
 		l.add_theme_font_size_override("font_size", 30)
 		var col := Color(0.5, 1.0, 0.5) if i < _seq_pos else (Color(1, 1, 1) if i == _seq_pos else Color(0.45, 0.5, 0.55))

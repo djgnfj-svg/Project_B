@@ -24,22 +24,19 @@ grow_vertical = 2
 mouse_filter = 2
 
 [node name="Dialog" type="PanelContainer" parent="Center"]
-custom_minimum_size = Vector2(240, 0)
+custom_minimum_size = Vector2(248, 0)
 layout_mode = 2
 
 [node name="Margin" type="MarginContainer" parent="Center/Dialog"]
 layout_mode = 2
-theme_override_constants/margin_left = 16
-theme_override_constants/margin_top = 12
-theme_override_constants/margin_right = 16
-theme_override_constants/margin_bottom = 12
 
 [node name="VBox" type="VBoxContainer" parent="Center/Dialog/Margin"]
 layout_mode = 2
-theme_override_constants/separation = 10
+theme_override_constants/separation = 8
 
 [node name="Title" type="Label" parent="Center/Dialog/Margin/VBox"]
 layout_mode = 2
+theme_type_variation = &"TitleLabel"
 text = "설정"
 horizontal_alignment = 1
 
@@ -78,21 +75,21 @@ layout_mode = 2
 
 [node name="VillageBtn" type="Button" parent="Center/Dialog/Margin/VBox"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 32)
+custom_minimum_size = Vector2(0, 28)
 layout_mode = 2
 focus_mode = 0
-text = "🏘 마을로 가기"
+text = "마을로 가기"
 
 [node name="JobBtn" type="Button" parent="Center/Dialog/Margin/VBox"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 32)
+custom_minimum_size = Vector2(0, 28)
 layout_mode = 2
 focus_mode = 0
-text = "🧑 직업 변경"
+text = "직업 변경"
 
 [node name="CloseBtn" type="Button" parent="Center/Dialog/Margin/VBox"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 32)
+custom_minimum_size = Vector2(0, 28)
 layout_mode = 2
 focus_mode = 0
 text = "닫기"
