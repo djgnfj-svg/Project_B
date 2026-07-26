@@ -31,7 +31,10 @@ func _init() -> void:
 		NetSchema.G_SCENE, NetSchema.G_STAGE_CLEAR, NetSchema.G_WIPE, NetSchema.G_HIT_REQ,
 		NetSchema.G_ROLL, NetSchema.G_ATK, NetSchema.G_JOB, NetSchema.G_STATS, NetSchema.G_SIT,
 		NetSchema.G_MOB_ATK, NetSchema.G_BOSS_ATK, NetSchema.G_BOSS_SPRAY, NetSchema.G_BOSS_PHASE,
-		NetSchema.G_SWAMP]
+		NetSchema.G_SWAMP,
+		# 코옵 파훼(소울 브레이크) — 🔴 G_COOP_IN이 유실되면 파훼가 실패해 파티가 피해를 입는다.
+		# "둘 다 눌렀나"는 다음 패킷이 덮어쓰지 않는 **사건**이다(2026-07-26 master 병합분).
+		NetSchema.G_COOP_CALL, NetSchema.G_COOP_IN, NetSchema.G_COOP_RES]
 	for k: String in events:
 		failures += _check(not fast.has(k), "fast 분류: 사건 %s 제외(유실 시 상태 갈라짐)" % k)
 

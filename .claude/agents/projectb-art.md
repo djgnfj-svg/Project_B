@@ -43,6 +43,20 @@ model: inherit
 4. 최종 PNG를 `assets/`의 올바른 위치에 저장
 5. **리드에게 넘겨라**: "이 PNG를 `--headless --import`로 임포트하고 `.import` 사이드카까지 커밋해 달라. 코드 배선은 AnimatedSprite2D + SpriteFrames 패턴."
 
+## 🔴 산출물 경계 — 원본은 소스, 게임은 PNG/.tres (2026-07-26 신설, 어기면 남의 PC에서 게임이 안 뜬다)
+
+**`.aseprite`(원본)를 게임이 직접 참조하게 만들지 마라.** 원본은 `assets/aseprite/`에 **작업 소스로만** 두고, 게임이 보는 것은 항상 **커밋된 `.png` + `.tres`(SpriteFrames)** 다.
+
+**왜 (실제 사고 2026-07-26):** `.aseprite`를 SpriteFrames로 읽어주는 임포터 애드온은 **Aseprite 프로그램을 외부 실행**한다. 그 실행 경로는 **EditorSettings(각 PC 로컬)** 에 저장돼 **커밋되지 않는다.** 결과:
+- 만든 사람 PC에선 **완벽하게 동작한다** → 본인은 문제를 절대 못 본다.
+- 다른 PC·심사위원이 클론하면 임포트가 실패하고 `Parse Error: referenced non-existent resource`로 **그 리소스를 쓰는 데이터·씬이 통째로 로드 실패**한다. 실제로 챕터1 보스전이 안 떴다.
+- ⚠ **웹 익스포트가 exit 0으로 통과한다** — 로그에만 ERROR가 찍혀서 "빌드 성공"으로 착각한다.
+
+**그래서 지켜라:**
+- 스프라이트 시트는 **PNG로 export**하고, 애니 정의는 `assets/sprites/<모듈>/<id>_frames.tres`로 만든다 (기준 예 = `croc_boss_frames.tres`).
+- 애니를 고쳐 프레임 구성이 바뀌면 **PNG와 `_frames.tres`를 같이** 갱신한다 — 한쪽만 고치면 엔진이 부르는 애니 이름이 없어져 조용히 안 나온다(`walk`/`slam`/`spray`가 실제로 빠졌던 사고).
+- 리드에게 넘길 때 **"이 PNG + 이 .tres를 커밋"** 이라고 명시한다. `.aseprite`는 소스로 함께 커밋해도 좋지만 **참조 대상이 아니다.**
+
 ## 산출물
 
 ```
@@ -53,6 +67,7 @@ model: inherit
 
 ## 리드 확인 필요
 - Godot import 필요: [PNG 경로 → --headless --import + .import 커밋]
+- 🔴 이식성: 게임이 참조하는 것은 PNG/.tres뿐인가 (`.aseprite` 직접 참조 0건) — 위 산출물 경계
 - 코드 배선 필요: [스프라이트 노드/SpriteFrames에 새 경로 추가 등]
 - 사용자에게 보여주기: [Start-Process로 열 합본 PNG 경로]
 ```

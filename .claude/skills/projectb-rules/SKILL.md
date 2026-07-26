@@ -166,6 +166,7 @@ Project_B = 2D **웹 게임**, Godot 4.7.1, **Web(HTML5/WASM) 익스포트 타�
 - 새 챕터 = `data/chapters/*.tres` (ChapterDef — 칸 목록 = 스테이지 씬 경로 순서, 모닥불 칸은 `campfire.tscn`을 끼워 넣기, **파일명이 campfire로 시작하면 휴식 칸**(is_rest 관례), 마지막 칸 = 보스) — 챕터2 스트레치가 파일 한 장이 되게
 - 모닥불 수치 = `data/campfire/*.tres` (CampfireDef — 회복량·간격·앉기 반경. 값은 GDD §11 TBD, 사용자가 조인다)
 - 새 소리 = `assets/audio/sfx/<id>.wav` (파일명 = id 관례)
+- 🔴 **에셋 참조 경계 = 게임은 `.png`/`.wav`/`.tres`만 본다. 원본 편집 파일(`.aseprite`·`.psd`·`.blend`)은 소스일 뿐 참조 대상이 아니다.** (2026-07-26) `.aseprite`를 SpriteFrames로 바로 읽어주는 임포터 애드온이 있지만 **쓰지 마라** — 그 임포터는 Aseprite 프로그램을 외부 실행하고, 실행 경로가 **EditorSettings(각 PC 로컬, 커밋 불가)** 라서 **만든 사람 PC에서만 동작한다.** 애니 정의는 `assets/sprites/<모듈>/<id>_frames.tres`로 커밋한다(기준 = `croc_boss_frames.tres`). 이 경계는 "클론만으로 익스포트 가능"(CLAUDE.md)을 지키는 조건이다 — 심사위원이 Aseprite를 설치·설정할 일은 없다.
 - 새 하위 직업 = `data/subjobs/*.tres` 한 장 (`SubJobDef` — 계열(`series_id`, `"*"` = 공유)·순서(`order`)·해금 레벨·5스탯 레벨당 스텝·**자리별 특성 2개**(`main_trait_*`/`sub_trait_*`)). 스프라이트·무기·모션 불필요(GDD §5). ⚠ **총 화력 예산은 "상위 3개"가 정한다** — v2.0에서 장착 슬롯(메인 1 + 서브 2)이 고정되면서 개수에 비례한 전면 재역산은 사라졌지만, 새 하위 직업이 어떤 키에서 **기존 상위 3위 안에 들면 그 키를 다시 본다**. 상한 공식 = `GameState.max_level_stats()`(계열 최강 1개 + 계열 잔여·공유를 합친 풀의 상위 `SUB_SLOT_COUNT`개 × `SUB_JOB_WEIGHT`)가 GDD §6 목표(치명 20%·치명피해 50%·공속 25%·이속 15%·피흡 6%) 이하. **`test_game_state_auto`의 예산 트립와이어가 이걸 지킨다**(현 5개 체제 실측: 0.195/0.470/0.225/0.140/0.059). 🔒 **공유 하위 직업은 서브 전용** — `SubJobDef.trait_at(true)`가 구조로 막는다(데이터에 메인 특성을 적어도 안 켜진다).
 - ⚠ **새 효과 키가 필요한 하위 직업은 "파일 한 장"이 아니다** (GDD v2.0). 키는 판정·표시·공지 경로를 함께 건드린다 — 검기 파형(사거리)·곡예(구르기 쿨)가 그 예다(§3 특성 계약). **기존 키 재사용은 순수 데이터**다. 새 키를 만들 땐 §2 게이트를 먼저 본다.
 - 새 적의 EXP = `EnemyDef.exp` 한 칸 (`BossDef`가 상속). 0 = EXP 없음. ⚠ `respawns=true`는 값과 무관하게 코드가 제외한다(§5 무한 파밍 함정).
@@ -194,6 +195,11 @@ Project_B = 2D **웹 게임**, Godot 4.7.1, **Web(HTML5/WASM) 익스포트 타�
 - 🔴 **씬 스왑 프레임엔 이전 씬 노드가 그룹에 남아 있다**: main의 `queue_free`는 프레임 끝에 실행되므로, 새 씬의 첫 프레임 그룹 스캔("player" 등)에 이전 씬 노드(게이트 앞 좌표)가 걸린다. 잔몹 AI가 이 유령에 어그로를 물고 영구 추격했다(챕터1 실기에서 발견 — 간헐 레이스, CHASE 리시 `LEASH_MULT`로 수정). 그룹 스캔 기반 AI/시스템은 첫 프레임 결과를 못 믿는다 — 리시·거리 재확인·지연 스캔 중 하나를 넣어라.
 - 🔴 **배경 타일 스프라이트는 `z_index = -10`**: 잔몹 텔레그래프가 z=-1이라 바닥을 z 0으로 깔면 텔레그래프가 **조용히** 가려진다 (test_stage엔 바닥이 없어서 안 드러났던 함정 — 챕터1 스테이지에서 발견). 무기(z 0 이상 유지)와 함께 z 배치: 바닥 -10 < 텔레그래프 -1 < 몸/무기 0+.
 - 🔴 **자식 컴포넌트의 `_ready`에서 `get_parent().add_child()` 금지**: 그 시점 부모는 아직 자식 셋업 중이라 "Parent node is busy setting up children"으로 실패한다 — 웹 실기에선 에러가 콘솔에 묻혀 "노드가 조용히 없음"으로만 보인다(마을 스폰에서 실제 발생). 스폰류 초기화는 `call_deferred`로 한 프레임 미뤄라 (`peer_sync.gd _initial_spawn` 패턴). 씬 루트 스크립트의 `_ready`에서 자기 자신에게 add_child는 안전하다.
+
+- 🔴 **"내 PC에서만 되는 것"은 만든 사람이 절대 못 본다 — 원본 편집 파일을 게임 리소스로 참조** (2026-07-26 실제 사고): `data/enemies/wraith_boss.tres`가 `boss_wraith.aseprite`를 SpriteFrames로 직접 참조했다. 그걸 읽는 임포터는 **Aseprite를 외부 실행**하고 그 경로는 **EditorSettings(각 PC 로컬)** 라 커밋되지 않는다 → 작성자 PC에선 완벽히 동작하고, 다른 PC에선 `Parse Error: [ext_resource] referenced non-existent resource` → **그 def를 쓰는 씬이 통째로 로드 실패**(챕터1 보스전이 안 떴다).
+  - ⚠ **웹 익스포트가 `exit 0`으로 통과한다** — 실패는 로그의 ERROR 줄에만 남는다. **"익스포트 성공"을 리소스 무결성의 근거로 쓰지 마라.** 확인법 = `ResourceLoader.load("res://data/…")`가 null이 아닌지 직접 보기.
+  - ⚠ **대체 리소스가 있어도 낡았을 수 있다** — 이 사고에서 PNG 기반 `boss_wraith_frames.tres`가 남아 있었지만 애니가 4종뿐이고 엔진이 부르는 `walk`/`slam`/`spray`가 빠져 있었다(리드로우 때 원본으로만 추가됨). 스왑 전에 **애니 이름 집합을 엔진 호출부와 대조**해라.
+  - 같은 부류: 절대 경로(`C:\…`), 커밋 안 된 `.import` 사이드카, 로컬에만 설치된 애드온·도구. 예방 = §4 에셋 참조 경계 + `projectb-reviewer` 2.7단계 이식성 점검.
 
 **Project_B 고유 (웹·멀티):**
 
