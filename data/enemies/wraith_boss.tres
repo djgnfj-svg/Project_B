@@ -7,7 +7,7 @@
 [ext_resource type="Script" path="res://src/core/drop_entry.gd" id="5"]
 [ext_resource type="Texture2D" path="res://assets/sprites/fx/telegraph_cone.png" id="6"]
 [ext_resource type="Texture2D" path="res://assets/sprites/fx/telegraph.png" id="7"]
-[ext_resource type="SpriteFrames" path="res://assets/sprites/enemies/boss_wraith_frames.tres" id="8"]
+[ext_resource type="SpriteFrames" uid="uid://cb0fpkryakk4e" path="res://assets/aseprite/boss_wraith.aseprite" id="8"]
 
 [sub_resource type="Resource" id="p_sweep_l"]
 script = ExtResource("2")
@@ -87,7 +87,7 @@ max_hp = 360
 respawns = false
 sprite = ExtResource("3")
 frames = ExtResource("8")
-body_radius = 28.0
+body_radius = 42.0
 move_speed = 62.0
 aggro_range = 600.0
 keep_distance = 150.0
