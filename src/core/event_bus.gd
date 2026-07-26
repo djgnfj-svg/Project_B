@@ -20,6 +20,8 @@ signal player_spawned(peer_id: int, player: Node)  # PeerSync가 스폰 완료(�
 
 # --- flow (마을/스테이지가 emit, src/main이 씬 스왑) ---
 signal scene_change(scene_id: String)  # 호스트 로컬 결정 또는 게스트의 G_SCENE 수신 후 emit — 스왑은 main만 한다
+signal leave_to_village_requested  # 설정 → "마을로 가기" — SceneFlow(호스트 권한)가 받아 전원 귀환. 게스트 발신은 무시됨
+signal job_change_requested(job_id: String)  # 설정 → "직업 변경" — PeerSync(마을 씬만)가 받아 로컬 직업 교체+재공지
 
 # --- combat (플레이어/적이 emit, 스테이지가 권한 처리) ---
 signal attack_hit(enemy: Node, job: JobDef)     # 로컬 공격 판정이 적에 닿음(공격자 job 동봉) — 확정은 호스트 경로(stage)

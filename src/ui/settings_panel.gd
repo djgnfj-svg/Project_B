@@ -12,9 +12,12 @@ extends CanvasLayer
 @onready var _slider: HSlider = %Slider
 @onready var _value_label: Label = %ValueLabel
 @onready var _mute_check: CheckButton = %MuteCheck
+@onready var _village_btn: Button = %VillageBtn
+@onready var _job_btn: Button = %JobBtn
 @onready var _close_btn: Button = %CloseBtn
 
 var _dragging: bool = false  # 드래그 중엔 미리듣기를 release에서 한 번만 (연타 방지)
+var _overlay: Control = null  # 확인창/직업목록 서브 오버레이 (한 번에 하나)
 
 
 func _ready() -> void:
@@ -23,6 +26,8 @@ func _ready() -> void:
 	_slider.drag_started.connect(func() -> void: _dragging = true)
 	_slider.drag_ended.connect(_on_drag_ended)
 	_mute_check.toggled.connect(_on_mute_toggled)
+	_village_btn.pressed.connect(_on_village_pressed)
+	_job_btn.pressed.connect(_on_job_pressed)
 	_close_btn.pressed.connect(close)
 
 
@@ -32,11 +37,106 @@ func open() -> void:
 	_slider.set_value_no_signal(vol)
 	_mute_check.set_pressed_no_signal(Audio.is_muted())
 	_update_value_label(vol)
+	_refresh_actions()
 	visible = true
 
 
 func close() -> void:
+	_dismiss_overlay()
 	visible = false
+
+
+# 씬/권한에 따라 두 액션 버튼 상태 갱신
+func _refresh_actions() -> void:
+	var in_village := get_tree().get_first_node_in_group("village") != null
+	# 마을로 가기 — 마을에선 숨김, 스테이지에선 호스트만 (씬 전환 = 호스트 권한, rules §3)
+	_village_btn.visible = not in_village
+	_village_btn.disabled = not Net.is_host()
+	_village_btn.text = "🏘 마을로 가기" if Net.is_host() else "🏘 마을로 가기 (방장만)"
+	# 직업 변경 — 마을에서만 (전투 스테이지에선 스탯 취사선택 악용 방지로 잠금)
+	_job_btn.disabled = not in_village
+	_job_btn.text = "🧑 직업 변경" if in_village else "🧑 직업 변경 (마을에서만)"
+
+
+func _on_village_pressed() -> void:
+	var vb := _make_overlay("마을로 돌아갈까요?\n현재 스테이지 진행은 사라집니다.")
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 12)
+	var yes := _mk_btn("예", 72)
+	yes.pressed.connect(func() -> void:
+		_dismiss_overlay()
+		EventBus.leave_to_village_requested.emit()  # SceneFlow(호스트)가 전원 귀환
+		close())
+	var no := _mk_btn("아니오", 72)
+	no.pressed.connect(_dismiss_overlay)
+	row.add_child(yes)
+	row.add_child(no)
+	vb.add_child(row)
+
+
+func _on_job_pressed() -> void:
+	var vb := _make_overlay("직업 변경")
+	for id: String in GameState.job_ids():
+		var jd := GameState.job_def(id)
+		var label := jd.display_name if jd != null and not jd.display_name.is_empty() else id
+		if id == GameState.selected_job_id:
+			label += "  ✓"
+		var b := _mk_btn(label, 160)
+		var jid := id
+		b.pressed.connect(func() -> void:
+			_dismiss_overlay()
+			EventBus.job_change_requested.emit(jid)  # PeerSync(마을)가 반영+재공지
+			close())
+		vb.add_child(b)
+	var cancel := _mk_btn("취소", 160)
+	cancel.pressed.connect(_dismiss_overlay)
+	vb.add_child(cancel)
+
+
+# 서브 오버레이 생성 (딤 배경 + 중앙 패널). title 라벨을 얹은 VBox를 돌려준다 — 호출자가 내용 추가.
+func _make_overlay(title: String) -> VBoxContainer:
+	_dismiss_overlay()
+	_overlay = Control.new()
+	_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var bg := ColorRect.new()
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.color = Color(0, 0, 0, 0.6)
+	bg.mouse_filter = Control.MOUSE_FILTER_STOP  # 열려 있는 동안 뒤 설정 클릭 차단(모달)
+	_overlay.add_child(bg)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_overlay.add_child(center)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(220, 0)
+	center.add_child(panel)
+	var margin := MarginContainer.new()
+	for side: String in ["left", "top", "right", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, 14)
+	panel.add_child(margin)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 8)
+	margin.add_child(vb)
+	var t := Label.new()
+	t.text = title
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(t)
+	add_child(_overlay)  # CanvasLayer 자식 — Center보다 뒤에 추가돼 위에 그려진다
+	return vb
+
+
+func _dismiss_overlay() -> void:
+	if _overlay != null:
+		_overlay.queue_free()
+		_overlay = null
+
+
+func _mk_btn(text: String, min_w: int) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(min_w, 30)
+	return b
 
 
 func _on_slider_changed(v: float) -> void:

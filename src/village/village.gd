@@ -14,6 +14,12 @@ var _local_in_craft: bool = false  # 로컬 플레이어가 제작대 영역 안
 # 마을 맵 크기 = baked 바닥(640×384) × Ground scale 1.5 — 바닥을 다시 구우면 여기도 같이 갱신 (미러)
 const MAP_RECT := Rect2(0, 0, 960, 576)
 
+# 빌드 버전 — 배포할 때마다 갱신. 마을 좌상단에 표시(캐시=구버전 판별 + 인원수 체크용)
+const BUILD_VERSION := "v0725g-menu"
+
+var _info_label: Label = null
+var _info_left: float = 0.0
+
 @onready var _gate: Area2D = $Gate
 @onready var _hint: Label = $Gate/Hint
 @onready var _scene_flow: SceneFlowNode = $SceneFlow
@@ -23,6 +29,7 @@ const MAP_RECT := Rect2(0, 0, 960, 576)
 
 
 func _ready() -> void:
+	add_to_group("village")  # 설정 패널이 "마을인지" 판별 (직업 변경 활성·마을로 가기 숨김)
 	_gate.body_entered.connect(_on_gate_body_entered)
 	_gate.body_exited.connect(_on_gate_body_exited)
 	_hint.visible = false
@@ -30,6 +37,34 @@ func _ready() -> void:
 	_craft_station.body_exited.connect(_on_craft_body_exited)
 	_craft_hint.visible = false
 	set_meta("map_rect", MAP_RECT)  # 카메라 맵 클램프 — camera_rig가 스폰 시 읽는다
+	_build_info_overlay()
+
+
+# 좌상단 버전·인원 표시 (캐시 판별 + 2인 접속 확인). 표시 전용 오버레이.
+func _build_info_overlay() -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 9
+	add_child(layer)
+	_info_label = Label.new()
+	_info_label.position = Vector2(6, 4)
+	_info_label.add_theme_color_override("font_color", Color(0.85, 0.9, 0.7))
+	_info_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	_info_label.add_theme_constant_override("outline_size", 3)
+	layer.add_child(_info_label)
+	_refresh_info()
+
+
+func _refresh_info() -> void:
+	if _info_label != null:
+		_info_label.text = "%s · 인원 %d/%d" % [BUILD_VERSION, Net.peer_ids.size() + 1, NetSchema.MAX_ROOM_PEERS]
+
+
+func _process(delta: float) -> void:
+	# 인원수는 피어 합류/이탈로 변하므로 주기적 갱신 (1초)
+	_info_left -= delta
+	if _info_left <= 0.0:
+		_info_left = 1.0
+		_refresh_info()
 
 
 # 출발 확인은 폴링이 아니라 _unhandled_input — UI(Control)가 소비한 입력은 여기 안 온다

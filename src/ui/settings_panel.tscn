@@ -73,6 +73,23 @@ layout_mode = 2
 focus_mode = 0
 text = "음소거"
 
+[node name="ActionSep" type="HSeparator" parent="Center/Dialog/Margin/VBox"]
+layout_mode = 2
+
+[node name="VillageBtn" type="Button" parent="Center/Dialog/Margin/VBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+focus_mode = 0
+text = "🏘 마을로 가기"
+
+[node name="JobBtn" type="Button" parent="Center/Dialog/Margin/VBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+focus_mode = 0
+text = "🧑 직업 변경"
+
 [node name="CloseBtn" type="Button" parent="Center/Dialog/Margin/VBox"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 32)
