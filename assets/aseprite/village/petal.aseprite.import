@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://bprnoajmxjanv"
+path="res://.godot/imported/petal.aseprite-ebeca21ba11fbc5090d0938d62b31d2f.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/petal.aseprite"
+dest_files=["res://.godot/imported/petal.aseprite-ebeca21ba11fbc5090d0938d62b31d2f.res"]
+
+[params]
+

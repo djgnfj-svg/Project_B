@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://dlhli3khegqww"
+path="res://.godot/imported/npc_guard_32.aseprite-c56617f7385cabb64edd0db0021a77c2.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/npc_guard_32.aseprite"
+dest_files=["res://.godot/imported/npc_guard_32.aseprite-c56617f7385cabb64edd0db0021a77c2.res"]
+
+[params]
+

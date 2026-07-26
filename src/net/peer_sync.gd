@@ -23,6 +23,7 @@ func _ready() -> void:
 	EventBus.peer_left.connect(_on_peer_left)
 	EventBus.net_msg.connect(_on_net_msg)
 	EventBus.inventory_changed.connect(_on_inventory_changed)  # 로컬 장비 변동 → 스탯 재공지+반영
+	EventBus.job_change_requested.connect(_on_job_change_requested)  # 설정 "직업 변경" (마을 씬만 처리)
 	# 레벨/메인 하위 직업 변동 → 같은 경로로 재공지 (성장축 GDD v1.8). EXP만 오른 킬에는 오지 않는다
 	# (GameState.add_exp가 레벨 변동 시에만 emit) — 킬마다 G_STATS를 쏘지 않기 위한 분리.
 	EventBus.growth_changed.connect(_on_inventory_changed)
@@ -155,6 +156,21 @@ func _on_inventory_changed() -> void:
 	_apply_local_stats()  # 픽업/제작/강화로 장비가 바뀌면 즉시 반영+재공지
 
 
+# 직업 변경 (마을 씬만 — 전투 스테이지에선 스탯 취사선택 악용이 되므로 잠금 유지, GDD §5).
+# 내 직업만 교체 → 로컬 반영 + 재공지(마을 잠금 해제 덕에 상대가 반영). 장비/골드는 그대로.
+func _on_job_change_requested(job_id: String) -> void:
+	if scene_id != NetSchema.SCENE_VILLAGE:
+		return
+	if not GameState.job_ids().has(job_id) or job_id == GameState.selected_job_id:
+		return
+	GameState.selected_job_id = job_id
+	var lp := player(Net.my_id)
+	if lp != null:
+		lp.set_job(GameState.selected_job())
+	_announce_job()        # 상대에게 새 직업 공지 (마을이라 G_JOB 잠금 해제됨)
+	_apply_local_stats()   # 무기 겉모습·max_hp 재반영 + G_STATS 재공지
+
+
 func _on_peer_joined(_peer_id: int) -> void:
 	_announce_job()  # 스폰은 안 한다 — 상대의 첫 G_POS(씬 일치)가 스폰 트리거
 	_announce_stats()  # 늦게 온 피어도 내 장비 스탯을 알게 (G_JOB 재공지와 짝)
@@ -194,8 +210,8 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 				_announce_job()
 				_announce_stats()
 		NetSchema.G_JOB:
-			if _peer_jobs.has(from_id):
-				return  # 첫 공지에서 잠금 — 판 도중 직업 변경(스탯 취사선택 이득)은 무시 (GDD §5)
+			if _peer_jobs.has(from_id) and scene_id != NetSchema.SCENE_VILLAGE:
+				return  # 스테이지: 첫 공지 잠금(스탯 취사선택 악용 차단, GDD §5). 마을: 직업 변경 허용
 			# 신뢰 경계(rules §3): id 문자열만 받고 수치는 내 data/jobs에서 리졸브.
 			# 모르는 id는 GameState가 기본 직업으로 떨어뜨린다. 이후 사거리·쿨다운 검증이 이 job 기준.
 			# 아직 스폰 전이면 기록만 — _spawn이 반영한다 (G_JOB은 씬 무관 전역 공지라 스폰 트리거 아님).

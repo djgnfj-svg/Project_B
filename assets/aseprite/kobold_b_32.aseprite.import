@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://pix44iihlquo"
+path="res://.godot/imported/kobold_b_32.aseprite-950773f27c4acc29db5d90d4ee26635b.res"
+
+[deps]
+
+source_file="res://assets/aseprite/kobold_b_32.aseprite"
+dest_files=["res://.godot/imported/kobold_b_32.aseprite-950773f27c4acc29db5d90d4ee26635b.res"]
+
+[params]
+

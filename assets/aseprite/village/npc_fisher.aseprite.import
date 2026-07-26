@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://f62mn54872n0"
+path="res://.godot/imported/npc_fisher.aseprite-f2656e3e2c2d1715d5634be6687e1af9.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/npc_fisher.aseprite"
+dest_files=["res://.godot/imported/npc_fisher.aseprite-f2656e3e2c2d1715d5634be6687e1af9.res"]
+
+[params]
+

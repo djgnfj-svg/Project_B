@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://bng6s83hdpttn"
+path="res://.godot/imported/croc_boss_idle.aseprite-b127d9729b7a3f0320fd73b4ea35dc82.res"
+
+[deps]
+
+source_file="res://assets/aseprite/croc_boss_idle.aseprite"
+dest_files=["res://.godot/imported/croc_boss_idle.aseprite-b127d9729b7a3f0320fd73b4ea35dc82.res"]
+
+[params]
+

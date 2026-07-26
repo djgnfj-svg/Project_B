@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://8qm6jukoxb15"
+path="res://.godot/imported/dirt_spot.aseprite-6fd567a2d6aec36a3a550dd99f544816.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/dirt_spot.aseprite"
+dest_files=["res://.godot/imported/dirt_spot.aseprite-6fd567a2d6aec36a3a550dd99f544816.res"]
+
+[params]
+

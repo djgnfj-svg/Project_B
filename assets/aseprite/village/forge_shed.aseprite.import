@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://bcupci24ddq35"
+path="res://.godot/imported/forge_shed.aseprite-783dc12e017561da6500f8bdc0ca49ba.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/forge_shed.aseprite"
+dest_files=["res://.godot/imported/forge_shed.aseprite-783dc12e017561da6500f8bdc0ca49ba.res"]
+
+[params]
+

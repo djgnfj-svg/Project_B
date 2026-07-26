@@ -10,6 +10,12 @@ var _departed: bool = false  # 전환 지시 중복 방지 (연타·수신 에�
 
 func _ready() -> void:
 	EventBus.net_msg.connect(_on_net_msg)
+	EventBus.leave_to_village_requested.connect(_on_leave_to_village)
+
+
+# 설정 "마을로 가기" — 호스트만 전원 귀환 지시(request가 게스트/중복 호출을 조용히 무시).
+func _on_leave_to_village() -> void:
+	request(NetSchema.SCENE_VILLAGE)
 
 
 # 호스트 전용 — 비-스테이지 씬(마을) 전환 지시 브로드캐스트 + 로컬 전환. 게스트/중복 호출은 조용히 무시.

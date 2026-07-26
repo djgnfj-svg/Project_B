@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://2g2uod62si6e"
+path="res://.godot/imported/enhance_house.aseprite-e3255a702f4b068ecd34a5e17deae842.res"
+
+[deps]
+
+source_file="res://assets/aseprite/village/enhance_house.aseprite"
+dest_files=["res://.godot/imported/enhance_house.aseprite-e3255a702f4b068ecd34a5e17deae842.res"]
+
+[params]
+

@@ -63,6 +63,11 @@ const G_SWAMP := "swamp"              # {k, s, sw}    호스트→전원: 늪 �
 const G_BOSS_PHASE := "bphase"        # {k, ph}       호스트→전원: 페이즈 전환 표시 큐(연출/배너용). 정본 판정은 호스트 hp — 표시 동기화일 뿐
 const G_BOSS_SPRAY := "bspray"        # {k, eid, p, c} 호스트→전원: 물 뿌리기 N개 원 착탄 예고. p=패턴 id(반경·telegraph_s 로컬 리졸브)·c=[[x,y], …] 착탄 중심들. 판정은 호스트가 착탄점마다 is_strike_hit(표시 전용 메시지)
 
+# ── 코옵 파훼 기믹 (소울 브레이크: 둘이 동시에 F 눌러 시전 취소) ──
+const G_COOP_CALL := "ccall"          # {k, t}   호스트→전원: 코옵 파훼 시전 시작. t=파훼 창(초). 각 클라 프롬프트 표시
+const G_COOP_IN := "cin"              # {k}      발신자=본인→호스트: 파훼 입력(F 눌렀다). 호스트가 생존 피어별 1회 집계
+const G_COOP_RES := "cres"            # {k, ok}  호스트→전원: 파훼 결과. ok=1 전원 입력 성공(시전 취소·보스 그로기), ok=0 실패(파티 피해). 판정 권한=호스트 (rules §3)
+
 # 왕복 지연 계측 (2026-07-24) — 지연 보상(§3)의 입력이자 HUD 핑 표시의 출처. Net 오토로드가 자체 처리한다
 # (게임 로직으로 안 올라온다 — net_msg emit 전에 Net이 가로챈다). 각자 상대에게 보내고 상대는 즉시 에코.
 # ⚠ 이름이 "ping"/"pong"이 아니다 — `tests/test_net_room_auto.gd`가 그 두 문자열을 **임의의 게임 메시지**로

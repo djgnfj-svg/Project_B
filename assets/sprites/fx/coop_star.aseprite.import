@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://de4hyjfsq7jq3"
+path="res://.godot/imported/coop_star.aseprite-9d72450a840a070f5374cab4ad6800ab.res"
+
+[deps]
+
+source_file="res://assets/sprites/fx/coop_star.aseprite"
+dest_files=["res://.godot/imported/coop_star.aseprite-9d72450a840a070f5374cab4ad6800ab.res"]
+
+[params]
+

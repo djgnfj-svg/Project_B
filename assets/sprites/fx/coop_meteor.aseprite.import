@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://ddau4nsv0gaca"
+path="res://.godot/imported/coop_meteor.aseprite-3a512c0a4ce14d8b915de4b3908a0f56.res"
+
+[deps]
+
+source_file="res://assets/sprites/fx/coop_meteor.aseprite"
+dest_files=["res://.godot/imported/coop_meteor.aseprite-3a512c0a4ce14d8b915de4b3908a0f56.res"]
+
+[params]
+

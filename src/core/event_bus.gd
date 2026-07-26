@@ -20,6 +20,8 @@ signal player_spawned(peer_id: int, player: Node)  # PeerSync가 스폰 완료(�
 
 # --- flow (마을/스테이지가 emit, src/main이 씬 스왑) ---
 signal scene_change(scene_id: String)  # 호스트 로컬 결정 또는 게스트의 G_SCENE 수신 후 emit — 스왑은 main만 한다
+signal leave_to_village_requested  # 설정 → "마을로 가기" — SceneFlow(호스트 권한)가 받아 전원 귀환. 게스트 발신은 무시됨
+signal job_change_requested(job_id: String)  # 설정 → "직업 변경" — PeerSync(마을 씬만)가 받아 로컬 직업 교체+재공지
 
 # --- combat (플레이어/적이 emit, 스테이지가 권한 처리) ---
 signal attack_hit(enemy: Node, job: JobDef)     # 로컬 공격 판정이 적에 닿음(공격자 job 동봉) — 확정은 호스트 경로(stage)
@@ -38,6 +40,8 @@ signal boss_strike(center: Vector2, angle: float, pattern: BossPatternDef)  # �
 signal swamp_spawn_local(swamps: Array)  # 호스트 보스 → SwampField 로컬 스폰 (호스트는 자기 G_SWAMP를 릴레이로 못 받으므로 — drop_spawn_local 미러). swamps=[[sid,x,y,r,ttl,slow], …] slow=늪 안 이동 배율
 signal boss_spray(eid: String, pattern_id: String, centers: Array, angle: float)  # 호스트 emit(보스 물뿌리기 WINDUP) — MobSync가 G_BOSS_SPRAY 브로드캐스트. 각 클라가 centers마다 원 텔레그래프 표시(N개). 판정은 호스트가 STRIKE 시 boss_strike를 착탄점마다 재사용
 signal boss_phase_changed(phase: int)  # 호스트 emit(보스 페이즈 전이) — MobSync가 G_BOSS_PHASE 브로드캐스트, HUD가 배너. 게스트는 G_BOSS_PHASE 수신 시 로컬 emit(mob_telegraph→matk 미러)
+signal coop_call(duration: float)      # 코옵 파훼 시전 시작 — HUD 프롬프트("함께 F!")·보스 cast 애니·아레나 텔레그래프. 호스트/게스트 각자 로컬 표시
+signal coop_result(success: bool)      # 코옵 파훼 결과 — 배너/연출(성공=취소·그로기, 실패=폭발). 표시 전용, 정본 판정은 호스트
 
 # --- stage flow (호스트=판정 시, 게스트=clear/wipe 수신 시 emit) ---
 signal stage_cleared

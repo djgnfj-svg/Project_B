@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://daqdip5e3pqov"
+path="res://.godot/imported/craft_station.aseprite-9d9f53a28d23b183a951007c19d7e2d8.res"
+
+[deps]
+
+source_file="res://assets/aseprite/craft_station.aseprite"
+dest_files=["res://.godot/imported/craft_station.aseprite-9d9f53a28d23b183a951007c19d7e2d8.res"]
+
+[params]
+

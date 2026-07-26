@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://gospvnd8oqci"
+path="res://.godot/imported/coop_cage.aseprite-45b299c9efb63bbde2e32a0b9eefdaf8.res"
+
+[deps]
+
+source_file="res://assets/sprites/fx/coop_cage.aseprite"
+dest_files=["res://.godot/imported/coop_cage.aseprite-45b299c9efb63bbde2e32a0b9eefdaf8.res"]
+
+[params]
+
