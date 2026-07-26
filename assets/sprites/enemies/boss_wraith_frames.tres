@@ -1,0 +1,70 @@
+[gd_resource type="SpriteFrames" load_steps=20 format=3]
+
+[ext_resource type="Texture2D" path="res://assets/sprites/enemies/boss_wraith_idle.png" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/enemies/boss_wraith_cast.png" id="2"]
+[ext_resource type="Texture2D" path="res://assets/sprites/enemies/boss_wraith_swing.png" id="3"]
+[ext_resource type="Texture2D" path="res://assets/sprites/enemies/boss_wraith_death.png" id="4"]
+
+[sub_resource type="AtlasTexture" id="i0"]
+atlas = ExtResource("1")
+region = Rect2(0, 0, 64, 64)
+[sub_resource type="AtlasTexture" id="i1"]
+atlas = ExtResource("1")
+region = Rect2(64, 0, 64, 64)
+[sub_resource type="AtlasTexture" id="i2"]
+atlas = ExtResource("1")
+region = Rect2(128, 0, 64, 64)
+[sub_resource type="AtlasTexture" id="i3"]
+atlas = ExtResource("1")
+region = Rect2(192, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="c0"]
+atlas = ExtResource("2")
+region = Rect2(0, 0, 64, 64)
+[sub_resource type="AtlasTexture" id="c1"]
+atlas = ExtResource("2")
+region = Rect2(64, 0, 64, 64)
+[sub_resource type="AtlasTexture" id="c2"]
+atlas = ExtResource("2")
+region = Rect2(128, 0, 64, 64)
+[sub_resource type="AtlasTexture" id="c3"]
+atlas = ExtResource("2")
+region = Rect2(192, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="s0"]
+atlas = ExtResource("3")
+region = Rect2(0, 0, 64, 64)
+[sub_resource type="AtlasTexture" id="s1"]
+atlas = ExtResource("3")
+region = Rect2(64, 0, 64, 64)
+[sub_resource type="AtlasTexture" id="s2"]
+atlas = ExtResource("3")
+region = Rect2(128, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d0"]
+atlas = ExtResource("4")
+region = Rect2(0, 0, 64, 64)
+[sub_resource type="AtlasTexture" id="d1"]
+atlas = ExtResource("4")
+region = Rect2(64, 0, 64, 64)
+[sub_resource type="AtlasTexture" id="d2"]
+atlas = ExtResource("4")
+region = Rect2(128, 0, 64, 64)
+[sub_resource type="AtlasTexture" id="d3"]
+atlas = ExtResource("4")
+region = Rect2(192, 0, 64, 64)
+
+[resource]
+animations = [{
+"frames": [{"duration": 1.0, "texture": SubResource("c0")}, {"duration": 1.0, "texture": SubResource("c1")}, {"duration": 1.0, "texture": SubResource("c2")}, {"duration": 1.0, "texture": SubResource("c3")}],
+"loop": false, "name": &"cast", "speed": 9.0
+}, {
+"frames": [{"duration": 1.0, "texture": SubResource("d0")}, {"duration": 1.0, "texture": SubResource("d1")}, {"duration": 1.0, "texture": SubResource("d2")}, {"duration": 2.0, "texture": SubResource("d3")}],
+"loop": false, "name": &"death", "speed": 6.0
+}, {
+"frames": [{"duration": 1.0, "texture": SubResource("i0")}, {"duration": 1.0, "texture": SubResource("i1")}, {"duration": 1.0, "texture": SubResource("i2")}, {"duration": 1.0, "texture": SubResource("i3")}],
+"loop": true, "name": &"idle", "speed": 6.0
+}, {
+"frames": [{"duration": 1.0, "texture": SubResource("s0")}, {"duration": 0.7, "texture": SubResource("s1")}, {"duration": 1.3, "texture": SubResource("s2")}],
+"loop": false, "name": &"swing", "speed": 10.0
+}]

@@ -7,6 +7,7 @@ extends EnemyDef
 
 @export var patterns: Array[BossPatternDef] = []
 @export var phase2_hp_ratio: float = 0.5         # 이 비율 이하 HP → 페이즈2 (min_phase=2 패턴 개방)
+@export var keep_distance: float = 0.0           # >0 이면 카이팅: 플레이어와 이 거리 유지(더 가까우면 물러남). 0=추격(기본)
 
 # 늪 기믹 파라미터 (보스 종속 — 별도 SwampDef 불필요). 수치는 GDD §11 TBD, 사용자 실기 튜닝.
 @export var swamp_radius: float = 40.0

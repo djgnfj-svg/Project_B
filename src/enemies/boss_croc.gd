@@ -165,10 +165,20 @@ func _host_ai(delta: float) -> void:
 			if pat != null:
 				_begin_windup(pat, anchor)
 				return
-			# 쓸 패턴 없음 → 계속 추격 (net_anchor 기준, rules §3)
-			velocity = (anchor - global_position).normalized() * def.move_speed
-			move_and_slide()
-			_sprite.flip_h = velocity.x < 0.0
+			# 쓸 패턴 없음 → 이동 (net_anchor 기준, rules §3).
+			# keep_distance>0 = 카이팅: 너무 가까우면 물러나고, 유지 거리면 멈추고, 멀면 접근.
+			var dir := Vector2.ZERO
+			if def.keep_distance > 0.0:
+				if dist < def.keep_distance - 12.0:
+					dir = (global_position - anchor).normalized()   # 물러남
+				elif dist > def.keep_distance + 40.0:
+					dir = (anchor - global_position).normalized()   # 접근
+			else:
+				dir = (anchor - global_position).normalized()       # 추격(기본)
+			velocity = dir * def.move_speed
+			if dir != Vector2.ZERO:
+				move_and_slide()
+				_sprite.flip_h = velocity.x < 0.0
 		State.WINDUP:
 			if _state_left <= 0.0:
 				_fire_strike()
