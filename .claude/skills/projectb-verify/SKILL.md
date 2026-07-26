@@ -45,6 +45,16 @@ PowerShell은 자식 프로세스 stdout을 안 보여준다 — **테스트는 
 #   ⚠ `_ready`는 **다음 프레임에 돈다** — add_child 직후 자식을 세면 항상 0이다(작성 중 실제로 겪음, `await process_frame`).
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_stage_dressing_auto.gd
 
+# 보스 데이터 계약 (2026-07-26 신설) — `data/enemies/*.tres`를 전수 스캔해 `BossDef`인 것만 검사한다.
+#   파일명·프레임 수를 하드코딩하지 않으므로 **새 보스가 자동으로 걸린다**(§4 "새 보스 = 파일 한 장"의 안전망).
+#   단정: 패턴 id ↔ 동명 애니 존재 · 공격 애니·`death`의 `loop=false` · `idle`/`walk` 존재 ·
+#         애니 기본 길이 ≤ `telegraph_s`×1.5 · `telegraph_s > 0` · 스캔 0건 방지.
+#   🔴 **왜 필요한가 = 이 계약들은 전부 에러를 안 낸다.** loop=true면 공격 애니 무한 반복 + speed_scale 굳음,
+#     패턴 id 오타면 공격 모션이 조용히 안 나옴, walk가 없으면 이동 미끄러짐 + 다음 공격 애니가 얼어붙음.
+#   ⚠ `boss.gd` 자체는 씬 전용 글루라 `-s`에서 preload가 안 된다(§1 오토로드 함정) — 그래서 **데이터만** 겨눈다.
+#     즉 이 테스트는 `speed_scale` 유도 로직을 검증하지 않는다. 그쪽은 실기 몫(§2 아래).
+./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_boss_data_auto.gd
+
 # 멀티 방 왕복 (릴레이+호스트+게스트 3프로세스 — 방 생성→참가→ping/pong 왕복 검증)
 CODEFILE="<임시경로>/room_code.txt"; rm -f "$CODEFILE"
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://server/relay/relay_server.gd -- --port=9081 > relay.log 2>&1 &

@@ -1,4 +1,4 @@
-[gd_resource type="SpriteFrames" load_steps=26 format=3]
+[gd_resource type="SpriteFrames" load_steps=39 format=3]
 
 [ext_resource type="Texture2D" path="res://assets/sprites/enemies/boss_wraith.png" id="1"]
 
@@ -98,6 +98,58 @@ region = Rect2(1408, 0, 64, 64)
 atlas = ExtResource("1")
 region = Rect2(1472, 0, 64, 64)
 
+[sub_resource type="AtlasTexture" id="f24"]
+atlas = ExtResource("1")
+region = Rect2(1536, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="f25"]
+atlas = ExtResource("1")
+region = Rect2(1600, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="f26"]
+atlas = ExtResource("1")
+region = Rect2(1664, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="f27"]
+atlas = ExtResource("1")
+region = Rect2(1728, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="f28"]
+atlas = ExtResource("1")
+region = Rect2(1792, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="f29"]
+atlas = ExtResource("1")
+region = Rect2(1856, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="f30"]
+atlas = ExtResource("1")
+region = Rect2(1920, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="f31"]
+atlas = ExtResource("1")
+region = Rect2(1984, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="f32"]
+atlas = ExtResource("1")
+region = Rect2(2048, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="f33"]
+atlas = ExtResource("1")
+region = Rect2(2112, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="f34"]
+atlas = ExtResource("1")
+region = Rect2(2176, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="f35"]
+atlas = ExtResource("1")
+region = Rect2(2240, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="f36"]
+atlas = ExtResource("1")
+region = Rect2(2304, 0, 64, 64)
+
 [resource]
 animations = [{
 "frames": [{
@@ -129,15 +181,15 @@ animations = [{
 }, {
 "duration": 1.0,
 "texture": SubResource("f7")
-}, {
-"duration": 1.0,
-"texture": SubResource("f8")
 }],
-"loop": false,
-"name": &"swing",
-"speed": 12
+"loop": true,
+"name": &"walk",
+"speed": 8
 }, {
 "frames": [{
+"duration": 1.0,
+"texture": SubResource("f8")
+}, {
 "duration": 1.0,
 "texture": SubResource("f9")
 }, {
@@ -152,18 +204,18 @@ animations = [{
 }, {
 "duration": 1.0,
 "texture": SubResource("f13")
-}],
-"loop": false,
-"name": &"slam",
-"speed": 10
 }, {
-"frames": [{
 "duration": 1.0,
 "texture": SubResource("f14")
 }, {
 "duration": 1.0,
 "texture": SubResource("f15")
+}],
+"loop": false,
+"name": &"swing",
+"speed": 6.67
 }, {
+"frames": [{
 "duration": 1.0,
 "texture": SubResource("f16")
 }, {
@@ -172,12 +224,7 @@ animations = [{
 }, {
 "duration": 1.0,
 "texture": SubResource("f18")
-}],
-"loop": false,
-"name": &"spray",
-"speed": 10
 }, {
-"frames": [{
 "duration": 1.0,
 "texture": SubResource("f19")
 }, {
@@ -192,6 +239,55 @@ animations = [{
 }, {
 "duration": 1.0,
 "texture": SubResource("f23")
+}],
+"loop": false,
+"name": &"slam",
+"speed": 6.15
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("f24")
+}, {
+"duration": 1.0,
+"texture": SubResource("f25")
+}, {
+"duration": 1.0,
+"texture": SubResource("f26")
+}, {
+"duration": 1.0,
+"texture": SubResource("f27")
+}, {
+"duration": 1.0,
+"texture": SubResource("f28")
+}, {
+"duration": 1.0,
+"texture": SubResource("f29")
+}, {
+"duration": 1.0,
+"texture": SubResource("f30")
+}, {
+"duration": 1.0,
+"texture": SubResource("f31")
+}],
+"loop": false,
+"name": &"spray",
+"speed": 5.33
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("f32")
+}, {
+"duration": 1.0,
+"texture": SubResource("f33")
+}, {
+"duration": 1.0,
+"texture": SubResource("f34")
+}, {
+"duration": 1.0,
+"texture": SubResource("f35")
+}, {
+"duration": 1.0,
+"texture": SubResource("f36")
 }],
 "loop": false,
 "name": &"death",
