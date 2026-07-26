@@ -27,8 +27,10 @@ func _to_lobby() -> void:
 
 func _to_village() -> void:
 	GameState.leave_chapter()
-	GameState.grant_starting_loadout(GameState.selected_job())  # 새 판이면 시작 무기 지급·착용(멱등)
-	GameState.grant_starting_sub_job(GameState.selected_job())  # 새 판이면 시작 하위 직업 지급·메인 설정(멱등, GDD v1.8)
+	# 직업 전환 뒤처리 3종(귀속 재검증 + 시작 무기 + 시작 하위 직업) — GameState 단일 소스(멱등).
+	# 🔴 로비에서 고른 직업이 **실제로 확정되는 경계**가 여기다: 세이브 로드는 직업을 모르므로
+	#   "법사로 지팡이를 낀 채 저장 → 전사로 재접속"의 무기 정리도 이 줄이 한다(2026-07-26 신고).
+	GameState.apply_job_loadout()
 	_swap(VillageScene.instantiate())
 
 
@@ -38,13 +40,14 @@ func _on_scene_change(scene_id: String) -> void:
 	match scene_id:
 		NetSchema.SCENE_VILLAGE:
 			GameState.leave_chapter()  # 귀환 = 챕터 종료 (완주·전멸 공통) — 이월 HP 리셋
-			GameState.grant_starting_loadout(GameState.selected_job())  # 전멸 롤백으로 잃었으면 재지급(멱등)
+			# 전멸 롤백으로 무기를 잃었으면 재지급(멱등) + 귀속 재검증 — _to_village와 같은 한 줄.
+			# ⚠ leave_chapter() 뒤여야 한다: revalidate_equipped은 판 도중(in_chapter)엔 돌지 않는다.
 			# 🔴 **여기가 판 중 해금분이 슬롯에 껴지는 유일한 자리다** (조립 축 v2.0, 리뷰 I-1).
 			# autofill_sub_slots는 판 도중(in_chapter)엔 슬롯을 안 바꾼다 — 특성이 판 도중 켜지면
 			# 내 판정 기하만 먼저 넓어져 타격이 무음 거부되기 때문(§3). 그래서 "마을에 돌아올 때
 			# 채운다"로 미뤄 뒀는데, 이 줄이 없으면 **보스를 깨고 해금해도 칸이 영영 빈 채로 남는다**
 			# (토스트만 뜨고 아무것도 안 세짐 = 조립 축의 첫 경험이 망가진다). 멱등이라 안전하다.
-			GameState.grant_starting_sub_job(GameState.selected_job())
+			GameState.apply_job_loadout()
 			_swap(VillageScene.instantiate())
 		NetSchema.SCENE_STAGE:
 			var path := GameState.stage_scene_path()
