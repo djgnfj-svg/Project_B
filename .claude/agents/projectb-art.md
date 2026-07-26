@@ -30,8 +30,7 @@ model: inherit
 | **잔몹** | **16×16** | 192×16 = 12프레임 × 1행 | `goblin_melee_16.png` |
 | 소형 적(추격자·허수아비) | 16×16 | 단일 프레임 | `chaser.png`·`dummy_16.png` |
 | 중형 적 | **24×24** | 단일 또는 시트 | `brute_24.png` |
-| **보스(현행 = 망령)** | **64×64** | 1536×64 = 24프레임 | `boss_wraith.png` + `boss_wraith_frames.tres` |
-| 보스(악어 — 아트 완성·**미배선**) | 72×72 | 2232×72 = 31프레임 | `croc_boss_64.png`. 데이터에 연결돼 있지 않다(아래 「보스 현황」) |
+| **보스** | **64×64** | 1536×64 = 24프레임 | `boss_wraith.png` + `boss_wraith_frames.tres` (망령 = 유일한 보스) |
 | 직업 아이콘(로비·UI) | 16×16 / 32×32 | 단일 | `*_icon16.png` / `*_32.png` — **UI에선 큰 그림을 쓴다**(인게임만 16px) |
 | 하위 직업 아이콘 | **24×24** | 단일 | `assets/sprites/subjobs/*` 5장 전부 통일 |
 | 아이템·재료 | **16×16** | 단일 | `items/*` 전부 통일 |
@@ -106,11 +105,12 @@ FX는 크기가 곧 판정이라 다른 에셋과 규칙이 다르다. `projectb
 - ⚠ **초보 장비에 속성·화려함을 얹지 마라**(사용자 확정) — 첫 지팡이는 무속성·무색 수정이다. 속성(불·얼음)은 상위 무기의 차별점으로 남긴다.
 - ⚠ 투사체 텍스처(`projectile_texture`)는 **제 색으로** 그린다 — 탄에는 틴트를 곱하지 않는다(곱하면 탁해진다). 반대로 폭발·궤적은 중립으로 그려 틴트를 받는다.
 
-## ⚠ 보스 현황 — 아트가 둘이고 하나만 배선돼 있다
+## 보스 = 망령 하나다 (악어는 2026-07-26에 완전 제거)
 
-- **배선된 것 = 망령**(`data/enemies/wraith_boss.tres`, 64px, `boss_wraith_frames.tres`). `stage_boss.tscn`의 `BossCroc` 노드가 이 def를 물고 있다. 씬·스크립트 이름이 `croc`인 것은 과거 이름이 남은 것이다.
-- **미배선 = 악어**(`croc_boss.tres`, 72px, 31프레임 6애니). 아트는 완성돼 있고 데이터 파일도 있으나 어느 씬도 참조하지 않는다.
-- 🔵 **망령 시트에 `walk` 애니가 없다**(idle/swing/slam/spray/death 5종). `boss_croc.gd`는 `_has_anim()` 가드로 없는 애니를 건너뛰므로 **보스가 이동할 때 idle 자세로 미끄러진다**(에러 없음). walk 4프레임을 추가하면 해소된다 — 착수 전 리드에게 확인해라.
+- **배선:** `data/enemies/wraith_boss.tres`(64px) → `boss_wraith_frames.tres` · 씬 `src/enemies/boss.tscn`(노드 `Boss`) · 스크립트 `src/enemies/boss.gd`.
+- `boss.gd`는 **어떤 `BossDef`든 돌리는 데이터 주도 공용 배우**다(특정 몬스터 전용이 아니다) — 그래서 이름에 종을 박지 않는다. 새 보스를 만들면 `.tres` 한 장 + 시트 한 장이고 이 스크립트는 안 건드린다.
+- 🔵 **망령 시트에 `walk`가 없다**(idle/swing/slam/spray/death 5종). `boss.gd`가 `_has_anim()` 가드로 없는 애니를 건너뛰므로 **보스가 이동할 때 idle 자세로 미끄러진다**(에러 없음). **walk 4프레임(64×64)** 을 추가하면 해소된다.
+- 🔴 **콘 텔레그래프 각이 지금 어긋나 있다:** `telegraph_cone.png`에 그려진 각은 **전체 68.6°** 인데 망령 swing은 `half_angle 0.75` = **전체 85.9°** 다 → 보이는 예고보다 판정이 좌우 각 8.6° 넓다. 텍스처를 **86°로 다시 그리는 것**이 아트 쪽 해소책이다(데이터를 0.6으로 내리는 쪽은 밸런스 변경이라 사용자 판단).
 
 ## ⚠ 죽은 세대 — 이 파일들을 기준으로 삼지 마라
 
@@ -118,7 +118,6 @@ FX는 크기가 곧 판정이라 다른 에셋과 규칙이 다르다. `projectb
 
 - `player/*_anim.png`(320×32) — 플레이어 32px 세대
 - `enemies/goblin_*_anim.png`(384×32) + `goblin_*_frames.tres` — 잔몹 32px 세대
-- `enemies/croc_boss_{idle,walk,swing,slam,spray,death}.png`(112px) + `croc_boss_frames.tres` — 악어 112px 세대
 - `enemies/boss_wraith_{cast,idle,swing,death}.png`(256×64) — 망령 분할 시트 이전 형태
 - `enemies/{brute_48,drake_c,kobold_b,goblin_*_c}.png` — 옛 32/48px 적
 - `village/ground/*`(낡은 것 12장 — 현행은 `baked_960.png`) · `items/blueprint.png` · `ui/icon_weapon.png`

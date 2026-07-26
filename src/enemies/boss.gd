@@ -1,5 +1,7 @@
 extends CharacterBody2D
-# 보스(악어) — 잔몹 FSM(mob_melee)을 다패턴으로 확장. AI·판정 결정은 호스트만(rules §1·§3),
+# 보스 공용 — 잔몹 FSM(mob_melee)을 다패턴으로 확장. 어느 보스든 `BossDef`(patterns/frames)로 돌리는
+# 데이터 주도 배우다(특정 몬스터 전용이 아니다 — 그래서 이름에 종을 박지 않는다).
+# AI·판정 결정은 호스트만(rules §1·§3),
 # 게스트는 mpos 수신 표시 + G_BOSS_ATK 텔레그래프 표시만. 판정·데미지 확정은 여기 없다 —
 # WINDUP 만료(STRIKE) 시점을 EventBus.boss_strike로 알리면 CombatAuthority(호스트)가 확정한다.
 # 수치는 전부 def(BossDef, .tres)가 쥔다 (rules §4 — "새 보스 = 파일 한 장"). 연출값만 const 예외.

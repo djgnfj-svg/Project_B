@@ -36,7 +36,7 @@ func setup(p_sid: String, p_world_pos: Vector2, p_radius: float, p_ttl: float,
 
 func _ready() -> void:
 	global_position = _world_pos
-	# 판정 반경 = _radius. shape 리소스는 씬 인스턴스 간 공유라 복제 후 적용 (boss_croc body_radius 미러, rules §5)
+	# 판정 반경 = _radius. shape 리소스는 씬 인스턴스 간 공유라 복제 후 적용 (boss.gd body_radius 미러, rules §5)
 	var shape := _collision.shape.duplicate() as CircleShape2D
 	if shape != null:
 		shape.radius = _radius
