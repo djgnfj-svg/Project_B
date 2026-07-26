@@ -37,6 +37,13 @@ PowerShell은 자식 프로세스 stdout을 안 보여준다 — **테스트는 
 #   ⚠ save_path를 임시 경로로 격리해 실제 user://save.json을 안 건드린다. GameState는 game_state_override로 주입(트리 밖 -s, rules §5)
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_save_manager_auto.gd
 
+# 배경 드레싱 (바닥 변주·디테일 스캐터·흔들리는 폴리지 — 2026-07-26). 표시 전용인데 테스트가 있는 이유 =
+#   결함이 **에러를 안 낸다**: 폴리지 회전 피벗이 밑동이 아니면 풀이 공중에서 빙빙 돌고(아트가 텍스처를
+#   다시 그릴 때마다 재발 가능), 배치가 비결정적이면 호스트·게스트가 다른 지면을 보고, 제외 영역이 안
+#   먹으면 스폰 지점에 덤불이 돋아 시야를 가린다. 충돌 경계(layer=0 = 어떤 판정에도 안 잡힌다)도 여기서 고정.
+#   ⚠ `_ready`는 **다음 프레임에 돈다** — add_child 직후 자식을 세면 항상 0이다(작성 중 실제로 겪음, `await process_frame`).
+./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_stage_dressing_auto.gd
+
 # 멀티 방 왕복 (릴레이+호스트+게스트 3프로세스 — 방 생성→참가→ping/pong 왕복 검증)
 CODEFILE="<임시경로>/room_code.txt"; rm -f "$CODEFILE"
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://server/relay/relay_server.gd -- --port=9081 > relay.log 2>&1 &
