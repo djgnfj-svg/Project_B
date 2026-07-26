@@ -39,6 +39,12 @@ func _on_scene_change(scene_id: String) -> void:
 		NetSchema.SCENE_VILLAGE:
 			GameState.leave_chapter()  # 귀환 = 챕터 종료 (완주·전멸 공통) — 이월 HP 리셋
 			GameState.grant_starting_loadout(GameState.selected_job())  # 전멸 롤백으로 잃었으면 재지급(멱등)
+			# 🔴 **여기가 판 중 해금분이 슬롯에 껴지는 유일한 자리다** (조립 축 v2.0, 리뷰 I-1).
+			# autofill_sub_slots는 판 도중(in_chapter)엔 슬롯을 안 바꾼다 — 특성이 판 도중 켜지면
+			# 내 판정 기하만 먼저 넓어져 타격이 무음 거부되기 때문(§3). 그래서 "마을에 돌아올 때
+			# 채운다"로 미뤄 뒀는데, 이 줄이 없으면 **보스를 깨고 해금해도 칸이 영영 빈 채로 남는다**
+			# (토스트만 뜨고 아무것도 안 세짐 = 조립 축의 첫 경험이 망가진다). 멱등이라 안전하다.
+			GameState.grant_starting_sub_job(GameState.selected_job())
 			_swap(VillageScene.instantiate())
 		NetSchema.SCENE_STAGE:
 			var path := GameState.stage_scene_path()

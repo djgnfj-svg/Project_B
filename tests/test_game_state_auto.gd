@@ -57,6 +57,11 @@ func _initialize() -> void:
 	gs.leave_chapter()
 	_check("챕터 이탈 시 좌표 리셋", not gs.in_chapter())
 	_check("챕터 이탈 시 이월 HP 리셋", gs.carried_hp(7) == -1)
+	# 「도굴」 소수 잔량도 판 단위 런타임 상태다(저장 대상 아님) — 이월 HP와 같은 자리에서 리셋한다.
+	gs.begin_stage("chapter1", 0)
+	gs.drop_find_frac["material"] = 0.9
+	gs.leave_chapter()
+	_check("챕터 이탈 시 도굴 잔량 리셋", gs.drop_find_frac.is_empty())
 
 	# --- 인벤/제작/강화/저장 (드랍·제작 신뢰 경계) ---
 	_check("재료 스캔에 goblin_hide", "goblin_hide" in gs.material_ids())
@@ -259,6 +264,9 @@ func _initialize() -> void:
 	_check("타 계열에선 보유 목록이 비어 EXP가 안 섞인다", gg.owned_sub_jobs().is_empty())
 	# 리뷰 I3: 계열이 섞였을 때 표시가 거짓말하지 않는지 — 메인이 타 계열이면 없는 것으로 본다
 	_check("타 계열 선택 시 main_sub_job() = null (HUD 거짓 표기 방지)", gg.main_sub_job() == null)
+	# 🔴 공지도 같은 판정을 써야 한다 — 나는 0으로 계산하는데 남에게는 id를 보내면 "같은 것을 두
+	#   근거로 계산"하는 구조가 남는다(수신 측 계열 필터가 지금은 같은 결과를 내서 안 드러날 뿐).
+	_check("타 계열 선택 시 공지 메인 id도 비어야 한다(계산 근거 통일)", gg.announced_main_id().is_empty())
 	_check("타 계열 선택 시 EXP 진행 표기 = 0", int(gg.main_exp_progress()["level"]) == 0)
 	_check("타 계열 선택 시 레벨 스탯 = 전부 0", is_equal_approx(float(gg.current_level_stats()["crit"]), 0.0))
 	_check("타 계열에선 add_exp가 no-op", not gg.add_exp(100))
@@ -287,6 +295,8 @@ func _initialize() -> void:
 	#   LEVEL_STAT_MAX["move"]에서 잘린다. 데이터 최대 move + TRAIT_MAX["kill_move"]가 그 상한을 넘으면
 	#   표시는 "+15%"인데 실제로는 조용히 깎인다(이속을 키울수록 광란이 사라진다). 둘 중 하나를 올릴 때
 	#   여기가 빨개진다 — 그때는 값을 낮추거나, 축을 분리하고 LAG_MAX_LEAD_DIST를 재유도해라.
+	#   ⚠ **현재 여유는 0.01뿐이다**(실측 move 0.14 + kill_move 0.15 = 0.29 ≤ 0.30). 이동 성장이 있는
+	#   하위 직업을 하나만 더 넣거나 SUB_SLOT_COUNT를 3으로 올리면 즉시 빨개진다 — 빡빡한 게 정상이다.
 	_check("이동 축 합산: 데이터 최대 move + kill_move ≤ LEVEL_STAT_MAX['move'] (표시=실제)",
 		float(caps.get("move", 9.0)) + float(CombatMath.TRAIT_MAX.get("kill_move", 9.0))
 			<= float(CombatMath.LEVEL_STAT_MAX.get("move", 0.0)) + 0.0005)
@@ -356,6 +366,13 @@ func _initialize() -> void:
 	_check("슬롯: 모르는 id 거부", not gg.set_sub_slot(1, "bogus_sub"))
 	_check("슬롯: 공유는 서브에 가능", gg.set_sub_slot(1, "shared_acrobat"))
 	_check("슬롯: 장착 3개", gg.equipped_sub_jobs().size() == 3)
+	# 🔴 공지 페이로드는 **메인을 빼고** 서브만 실어야 한다 — 메인이 "ss"에 섞이면 수신 측
+	#   traits_of가 SUB_SLOT_COUNT에서 앞 2개만 취하므로 **진짜 서브 하나가 밀려 사라진다**
+	#   (dedup이 로컬에선 흡수해서 로컬 특성으론 안 드러난다 — 상대 화면에서만 갈라진다).
+	var ann: Array = gg.announced_sub_ids()
+	_check("공지: 서브 목록이 정확히 SUB_SLOT_COUNT개", ann.size() == 2)
+	_check("공지: 서브 목록에 메인이 섞이지 않는다", gg.main_sub_job_id not in ann)
+	_check("공지: 메인 id는 유효할 때만 실린다", gg.announced_main_id() == gg.main_sub_job_id)
 	# 🔴 메인 전환 시 그 자리를 서브에서 빼 준다 — 안 그러면 한 하위 직업이 두 자리를 먹는다
 	_check("슬롯: 서브에 낀 검성으로 메인 전환", gg.set_main_sub_job("warrior_swordmaster"))
 	_check("슬롯: 전환 후에도 장착은 3개(중복 없음)", gg.equipped_sub_jobs().size() == 3)
@@ -382,6 +399,15 @@ func _initialize() -> void:
 	gg.leave_chapter()
 	gg.autofill_sub_slots()
 	_check("슬롯: 마을로 나오면 autofill이 빈 칸을 채운다", not gg.sub_slot_id(0).is_empty())
+	# 🔴 배선 계약 (리뷰 I-1) — 판 중 해금분이 슬롯에 껴지는 유일한 자리가 마을 진입의
+	#   grant_starting_sub_job이다. **이 함수를 부르면 빈 칸이 채워진다**를 여기서 고정한다.
+	#   ⚠ 이 테스트는 "main.gd가 그 함수를 부르는가"(호출자 배선)는 못 본다 — 실제로 챕터→마을
+	#   귀환 경로에 호출이 빠져 있었고 헤드리스는 그걸 통과시켰다(verify §3 사각). 실기로 확인해라.
+	gg.set_sub_slot(0, "")
+	gg.set_sub_slot(1, "")
+	gg.grant_starting_sub_job(gg.job_def("warrior"))
+	_check("배선: grant_starting_sub_job이 빈 서브 칸을 채운다(마을 진입 계약)",
+		not gg.sub_slot_id(0).is_empty())
 	# 🔴 손상/조작 세이브의 중복 슬롯 폐기 (리뷰 M1) — 안 막으면 한 칸이 조용히 죽고 패널은 둘 다 장착으로 그린다
 	var dup_snap: Dictionary = gg.to_save_dict()
 	dup_snap["sub_slots"] = ["warrior_swordmaster", "warrior_swordmaster"]

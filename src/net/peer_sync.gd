@@ -131,7 +131,7 @@ func _announce_stats() -> void:
 		# 장착 하위 직업 id — **수치가 아니라 id만** 보낸다(GDD v2.0 특성). 수신 측이 자기 data/subjobs에서
 		# 리졸브해 특성값을 얻는다(peer_weapon_id 철학 §3 — 수치를 받으면 그게 곧 스푸핑 표면).
 		# "ms" = 메인(메인 특성) · "ss" = 서브 칸(서브 특성). 자리가 곧 어느 특성이 켜지는지를 정한다.
-		"ms": GameState.main_sub_job_id,
+		"ms": GameState.announced_main_id(),  # "ss"와 같은 소스(필터 통과분) — active_traits와 근거 통일
 		"ss": GameState.announced_sub_ids()})  # 🔴 원본 슬롯이 아니라 **필터 통과분**(active_traits와 같은 소스)
 
 

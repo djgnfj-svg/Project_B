@@ -18,6 +18,11 @@ var _chapter_ids: Array[String] = []  # data/chapters/ 스캔 캐시
 var _material_ids: Array[String] = []    # data/materials/ 스캔 캐시
 var _equipment_ids: Array[String] = []   # data/equipment/ 스캔 캐시
 var _recipe_ids: Array[String] = []      # data/recipes/ 스캔 캐시
+# 「도굴」(drop_find) 소수 잔량 — kind -> float. **호스트만 쓴다**(DropAuthority가 읽고 쓴다).
+# 🔴 여기 두는 이유: DropAuthority는 씬 컴포넌트라 스테이지마다 새로 태어나 잔량이 버려진다.
+#   드랍 수량이 1~2라 잔량 1개분 손실이 곧 +15%를 ~+8%로 깎는다(리뷰 M-2). 판 단위로 들고 가야
+#   비율이 약속대로 나온다. **저장 대상 아님** — 런타임 진행 상태다(carried_party_hp와 같은 성격).
+var drop_find_frac: Dictionary = {}
 var _party_hp: Dictionary = {}  # peer_id -> 확정 HP — 챕터 내 스테이지 간 이월 (php 확정만 기록, player.gd 확정 경로가 쓴다)
 
 # --- 인벤토리/장비 (드랍·제작 2026-07-23) — 각 클라 자기 것만, 브라우저 로컬 저장(개인·비네트워크, GDD §3) ---
@@ -120,6 +125,7 @@ func leave_chapter() -> void:
 	current_chapter_id = ""
 	current_stage_idx = -1
 	_party_hp.clear()
+	drop_find_frac.clear()  # 「도굴」 잔량은 판(챕터) 단위 — 마을로 나오면 리셋
 
 
 func in_chapter() -> bool:
@@ -719,8 +725,14 @@ func traits_of(main_id: String, sub_ids: Array, series_id: String) -> Dictionary
 #   **특성은 켜지는데 5스탯(current_level_stats)은 안 들어가는** 상태가 된다 — 같은 화면이
 #   서로 다른 근거를 보게 된다. 두 함수가 같은 목록에서 파생돼야 그 클래스가 구조적으로 사라진다.
 func active_traits() -> Dictionary:
-	var main_id := main_sub_job_id if main_sub_job() != null else ""
-	return traits_of(main_id, announced_sub_ids(), selected_job_id)
+	return traits_of(announced_main_id(), announced_sub_ids(), selected_job_id)
+
+
+# 공지용 메인 id — 무효(타 계열 진행분·미보유)면 빈 문자열. 🔴 `main_sub_job_id` 원본을 그대로
+# 보내면 "나는 0으로 계산하는데 상대에겐 id를 보내는" 상태가 된다(수신 측 계열 필터가 같은 결과를
+# 내서 지금은 무해하지만, 같은 것을 두 근거로 계산하는 구조가 남는다 — active_traits와 통일).
+func announced_main_id() -> String:
+	return main_sub_job_id if main_sub_job() != null else ""
 
 
 # 공지용(그리고 특성 리졸브용) 서브 id 목록 — 필터를 지난 것만. equipped_sub_jobs()가 메인을

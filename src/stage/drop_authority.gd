@@ -17,7 +17,6 @@ const SCATTER_MAX := 14.0  # 상한(px). 연출값(표시 배치) — 스크립�
 var _rng := RandomNumberGenerator.new()
 var _drops: Dictionary = {}  # did -> {kind, item_id, qty, rarity, pos} — 호스트 권한 레지스트리(드랍 존재의 단일 진실)
 var _did_counter: int = 0    # 단조 증가 — 호스트 고유 did "d%d" 배정
-var _find_frac: Dictionary = {}  # kind -> 「도굴」 소수 잔량(호스트 전용). 정수 수량에 비율을 살리는 유일한 방법(_leech_frac 미러)
 
 
 func _ready() -> void:
@@ -49,10 +48,11 @@ func _on_enemy_killed(_eid: String, def: EnemyDef, world_pos: Vector2) -> void:
 		# 🔴 **소수 잔량 누적**(CombatMath.accrue_bonus) — 재료 드랍이 1~2개라 반올림하면 +15%가
 		#   정확히 0이 된다(리뷰 C1 실측). 피흡과 같은 관용구이고, 잔량은 호스트만 들고 있으므로
 		#   권한 모델도 그대로다. 종류별로 잔량을 나눠 골드(2~6)가 재료(1~2)의 몫을 먹지 않게 한다.
-		if find > 0.0 and qty > 0 and kind != "blueprint":
-			var acc := CombatMath.accrue_bonus(qty, find, float(_find_frac.get(kind, 0.0)))
+			#   잔량은 GameState(판 단위)에 둔다 — 이 컴포넌트는 스테이지마다 새로 태어나 버려진다(리뷰 M-2).
+		if find > 0.0 and qty > 0 and _find_applies(kind, item_id):
+			var acc := CombatMath.accrue_bonus(qty, find, float(GameState.drop_find_frac.get(kind, 0.0)))
 			qty = int(acc["qty"])
-			_find_frac[kind] = float(acc["carry"])
+			GameState.drop_find_frac[kind] = float(acc["carry"])
 		var pos := _scatter(world_pos, i, total)
 		var rarity := _rarity_of(kind, item_id)
 		_did_counter += 1
@@ -65,6 +65,20 @@ func _on_enemy_killed(_eid: String, def: EnemyDef, world_pos: Vector2) -> void:
 		})
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_DROP, "s": GameState.stage_token(), "d": wire})
 	EventBus.drop_spawn_local.emit(local)  # 호스트는 자기 G_DROP를 못 받으므로 로컬 스폰 경로
+
+
+# 「도굴」이 붙는 드랍인가 — 수량 재화만. 도면(레시피 토큰)과 **핵심 재료**(보스 게이트 제작
+# 재료 = 진행 토큰)는 제외한다. ⚠ 핵심 재료를 빼는 이유는 기획뿐 아니라 구조다(리뷰 M-3):
+#   잔량이 kind("material") 단위라, 잡몹으로 0.85를 쌓은 뒤 같은 스테이지에서 핵심 재료를 잡으면
+#   보스 재료가 2개 나온다. 현 챕터 구성에선 도달 불가지만 엘리트·챕터2에서 바로 살아난다.
+func _find_applies(kind: String, item_id: String) -> bool:
+	if kind == "blueprint":
+		return false
+	if kind == "material":
+		var m := GameState.material_def(item_id)
+		if m != null and m.is_core:
+			return false
+	return true
 
 
 # 「도굴」(drop_find) — 파티 **최대값**. 공유 드랍이라 "누구 몫"이 없어 개인별로 나눌 수 없다:
