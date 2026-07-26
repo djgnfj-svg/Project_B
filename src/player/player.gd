@@ -97,6 +97,8 @@ var _charge_sfx: String = "charge_step"  # 단계 상승 효과음 id (무기별
 var _remote_target: Vector2 = Vector2.ZERO
 var _remote_flip: bool = false
 var _remote_vel: Vector2 = Vector2.ZERO  # G_POS "vx/vy" — 호스트 지연 보상 외삽의 입력 (§3). 수신 시 이동 상한으로 clamp
+var _pos_seq: int = 0                   # 내 G_POS 송신 시퀀스(단조 증가) — 수신부 순서 뒤바뀜 폐기의 근거
+var _last_pos_seq: int = 0              # 이 원격 피어에게서 받은 마지막 시퀀스 — 이보다 낮으면 옛 패킷
 var _send_accum: float = 0.0
 var _attack_cd_left: float = 0.0
 var _roll_time_left: float = 0.0
@@ -840,8 +842,11 @@ func _send_pos(delta: float) -> void:
 	_send_accum += delta
 	if _send_accum >= 1.0 / POS_SEND_RATE:
 		_send_accum = 0.0
+		_pos_seq += 1
 		Net.send_game({
 			NetSchema.KEY_KIND: NetSchema.G_POS,
+			# 송신 시퀀스 — P2P fast 채널이 unordered라 순서 뒤바뀜을 수신부가 걸러야 한다 (§3, CombatMath.is_pos_seq_fresh).
+			"n": _pos_seq,
 			"s": scene_id,
 			"x": global_position.x,
 			"y": global_position.y,
@@ -861,7 +866,13 @@ func _send_pos(delta: float) -> void:
 # 원격 위치 반영 — 메시지 간 변위를 최대 이동 속도로 클램프한다.
 # 호스트의 사거리 검증(§3)이 이 표시 좌표를 기준으로 하므로, 클램프 없이는 순간이동 스푸핑으로 검증이 무력화된다.
 func apply_remote_pos(pos: Vector2, flip: bool, aim: float, charge_code: int = 0,
-		vel: Vector2 = Vector2.ZERO) -> void:
+		vel: Vector2 = Vector2.ZERO, seq: int = 0) -> void:
+	# 🔴 순서 뒤바뀜 폐기 — **속도·조준각·차지까지 포함해 통째로** 버린다(맨 앞에서 return).
+	#   옛 패킷의 vel만 새겨도 외삽이 과거 속도로 돌아가 방어자 우대가 무력화된다 (§3).
+	if not CombatMath.is_pos_seq_fresh(seq, _last_pos_seq):
+		return
+	if seq > 0:
+		_last_pos_seq = seq
 	# Inf/NaN 주입 가드 — JSON은 1e999 같은 오버플로를 Inf로 파싱한다. lerp_angle(유한, INF)=NaN이
 	# 한 발로 _aim_angle을 영구 오염시키고, pos 쪽은 net_anchor()를 타 호스트 판정까지 닿는다 (리뷰 Important).
 	if is_finite(aim):

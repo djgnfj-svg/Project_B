@@ -397,6 +397,22 @@ static func lag_lead_s(last_recv_msec: int, now_msec: int, one_way_ms: float) ->
 	return (since_ms + clamp_one_way_ms(one_way_ms)) / 1000.0
 
 
+# 위치 패킷 신선도 — 순서가 뒤바뀐 G_POS를 폐기해 판정 앵커가 과거로 되돌아가는 것을 막는다.
+# 🔴 **왜 필요한가 (P2P 직결 도입, 2026-07-26):** fast 데이터 채널은 unordered(유실 허용)라 위치 패킷이
+#   뒤바뀌어 도착할 수 있다. 릴레이(TCP)에선 구조적으로 불가능했던 상황이다. 뒤늦게 도착한 옛 패킷을
+#   적용하면 `_remote_target`과 `_remote_vel`이 **함께** 한 틱 과거로 돌아가는데, 그러면
+#   `net_anchor()`(낡은 좌표)와 `net_anchor_lead()`(추정 좌표)가 **같은 방향으로** 틀려
+#   "둘 다 맞아야 확정"인 방어자 우대 규약(is_strike_hit_lagged)이 무력화된다 — 규약은 두 좌표가
+#   **서로 다른 방향**으로 틀릴 때만 방어자를 보호하기 때문이다. 결과는 "빠져나왔는데 맞았다"의 부분 재발.
+# ⚠ 변위 clamp(player.apply_remote_pos)는 이걸 못 막는다 — 되돌아가는 거리가 한 송신 간격분(~4px)이라
+#   상한(~13px) 안에 들어와 그냥 통과한다. 그래서 순서를 **명시적으로** 봐야 한다.
+# seq <= 0 = 시퀀스 미부착(릴레이 경로·구버전) → 항등 폴백으로 전부 통과시킨다.
+static func is_pos_seq_fresh(seq: int, last_seq: int) -> bool:
+	if seq <= 0:
+		return true
+	return seq > last_seq
+
+
 # 마지막 관측 속도로 추정한 "지금" 위치. 거리 상한(LAG_MAX_LEAD_DIST)으로 폭주를 막는다.
 static func extrapolate(pos: Vector2, vel: Vector2, lead_s: float) -> Vector2:
 	if not (is_finite(vel.x) and is_finite(vel.y)) or lead_s <= 0.0:

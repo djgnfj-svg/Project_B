@@ -33,6 +33,52 @@ const RTT_MAX_MS := 2000.0   # 비정상 샘플(탭 프리즈 후 큐 폭포 등
 var _rtt_ms: Dictionary = {}  # peer_id -> 평활화된 RTT(ms). 아직 왕복이 없으면 키 없음
 var _ping_accum: float = 0.0
 
+# --- P2P 직결 (WebRTC, 2026-07-26) — 게임 메시지 경로에서 릴레이를 걷어낸다 ---
+# 릴레이 왕복은 실측 207ms인데(무료 Cloudflare가 서울 엣지를 안 태우고 홍콩 경유 — rules §5),
+# 그 경로를 한 홉도 안 거치는 피어 간 직결로 바꾸면 같은 국가 기준 10~40ms가 된다.
+# 🔴 **릴레이가 통째로 사라지지는 않는다** — 방 코드·피어 관리·SDP/ICE 교환(시그널링)은 그대로 릴레이를
+#   타고, 연결이 열린 뒤의 **게임 페이로드만** 직결로 흐른다. 협상은 연결당 몇 통이라 지연과 무관하다.
+# 🔴 **릴레이는 폴백으로도 남는다** — 대칭형 NAT 등으로 P2P가 안 뚫리면(통상 10~20%) 채널이 안 열리고
+#   send_game이 자동으로 릴레이로 떨어진다. 폴백을 지우면 그 환경에서 게임이 아예 성립하지 않는다.
+# ⚠ **웹 전용이다.** WebRTC는 브라우저 내장이라 웹 익스포트에서만 쓸 수 있고, 네이티브(에디터 실행·
+#   헤드리스 테스트)는 GDExtension이 없어 기존 릴레이 경로 그대로다 — 그래서 `tests/test_net_room_auto`는
+#   무영향이다(회귀 0). P2P 실기 검증은 웹 2클라 몫.
+const RTC_CONFIG := {
+	"iceServers": [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}]
+}
+# negotiated 채널 = 양쪽이 같은 id로 각자 만들고 협상 없이 짝지어진다(2인 고정 구조에 맞다 —
+# data_channel_received 비동기 수신을 안 다뤄도 되어 상태기계가 짧아진다).
+const RTC_CH_FAST := 1  # unordered + 수명 제한 = UDP에 가깝다. 늦은 패킷은 아예 안 온다(최신값만 의미 있는 스트림)
+const RTC_CH_SAFE := 2  # ordered + reliable = 유실되면 상태가 갈리는 확정 메시지용
+const RTC_FAST_LIFETIME_MS := 60  # 이보다 늙은 fast 패킷은 폐기 — 재전송 대기가 곧 지연이라 버리는 게 낫다
+# 🔴 fast(유실 허용) 채널로 보낼 kind — **"다음 패킷이 곧 덮어쓰는 것"만** 넣는다(§3 하드 계약).
+#   pos/mpos는 최신 좌표가 곧 진실이라 한 통 유실이 다음 통으로 자동 복구된다.
+#   ⚠ shoot·arrowhit·drop·ehp·php 같은 **사건**은 절대 넣지 마라 — 한 통이 유실되면 화살이 안 생기거나
+#     영영 안 사라지고, HP가 영구히 갈라진다(에러 없이 화면만 어긋난다).
+#   ⚠ **G_PING/G_PONG은 의도적으로 뺐다**(리뷰 I4). RTT는 예고 도착 지연을 대신 재는 값인데, 예고
+#     (G_MOB_ATK·G_BOSS_ATK)는 safe 채널이다. 측정을 fast로 하면 손실 구간에서 **유실된 왕복이 아예
+#     샘플로 안 잡혀** RTT가 낙관적으로 보고되고, 그만큼 strike_delay_s가 과소 보상해 그 회차 회피 창이
+#     짧아진다("가끔 예고가 늦다"로만 보인다). 측정 채널 = 예고 채널로 맞춰야 §3 지연 보상의 입력이
+#     실제 전송 특성을 반영한다. 2Hz라 reliable 비용은 무시 가능하다 — 다시 fast로 내리지 마라.
+const RTC_FAST_KINDS := {
+	NetSchema.G_POS: true, NetSchema.G_MOB_POS: true,
+}
+const RTC_NEGOTIATE_TIMEOUT_S := 8.0  # 이 안에 안 열리면 경고 1회(엔트리는 유지 — 늦게 열리면 그때부터 쓴다)
+# 🔴 직결이 열려 있어도 릴레이 소켓에 이 주기로 신호를 흘린다 (리뷰 C1).
+#   릴레이 Worker는 `seen`(그 소켓의 마지막 수신 시각) 기준 **3분 무수신**을 좀비로 끊는데, P2P가 열리면
+#   게임 트래픽이 전부 직결로 빠져 그 조건이 상시 성립한다 → 3분마다 방이 끊기고 로비로 튕긴다.
+#   ⚠ 서버의 seen 기록 스로틀이 30초라 그보다 넉넉히 잦아야 하고, 스윕 주기(60s)·유휴 한도(180s)와도
+#     여유를 둔다. 45초면 유휴 한도의 1/4이라 한두 통이 유실돼도 안전하다.
+const RELAY_KEEPALIVE_S := 45.0
+# 🔴 직결 무수신 워치독 (리뷰 I1) — 브라우저는 경로가 끊겨도 곧바로 FAILED로 가지 않는다(먼저
+#   disconnected, consent 만료까지 ~30초). 그동안 채널은 STATE_OPEN이고 put_packet도 OK를 돌려줘
+#   **릴레이 폴백이 안 걸린 채 메시지가 블랙홀로 간다.** ping이 2Hz로 오가므로 그 공백을 워치독으로 잡는다.
+const RTC_SILENCE_LIMIT_S := 3.0
+
+var _p2p: Dictionary = {}  # peer_id -> {pc, fast, safe, remote_set: bool, ice_q: Array, age: float, gave_up: bool, quiet: float}
+var _keepalive_accum: float = 0.0
+
+
 
 # -s 헤드리스 테스트에선 오토로드 전역 식별자를 쓸 수 없다 — /root 경로 + 타입으로 조회 (rules §5)
 func _bus() -> EventBusHub:
@@ -144,6 +190,21 @@ func _tick_ping(delta: float) -> void:
 	send_game({NetSchema.KEY_KIND: NetSchema.G_PING, "t": Time.get_ticks_usec()})
 
 
+# 🔴 릴레이 소켓 유지 (리뷰 C1) — 직결이 열리면 게임 트래픽이 전부 그쪽으로 빠져 릴레이로 나가는
+#   프레임이 **0**이 되고, 서버는 3분 무수신을 좀비로 간주해 연결을 끊는다(= 방 종료·로비 튕김·챕터 소실).
+#   ⚠ 반드시 `_send`(릴레이 직행)로 보낸다 — `send_game`을 쓰면 직결로 나가버려 목적을 정확히 배반한다.
+#   ⚠ 직결이 없을 때는 보낼 필요가 없다(게임 트래픽이 이미 릴레이를 지나 seen을 갱신한다).
+func _tick_relay_keepalive(delta: float) -> void:
+	if state != State.IN_ROOM or not p2p_active():
+		_keepalive_accum = 0.0
+		return
+	_keepalive_accum += delta
+	if _keepalive_accum < RELAY_KEEPALIVE_S:
+		return
+	_keepalive_accum = 0.0
+	_send({NetSchema.KEY_TYPE: NetSchema.C_RELAY, "data": {NetSchema.KEY_KIND: NetSchema.G_KEEP}})
+
+
 # ping/pong 소비 — 처리했으면 true(= net_msg로 올리지 않는다).
 func _consume_latency_msg(from_id: int, data: Dictionary) -> bool:
 	match str(data.get(NetSchema.KEY_KIND, "")):
@@ -174,10 +235,23 @@ func join_room(url: String, code: String) -> void:
 	_start(url, {NetSchema.KEY_TYPE: NetSchema.C_JOIN, "room": code.strip_edges().to_upper()})
 
 
+# 게임 페이로드 송신 — **P2P 직결이 열려 있으면 릴레이를 안 거친다.**
+# 호출부(25곳)는 이 함수만 알면 되고 경로 선택은 전부 여기서 끝난다 — 그래서 P2P 도입이
+# 게임 코드 무변경으로 떨어졌다(전송 경계가 send_game/net_msg 한 쌍이었던 덕).
 func send_game(data: Dictionary) -> void:
 	if state != State.IN_ROOM:
 		return
-	_send({NetSchema.KEY_TYPE: NetSchema.C_RELAY, "data": data})
+	var text := NetSchema.encode(data)
+	var fast: bool = RTC_FAST_KINDS.has(str(data.get(NetSchema.KEY_KIND, "")))
+	var need_relay := false
+	for pid: int in peer_ids:
+		if not _p2p_send(pid, text, fast):
+			need_relay = true  # 그 피어와는 아직(또는 영영) 직결이 없다 — 릴레이로 간다
+	# ⚠ 2인 전제(NetSchema.MAX_ROOM_PEERS=2)라 "일부만 직결"이 곧 "직결 0명"이고, 릴레이 브로드캐스트가
+	#   직결 피어에게 **중복 도달하지 않는다**. 4인으로 늘리면 이 전제가 깨진다 — 그때는 릴레이 페이로드에
+	#   수신자 지정(to)을 넣어야 한다(rules §2 게이트).
+	if need_relay or peer_ids.is_empty():
+		_send({NetSchema.KEY_TYPE: NetSchema.C_RELAY, "data": data})
 
 
 func leave() -> void:
@@ -210,6 +284,7 @@ func _send(msg: Dictionary) -> void:
 
 
 func _process(delta: float) -> void:
+	_p2p_poll(delta)  # 직결 채널은 시그널링 소켓 상태와 무관하게 돈다
 	if _ws == null:
 		return
 	_ws.poll()
@@ -227,6 +302,7 @@ func _process(delta: float) -> void:
 					_handle(NetSchema.decode(pkt.get_string_from_utf8()))
 			# 수신을 모두 비운 뒤에 보낸다 — 같은 프레임에 도착한 pong이 먼저 반영돼 RTT가 한 프레임 덜 늙는다
 			_tick_ping(delta)
+			_tick_relay_keepalive(delta)
 		WebSocketPeer.STATE_CLOSED:
 			var was := state
 			_reset()
@@ -245,6 +321,7 @@ func _reset() -> void:
 	peer_ids = []
 	_rtt_ms = {}
 	_ping_accum = 0.0
+	_p2p_drop_all()
 
 
 func _handle(msg: Dictionary) -> void:
@@ -264,6 +341,8 @@ func _handle(msg: Dictionary) -> void:
 			if peers_v is Array:
 				for v: Variant in peers_v:
 					peer_ids.append(int(v))
+			for pid: int in peer_ids:
+				_p2p_begin(pid)  # 직결 협상 — 누가 offer를 낼지는 id 크기로 결정론적으로 갈린다
 			_bus().room_joined.emit(room_code, peer_ids)
 		NetSchema.S_JOIN_FAIL:
 			# 연결 유지(state=CONNECTED 그대로) — 로비에서 코드 고쳐 바로 재시도 가능
@@ -272,11 +351,13 @@ func _handle(msg: Dictionary) -> void:
 			var pid := int(msg.get("id", 0))
 			if pid != 0 and not peer_ids.has(pid):
 				peer_ids.append(pid)
+			_p2p_begin(pid)
 			_bus().peer_joined.emit(pid)
 		NetSchema.S_PEER_LEFT:
 			var pid := int(msg.get("id", 0))
 			peer_ids.erase(pid)
 			_rtt_ms.erase(pid)  # 같은 id로 새 피어가 와도 옛 지연 추정이 남지 않게
+			_p2p_drop(pid)      # 직결도 같이 정리 — 같은 id로 새 피어가 와도 죽은 채널을 물려받지 않게
 			_bus().peer_left.emit(pid)
 		NetSchema.S_ROOM_CLOSED:
 			state = State.CONNECTED
@@ -284,6 +365,7 @@ func _handle(msg: Dictionary) -> void:
 			room_code = ""
 			peer_ids = []
 			_rtt_ms = {}
+			_p2p_drop_all()
 			_bus().room_closed.emit()
 		NetSchema.S_MSG:
 			var data_v: Variant = msg.get("data")
@@ -292,4 +374,236 @@ func _handle(msg: Dictionary) -> void:
 				var data := data_v as Dictionary
 				if _consume_latency_msg(from_id, data):
 					return  # ping/pong은 Net이 끝낸다 — 게임 로직으로 올리지 않는다
+				if _consume_signal_msg(from_id, data):
+					return  # SDP/ICE도 Net이 끝낸다 — 게임 로직으로 올리지 않는다
 				_bus().net_msg.emit(from_id, data)
+
+
+# =============================================================================
+# P2P 직결 (WebRTC) — 게임 페이로드가 릴레이를 안 거치게 하는 계층.
+# 이 블록 밖에서 P2P를 아는 코드는 없다: 송신은 send_game이 알아서 경로를 고르고,
+# 수신은 릴레이든 직결이든 똑같이 EventBus.net_msg로 올라간다(호출부 무변경의 근거).
+# =============================================================================
+
+# 이 환경에서 직결을 시도할 수 있나. 웹 = 브라우저 내장 WebRTC, 그 외 = GDExtension이 없어 불가.
+# ⚠ 네이티브에서 굳이 시도하면 에러 로그가 헤드리스 테스트 판정(SCRIPT ERROR grep, verify §3)을
+#   오염시킬 수 있다 — 애초에 안 건드리는 쪽이 회귀 0이다.
+func _p2p_available() -> bool:
+	return OS.has_feature("web") and ClassDB.can_instantiate("WebRTCPeerConnection")
+
+
+# 하나라도 직결이 살아 있나 — HUD 경로 표시용(핑이 릴레이분인지 직결분인지 눈으로 갈린다).
+func p2p_active() -> bool:
+	for pid: int in _p2p:
+		if _p2p_ready(int(pid)):
+			return true
+	return false
+
+
+# 🔴 **두 채널이 다 열렸을 때만** 직결로 본다 (리뷰 Minor). 하나만 열리면 pos는 릴레이·사건은 직결로
+#   갈라져 경로 간 순서 뒤바뀜이 상시화되고, HUD "직결" 표시도 거짓이 된다.
+func _p2p_ready(peer_id: int) -> bool:
+	var e_v: Variant = _p2p.get(peer_id)
+	if e_v == null:
+		return false
+	var e := e_v as Dictionary
+	for key: String in ["fast", "safe"]:
+		var ch := e.get(key) as WebRTCDataChannel
+		if ch == null or ch.get_ready_state() != WebRTCDataChannel.STATE_OPEN:
+			return false
+	return true
+
+
+# 협상 시작. **offer를 내는 쪽은 id가 작은 피어**로 고정한다 — 양쪽이 동시에 offer를 내면
+# glare(교착)로 협상이 깨지므로, 결정론적으로 한쪽만 내게 한다(호스트 id=1이 항상 작다).
+func _p2p_begin(peer_id: int) -> void:
+	if peer_id == 0 or peer_id == my_id or _p2p.has(peer_id) or not _p2p_available():
+		return
+	# 🔴 방 밖에서는 절대 만들지 않는다 (리뷰 I5). 방이 닫힌 직후 도착한 **낙오 SDP**가 여기로 들어오면
+	#   상대 없는 PeerConnection이 생기는데, answer가 영영 안 와서 FAILED로도 안 가 `_p2p_poll`이
+	#   못 지운다. 그 좀비 엔트리는 다음 방에서 `_p2p.has()` 가드에 걸려 **새 협상을 영구히 막고**,
+	#   증상은 "그 뒤로는 늘 릴레이"뿐이라 화면에 이유가 안 드러난다.
+	if state != State.IN_ROOM or not peer_ids.has(peer_id):
+		return
+	var pc := WebRTCPeerConnection.new()
+	if pc == null or pc.initialize(RTC_CONFIG) != OK:
+		return  # 직결 불가 환경 — 릴레이 유지(무해한 폴백)
+	# negotiated 채널: 양쪽이 같은 id로 각자 만들고 협상 없이 짝지어진다.
+	var fast := pc.create_data_channel("fast", {
+		"negotiated": true, "id": RTC_CH_FAST,
+		"ordered": false, "maxPacketLifeTime": RTC_FAST_LIFETIME_MS})
+	var safe := pc.create_data_channel("safe", {
+		"negotiated": true, "id": RTC_CH_SAFE, "ordered": true})
+	if fast == null or safe == null:
+		return
+	pc.session_description_created.connect(_on_rtc_session.bind(peer_id))
+	pc.ice_candidate_created.connect(_on_rtc_ice.bind(peer_id))
+	_p2p[peer_id] = {"pc": pc, "fast": fast, "safe": safe,
+		"remote_set": false, "ice_q": [], "age": 0.0, "gave_up": false, "quiet": 0.0}
+	if my_id < peer_id:
+		pc.create_offer()
+
+
+# 로컬 SDP 생성 완료 → 로컬에 반영하고 상대에게 시그널링으로 보낸다.
+# ⚠ 여기서 send_game을 쓰면 안 된다 — send_game이 직결을 타려 하는데 그 직결을 지금 만드는 중이다(순환).
+#   시그널링은 **항상 릴레이(_send)** 로만 나간다.
+func _on_rtc_session(type: String, sdp: String, peer_id: int) -> void:
+	var e_v: Variant = _p2p.get(peer_id)
+	if e_v == null:
+		return
+	var pc := (e_v as Dictionary).get("pc") as WebRTCPeerConnection
+	if pc == null:
+		return
+	pc.set_local_description(type, sdp)
+	_send({NetSchema.KEY_TYPE: NetSchema.C_RELAY,
+		"data": {NetSchema.KEY_KIND: NetSchema.G_RTC_SDP, "ty": type, "sdp": sdp}})
+
+
+func _on_rtc_ice(media: String, index: int, name: String, peer_id: int) -> void:
+	if not _p2p.has(peer_id):
+		return
+	_send({NetSchema.KEY_TYPE: NetSchema.C_RELAY,
+		"data": {NetSchema.KEY_KIND: NetSchema.G_RTC_ICE, "m": media, "i": index, "n": name}})
+
+
+# 시그널링 수신 — 처리했으면 true(= net_msg로 올리지 않는다). ping/pong과 같은 규약.
+func _consume_signal_msg(from_id: int, data: Dictionary) -> bool:
+	match str(data.get(NetSchema.KEY_KIND, "")):
+		NetSchema.G_RTC_SDP:
+			_rtc_on_sdp(from_id, str(data.get("ty", "")), str(data.get("sdp", "")))
+			return true
+		NetSchema.G_RTC_ICE:
+			_rtc_on_ice(from_id, str(data.get("m", "")), int(data.get("i", 0)), str(data.get("n", "")))
+			return true
+		NetSchema.G_KEEP:
+			return true  # 릴레이 소켓 유지용 — 도착 자체가 목적이다(서버 seen 갱신). 게임 로직엔 안 올린다
+	return false
+
+
+func _rtc_on_sdp(peer_id: int, type: String, sdp: String) -> void:
+	if type != "offer" and type != "answer":
+		return  # 알 수 없는 타입 폐기 — 신뢰 경계(릴레이를 타고 오는 값이다)
+	if not _p2p.has(peer_id):
+		_p2p_begin(peer_id)  # offer가 방 상태 갱신보다 먼저 도착한 경우
+	var e_v: Variant = _p2p.get(peer_id)
+	if e_v == null:
+		return
+	var e := e_v as Dictionary
+	var pc := e.get("pc") as WebRTCPeerConnection
+	if pc == null or pc.set_remote_description(type, sdp) != OK:
+		return
+	e["remote_set"] = true
+	# remote description 전에 도착해 쌓아둔 ICE 후보를 이제 흘려보낸다.
+	# 🔴 큐가 없으면 먼저 온 후보가 조용히 버려져 연결이 **가끔** 안 뚫린다(트리클 ICE는 SDP보다 빨리 온다).
+	for c: Variant in (e.get("ice_q", []) as Array):
+		var arr := c as Array
+		pc.add_ice_candidate(str(arr[0]), int(arr[1]), str(arr[2]))
+	e["ice_q"] = []
+
+
+func _rtc_on_ice(peer_id: int, media: String, index: int, name: String) -> void:
+	var e_v: Variant = _p2p.get(peer_id)
+	if e_v == null:
+		return
+	var e := e_v as Dictionary
+	if bool(e.get("remote_set", false)):
+		var pc := e.get("pc") as WebRTCPeerConnection
+		if pc != null:
+			pc.add_ice_candidate(media, index, name)
+	else:
+		(e.get("ice_q", []) as Array).append([media, index, name])
+
+
+# 직결 송신 — 보냈으면 true, 채널이 없거나 안 열렸으면 false(호출부가 릴레이로 떨어뜨린다).
+func _p2p_send(peer_id: int, text: String, fast: bool) -> bool:
+	# 두 채널이 다 열리기 전에는 통째로 릴레이를 쓴다 — 한 채널만 태우면 같은 피어에게 가는 메시지가
+	# 두 경로로 갈라져 순서가 뒤섞인다(사건이 그것이 서술하는 위치보다 먼저 도착하는 식).
+	if not _p2p_ready(peer_id):
+		return false
+	var e_v: Variant = _p2p.get(peer_id)
+	if e_v == null:
+		return false
+	var e := e_v as Dictionary
+	var ch := (e.get("fast") if fast else e.get("safe")) as WebRTCDataChannel
+	if ch == null or ch.get_ready_state() != WebRTCDataChannel.STATE_OPEN:
+		return false
+	return ch.put_packet(text.to_utf8_buffer()) == OK
+
+
+func _p2p_poll(delta: float) -> void:
+	if _p2p.is_empty():
+		return
+	var dead: Array[int] = []
+	# ⚠ 아래 net_msg emit이 동기라 구독자가 방을 떠나게 만들면 순회 중 _p2p가 바뀔 수 있다 → 키 스냅샷.
+	for pid_v: Variant in _p2p.keys():
+		var pid := int(pid_v)
+		if not _p2p.has(pid):
+			continue  # 이 순회 안에서 정리된 피어
+		var e := _p2p[pid] as Dictionary
+		var pc := e.get("pc") as WebRTCPeerConnection
+		if pc == null:
+			dead.append(pid)
+			continue
+		pc.poll()
+		var conn := pc.get_connection_state()
+		# 🔴 DISCONNECTED도 죽은 것으로 본다 (리뷰 I1) — FAILED만 기다리면 consent 만료까지 ~30초 동안
+		#   채널이 STATE_OPEN인 채 메시지가 사라진다(릴레이 폴백이 안 걸린다).
+		if conn == WebRTCPeerConnection.STATE_FAILED or conn == WebRTCPeerConnection.STATE_CLOSED \
+				or conn == WebRTCPeerConnection.STATE_DISCONNECTED:
+			dead.append(pid)  # 정리하면 send_game이 자동으로 릴레이로 돌아간다
+			continue
+		var got := false
+		for key: String in ["fast", "safe"]:
+			var ch := e.get(key) as WebRTCDataChannel
+			if ch == null:
+				continue
+			ch.poll()
+			while ch.get_available_packet_count() > 0:
+				got = true
+				var d := NetSchema.decode(ch.get_packet().get_string_from_utf8())
+				if d.is_empty():
+					continue
+				# 🔴 릴레이 경로와 **똑같은 순서**로 흘린다(Net 소비분 → net_msg). 여기서 갈라지면
+				#   경로에 따라 게임 동작이 달라진다. from_id는 채널의 주인이라 위조 여지가 릴레이보다 좁다.
+				if _consume_latency_msg(pid, d):
+					continue
+				if _consume_signal_msg(pid, d):
+					continue  # 현재는 시그널링이 릴레이로만 오지만, 재협상을 붙이면 이 경로가 살아난다
+				_bus().net_msg.emit(pid, d)
+		# 무수신 워치독 — ping이 2Hz로 오가므로 몇 초 침묵은 곧 경로 단절이다 (리뷰 I1).
+		if _p2p_ready(pid):
+			e["quiet"] = 0.0 if got else float(e.get("quiet", 0.0)) + delta
+			if float(e["quiet"]) > RTC_SILENCE_LIMIT_S:
+				push_warning("Net: P2P 직결 무응답 %.1fs (peer %d) — 릴레이로 되돌린다" % [float(e["quiet"]), pid])
+				dead.append(pid)
+				continue
+		# 협상 타임아웃 — 경고 1회만 찍고 엔트리는 남긴다. 늦게 열리면 그때부터 직결을 쓰는 편이 낫다.
+		elif not bool(e.get("gave_up", false)):
+			e["age"] = float(e.get("age", 0.0)) + delta
+			if float(e["age"]) > RTC_NEGOTIATE_TIMEOUT_S:
+				e["gave_up"] = true
+				push_warning("Net: P2P 직결 실패 (peer %d) — 릴레이 폴백으로 계속" % pid)
+	for pid: int in dead:
+		_p2p_drop(pid)
+
+
+func _p2p_drop(peer_id: int) -> void:
+	var e_v: Variant = _p2p.get(peer_id)
+	if e_v == null:
+		return
+	var e := e_v as Dictionary
+	var pc := e.get("pc") as WebRTCPeerConnection
+	if pc != null:
+		pc.close()
+	_p2p.erase(peer_id)
+	# 🔴 전송 경로가 통째로 바뀌므로 지연 추정도 버린다 (리뷰 I2, S_PEER_LEFT의 erase와 같은 이유).
+	#   직결 20ms로 수렴한 EMA를 들고 릴레이(~200ms)로 돌아가면, 200에 근접하기까지 ~2.5초 동안
+	#   strike_delay_s가 거의 0이 되고 net_anchor_lead가 net_anchor와 같아져 "둘 다 맞아야" 규약이
+	#   한쪽 판정으로 퇴화한다 — 2026-07-24에 고친 "게스트만 피했는데 맞았다"가 그 창에서 재발한다.
+	_rtt_ms.erase(peer_id)
+
+
+func _p2p_drop_all() -> void:
+	for pid_v: Variant in _p2p.keys():
+		_p2p_drop(int(pid_v))
+	_p2p = {}

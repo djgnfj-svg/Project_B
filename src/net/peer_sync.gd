@@ -184,7 +184,10 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 				float(data.get("a", 0.0)),
 				int(data.get("c", 0)),  # 차지 상태(법사 지팡이) — 표시 전용, 실제 발사 레벨은 G_SHOOT를 호스트가 재검증
 				# 속도 — 호스트 지연 보상 외삽의 입력(§3). 수신부가 유한성·이동 상한으로 clamp한다
-				Vector2(float(data.get("vx", 0.0)), float(data.get("vy", 0.0))))
+				Vector2(float(data.get("vx", 0.0)), float(data.get("vy", 0.0))),
+				# 송신 시퀀스 — P2P fast 채널(unordered)의 순서 뒤바뀜을 수신부가 폐기하는 근거(§3).
+				# 키가 없으면 0 = 항등 폴백(릴레이 경로·구버전 클라와 그대로 호환).
+				int(data.get("n", 0)))
 			if not _pos_seen.has(from_id):
 				# 첫 G_POS = 상대가 같은 씬에서 듣고 있다는 증명 — 씬 전환 중 드랍된 공지를 재전송
 				_pos_seen[from_id] = true

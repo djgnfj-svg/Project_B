@@ -279,6 +279,16 @@ func _initialize() -> void:
 	failures += _check(is_equal_approx(CombatMath.extrapolate(Vector2.ZERO, Vector2(9999.0, 0.0), 1.0).length(),
 		CombatMath.LAG_MAX_LEAD_DIST), "extrapolate: 과대 속도 → 거리 상한으로 잘림")
 
+	# --- 위치 패킷 신선도 (P2P fast 채널 = unordered, 2026-07-26 리뷰 I3) ---
+	# 순서 뒤바뀜을 폐기하지 않으면 net_anchor와 net_anchor_lead가 **함께** 과거로 돌아가
+	# "둘 다 맞아야 확정"인 방어자 우대 규약이 무력화된다(§3). 폐기 조건을 지우면 아래가 빨개진다.
+	failures += _check(CombatMath.is_pos_seq_fresh(5, 4), "pos_seq: 다음 시퀀스 → 수용")
+	failures += _check(not CombatMath.is_pos_seq_fresh(4, 5), "pos_seq: 뒤바뀐 옛 패킷 → 폐기")
+	failures += _check(not CombatMath.is_pos_seq_fresh(5, 5), "pos_seq: 같은 시퀀스(중복 도착) → 폐기")
+	failures += _check(CombatMath.is_pos_seq_fresh(0, 99), "pos_seq: 미부착(0) → 항등 폴백(릴레이·구버전 호환)")
+	failures += _check(CombatMath.is_pos_seq_fresh(-3, 99), "pos_seq: 음수 오염 → 항등 폴백(폐기하지 않는다)")
+	failures += _check(CombatMath.is_pos_seq_fresh(1, 0), "pos_seq: 첫 패킷 → 수용")
+
 	# 🔴 방어자 우대 규약 — 낡은 좌표와 추정 좌표가 **둘 다** 안일 때만 적중.
 	# 이 4줄이 "피했는데 맞았다"의 회귀 방지선이다.
 	var c := Vector2.ZERO
