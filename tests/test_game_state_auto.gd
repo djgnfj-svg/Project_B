@@ -114,7 +114,66 @@ func _initialize() -> void:
 	gsjob.equip("worn_bow")
 	_check("궁수가 활 착용 성공", gsjob.equipped_id(0) == "worn_bow")
 	_check("can_equip_job: 궁수+대검 = false", not gsjob.can_equip_job(gsjob.equip_def("worn_greatsword")))
+	# 🔴 직업 전환 뒤처리 (2026-07-26 실기 신고 "전사로 들어왔는데 마법 지팡이를 쓴다").
+	# can_equip_job은 equip() **시점**에만 걸린다 — 직업이 나중에 바뀌면 남의 무기가 착용된 채 남고,
+	# 그 id가 G_STATS로 공지돼 호스트 판정(peer_weapon_id)까지 그 무기가 된다(전사가 차지 폭발).
+	gsjob.selected_job_id = "warrior"  # 활을 낀 채 전사로 전환 (로비 재선택·마을 직업 변경 경로)
+	_check("직업 전환: 남의 직업 무기 자동 해제", gsjob.equipped_id(0) == "")
+	_check("직업 전환: 해제해도 장비는 가방에 남는다", gsjob.equip_level("worn_bow") == 0)
+	# 빈 슬롯은 **보유분으로도** 채운다 — 안 그러면 위 해제 뒤 맨손으로 남는다(그 직업을 전에 해봤으면
+	# 가방에 무기가 있는데도). 재지급은 여전히 안 한다(멱등).
+	gsjob.grant_starting_loadout(gsjob.job_def("warrior"))
+	_check("빈 슬롯: 보유 중인 시작 무기를 착용(맨손 방지)", gsjob.equipped_id(0) == "worn_greatsword")
+	gsjob.grant_starting_loadout(gsjob.job_def("warrior"))
+	_check("멱등: 재호출해도 착용·레벨 그대로",
+		gsjob.equipped_id(0) == "worn_greatsword" and gsjob.equip_level("worn_greatsword") == 0)
+	# 🔴 **해제하면 안 되는 것**도 고정한다 (리뷰 I-5). 현재 data/equipment 4장은 전부 job_id가
+	#   채워져 있어, 재검증을 "전부 해제"로 망가뜨려도 위 케이스들이 전부 통과한다(검출력 0의 침묵 통과 —
+	#   합성 SubJobDef로 공유 가드를 겨눈 것과 같은 상황). 범용 장비(job_id="")를 합성해 직접 겨눈다:
+	#   방어구가 들어오는 순간 "마을 갈 때마다 방어구가 벗겨지는데 스위트는 그린"이 되는 것을 막는다.
+	var generic := EquipDef.new()
+	generic.id = "test_generic_armor"
+	generic.slot_name = "armor"
+	generic.job_id = ""  # 범용 — 어느 직업이든 착용 가능
+	gsjob._equip_cache["test_generic_armor"] = generic  # 리졸버 주입(allowlist 밖 합성 def)
+	gsjob.owned_equipment["test_generic_armor"] = 0
+	gsjob.equip("test_generic_armor")
+	_check("범용 장비(job_id 빈 값) 착용 성공", gsjob.equipped_id(1) == "test_generic_armor")
+	gsjob.selected_job_id = "mage"
+	_check("직업 전환: 범용 장비는 **유지**(해제 대상은 귀속 위반분만)",
+		gsjob.equipped_id(1) == "test_generic_armor")
+	_check("직업 전환: 같은 순간 귀속 위반 무기는 해제", gsjob.equipped_id(0) == "")
 	gsjob.free()
+	# 🔴 세이브 로드는 **비파괴**다 (리뷰 I-1). 세이브는 직업을 담지 않고 SaveManager가 로비보다 먼저
+	# 도므로 이 시점 selected_job_id는 항상 기본 직업이다 — 여기서 필터를 걸면 법사의 상위 지팡이가
+	# 부팅 때마다 벗겨지고 시작 무기로 다운그레이드된다. 필터는 직업이 확정되는 경계가 건다.
+	var gsave := GameStateScript.new() as Node
+	gsave.selected_job_id = "mage"
+	gsave.add_equipment("worn_staff")
+	gsave.equip("worn_staff")
+	var jsnap: Dictionary = gsave.to_save_dict()
+	gsave.free()
+	var gload := GameStateScript.new() as Node  # 기본 = warrior (로비 선택 전)
+	gload.from_save_dict(jsnap)
+	_check("세이브 로드: 직업 필터를 걸지 않는다(로드 시점 직업은 기본값이라 거짓 해제)",
+		gload.equipped_id(0) == "worn_staff")
+	# 직업이 확정되는 경계 = apply_job_loadout (로비→마을 진입·마을 직업 변경 단일 소스).
+	gload.apply_job_loadout()  # selected_job_id = warrior
+	_check("직업 확정 경계: 남의 직업 무기 해제 + 내 시작 무기 착용",
+		gload.equipped_id(0) == "worn_greatsword")
+	_check("직업 확정 경계: 해제된 장비는 가방에 남는다", gload.equip_level("worn_staff") == 0)
+	# 그 직업으로 돌아오면 가방에 남아 있던 그 직업 무기를 되찾는다(해제는 파기가 아니다)
+	gload.selected_job_id = "mage"
+	gload.apply_job_loadout()
+	_check("직업 복귀: 가방에 남은 그 직업 무기를 되찾는다", gload.equipped_id(0) == "worn_staff")
+	# 판 도중엔 재검증이 돌지 않는다 — 전투 중 무기 교체 = 그 창의 타격이 무음 거부(리뷰 I-3).
+	# ⚠ 아래 두 줄은 가드의 push_error를 **의도적으로** 찍는다 — 로그의 ERROR 2줄은 정상이다.
+	gload.begin_stage("chapter1", 0)  # 판 진입 (법사 + 지팡이 착용 상태 그대로)
+	gload.selected_job_id = "warrior"  # 판 도중 전환 시도 → 재검증은 무시된다(push_error만)
+	_check("판 도중(in_chapter): 재검증이 돌지 않는다(전투 중 무기 소멸 방지)",
+		gload.equipped_id(0) == "worn_staff" and not gload.revalidate_equipped())
+	gload.leave_chapter()
+	gload.free()
 
 	# --- 창고 넣기/빼기 (개인·로컬 보관함, 비네트워크) ---
 	# 재료: 예치→창고 증가·가방 감소, 회수→역. 0이 된 창고 키는 삭제(표시 정돈).

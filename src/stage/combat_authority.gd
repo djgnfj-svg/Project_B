@@ -465,7 +465,15 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			#   표시(ArrowField)는 메시지 w를 쓰므로 사칭 시 그 클라 화면에만 폭발이 그려지고 판정은 안 난다(안전한 방향).
 			#   G_STATS 미도착 창에서는 ""(기본 화살) → 폭발/차지 없음. 관대한 쪽으로 실패하지 않는다.
 			# ⚠ 네트워크 지연은 도착을 늦출 뿐이라 정당한 발사를 떨구지 않는다(경과 시간이 길어지는 쪽).
+			# 🔴 공지 무기가 **그 피어의 공지 직업이 들 수 있는 것**인지도 본다 (2026-07-26 리뷰 I-4).
+			#   지금까지의 공지 스푸핑은 전부 변조 클라가 필요했는데, "전사 + 지팡이"는 **정직한 클라가
+			#   상태 버그만으로** 도달했다(직업을 바꿔도 착용이 안 풀리던 것) — 재발 가능한 버그 클래스다.
+			#   폐기 방향은 안전하다: ""(기본 화살) = 차지 배율도 폭발도 없음.
+			#   판정 규칙은 클라의 착용 규칙과 **같은 함수**(can_job_equip)를 지난다 — 사본을 만들지 마라.
 			var weapon_id := _peer_sync.peer_weapon_id(from_id)
+			if not GameState.can_job_equip(
+					_peer_sync.peer_job_id(from_id), GameState.equip_def(weapon_id)):
+				weapon_id = ""
 			var charge := CombatMath.clamp_charge_level(int(data.get("c", 0)))
 			var step_time := float(GameState.projectile_params(weapon_id, 0.0, charge)["step_time"])
 			if not CombatMath.is_charge_time_ok(last_shot, now_shot, charge, step_time, shoot_haste):

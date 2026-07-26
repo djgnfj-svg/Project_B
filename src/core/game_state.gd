@@ -7,7 +7,16 @@ const DEFAULT_JOB_ID := "warrior"
 const DEFAULT_CHAPTER_ID := "chapter1"  # 챕터 해금/선택 시스템 전까지의 출발 챕터 (GDD §6 — 방장 해금 기준은 후속)
 
 # 시작 시 선택, 이후 고정 (GDD §5). 로비에서 정하고 스테이지가 읽는다.
-var selected_job_id: String = DEFAULT_JOB_ID
+# 🔴 setter로 **직업 귀속 재검증**을 건다 (revalidate_equipped) — `can_equip_job`은 equip() 시점에만
+#   걸리므로, 직업이 **나중에** 바뀌는 경로(로비 재선택·마을 직업 변경·세이브 로드)에서 남의 직업 무기가
+#   착용된 채 남는다. 대입 지점이 여럿(lobby·peer_sync·테스트)이라 호출 규약으로는 반드시 새는 자리다.
+#   ⚠ setter 본문 안의 대입은 setter를 다시 부르지 않는다(Godot 4 — 무한 재귀 없음).
+var selected_job_id: String = DEFAULT_JOB_ID:
+	set(value):
+		if value == selected_job_id:
+			return
+		selected_job_id = value
+		revalidate_equipped()
 
 # 챕터 진행 좌표 — 쓰기는 scene_flow(G_SCENE 검증 통과)만, 읽기는 main·HUD·chapter_flow·씬 토큰.
 var current_chapter_id: String = ""
@@ -362,9 +371,11 @@ func craft(recipe_id: String) -> bool:
 	add_equipment(r.result_equip_id)
 	# 슬롯이 비어 있으면 자동 장착 — 첫 제작이 바로 효과나게 (QoL). 재장착은 패널에서.
 	# ⚠ 반드시 가방 보유(owned) 확인 — 창고에만 있는 아이템에 equipped를 물리면 음수 레벨 스탯이 된다(방어).
+	# ⚠ 직접 대입이 아니라 equip()으로 — 직업 귀속 검사(can_equip_job)를 우회하는 두 번째 입구를
+	#   만들지 않는다. 지금은 can_craft가 같은 검사를 이미 하지만, 그 검사가 바뀌면 조용히 샌다.
 	var e := equip_def(r.result_equip_id)
-	if e != null and owned_equipment.has(r.result_equip_id) and equipped_id(e.slot()).is_empty():
-		equipped[e.slot()] = r.result_equip_id
+	if e != null and equipped_id(e.slot()).is_empty():
+		equip(r.result_equip_id)  # 가방 보유(owned) 확인은 equip()의 equip_level < 0 게이트가 한다
 	_notify_inventory()
 	return true
 
@@ -403,10 +414,17 @@ func upgrade_equipment(equip_id: String) -> bool:
 	return true
 
 
-# 직업 귀속 판정 단일 소스 — 무기 job_id가 비면 범용, 아니면 현재 선택 직업과 일치해야 착용/제작 가능.
-# equip()·can_craft()가 같은 규칙을 쓴다(전사가 활 못 듦). 방어구는 보통 job_id 비움 = 범용.
+# 직업 귀속 판정 단일 소스 — 무기 job_id가 비면 범용, 아니면 그 직업과 일치해야 착용/제작 가능.
+# equip()·can_craft()·revalidate_equipped()가 같은 규칙을 쓴다(전사가 활 못 듦). 방어구는 보통 job_id 비움 = 범용.
+# 🔴 **호스트의 판정 리졸브도 이 함수를 지난다** — `combat_authority`가 G_STATS로 공지된 무기를 그 피어의
+#   공지 직업과 대조할 때(rules §3 투사체 계약). 그래서 직업 인자를 받는 형태가 원본이고, 로컬용은
+#   `selected_job_id`를 넣는 얇은 래퍼다. 호스트에 사본 조건문을 두면 다음 튜닝에서 갈라진다.
+func can_job_equip(job_id: String, e: EquipDef) -> bool:
+	return e != null and (e.job_id.is_empty() or e.job_id == job_id)
+
+
 func can_equip_job(e: EquipDef) -> bool:
-	return e != null and (e.job_id.is_empty() or e.job_id == selected_job_id)
+	return can_job_equip(selected_job_id, e)
 
 
 func equip(equip_id: String) -> void:
@@ -423,6 +441,32 @@ func equipped_id(slot: int) -> String:
 	return str(equipped.get(slot, ""))
 
 
+# 🔴 직업 귀속 재검증 — 현재 직업이 들 수 없는 착용 장비를 해제한다(장비 자체는 가방에 그대로 남는다).
+# **직업이 바뀌는 모든 경로의 뒤처리 단일 소스**: selected_job_id setter + 세이브 로드(from_save_dict).
+# 없으면 "전사인데 마법 지팡이"가 된다 — 겉모습만이 아니다. G_STATS "weapon"이 그 무기를 공지하고
+# 호스트가 `peer_weapon_id`로 판정을 리졸브하므로(rules §3) **전사가 실제로 차지 폭발을 쓴다**.
+# 에러가 안 나고 화면에만 드러나는 부류라 실기 신고로만 발견됐다 (2026-07-26).
+# 반환 = 실제로 해제된 것이 있는지(호출부 로깅·테스트용).
+# 🔴 **판 도중엔 돌지 않는다 — `autofill_sub_slots`의 in_chapter 가드와 같은 이유이고 더 세다.**
+#   해제는 내 판정 무기와 atk를 즉시 바꾸는데 상대 호스트의 원격 아바타는 G_STATS 도달 뒤에야 바뀐다 →
+#   그 창에서 타격이 **무음 거부**된다. 오늘은 호출부(로비 씬·마을 전용 가드)가 막지만, 가드가
+#   호출부에 흩어져 있으면 다음 사람이 스테이지에서 직업을 대입하는 순간 전투 중에 무기가 사라진다.
+func revalidate_equipped() -> bool:
+	if in_chapter():
+		push_error("[GameState] 판 도중 직업 귀속 재검증 시도 — 무시 (마을/로비에서만)")
+		return false
+	var drop: Array[int] = []
+	for slot: int in equipped:
+		if not can_equip_job(equip_def(str(equipped[slot]))):
+			drop.append(slot)
+	if drop.is_empty():
+		return false
+	for slot: int in drop:
+		equipped.erase(slot)
+	_notify_inventory()
+	return true
+
+
 # 장착 해제 — 그 슬롯을 비운다(장비는 이미 가방(owned)에 있으므로 슬롯만 지우면 됨).
 func unequip(slot: int) -> void:
 	if equipped.has(slot):
@@ -430,15 +474,30 @@ func unequip(slot: int) -> void:
 		_notify_inventory()
 
 
-# 새 게임 기본 지급 — 직업의 시작 무기를 지급·착용. 멱등: 이미 보유(가방/창고)면 스킵.
-# 세이브 로드 후(마을 진입 시) 부른다 → 신규 판만 지급, 로드한 판은 플레이어의 착용/보관 상태를 존중.
+# 🔴 직업 전환 뒤처리 **단일 소스** (2026-07-26 리뷰 I-2) — 직업이 확정되는 자리는 이 한 줄만 부른다.
+# 세 동작이 늘 같이 가야 한다: 남의 직업 무기 해제 → 내 직업 시작 무기 지급/착용 → 시작 하위 직업 지급.
+# 하나라도 빠지면 조용히 깨진다 — 해제만 하면 맨손, 지급만 하면 "전사가 지팡이"(이번 신고), 하위 직업을
+# 빼면 메인이 옛 계열에 남아 메인 특성·5스탯이 통째로 꺼진다. 세 줄을 호출부마다 손으로 맞춰 들고 있으면
+# 네 번째 자리에서 반드시 빠진다(rules §2 "권한·동기화 로직은 복사 금지"와 같은 이유).
+# ⚠ 인자를 받지 않는다 — `selected_job_id`(revalidate가 보는 값)와 job 인자가 어긋날 여지를 없앤다.
+func apply_job_loadout() -> void:
+	revalidate_equipped()
+	grant_starting_loadout(selected_job())
+	grant_starting_sub_job(selected_job())
+
+
+# 새 게임 기본 지급 — 직업의 시작 무기를 지급하고, **무기 슬롯이 비어 있으면** 착용까지.
+# 지급은 멱등(이미 가방/창고에 있으면 재지급 안 함)이고, 이미 뭘 착용 중이면 강제 교체하지 않는다.
+# 세이브 로드 후(마을 진입 시) 부른다 → 로드한 판의 착용/보관 상태를 존중한다.
 func grant_starting_loadout(job: JobDef) -> void:
 	if job == null or job.starting_weapon_id.is_empty():
 		return
 	var wid := job.starting_weapon_id
-	if owned_equipment.has(wid) or storage_equipment.has(wid):
-		return  # 이미 가졌던 무기 — 재지급·강제 재장착 안 함
-	add_equipment(wid)  # allowlist 통과분만 추가
+	if not owned_equipment.has(wid) and not storage_equipment.has(wid):
+		add_equipment(wid)  # allowlist 통과분만 추가 (미보유일 때만 — 재지급 안 함)
+	# 🔴 **빈 무기 슬롯은 보유분으로도 채운다.** 예전엔 "이미 보유 = 전부 스킵"이라, 직업을 바꿔
+	#   revalidate_equipped가 남의 무기를 해제한 뒤 **맨손으로 남았다**(그 직업을 전에 해본 적이 있으면
+	#   가방에 무기가 있는데도). 강제 재장착은 여전히 안 한다 — 슬롯이 비었을 때만.
 	if owned_equipment.has(wid) and equipped_id(EquipDef.SLOT_WEAPON).is_empty():
 		equip(wid)
 
@@ -1132,5 +1191,12 @@ func from_save_dict(d: Dictionary) -> void:
 			continue
 		seen_slots.append(sid)
 		sub_slot_ids[i] = sid
+	# 🔴 **여기서 직업 귀속 필터를 걸지 않는다 — 걸면 정당한 장비가 조용히 벗겨진다** (리뷰 I-1).
+	#   세이브는 직업을 담지 않고 `SaveManager._ready`가 로비보다 먼저 도므로, 이 시점
+	#   `selected_job_id`는 **항상 기본 직업(warrior)** 이다. 여기서 파괴적으로 걸면 법사가 제작한
+	#   상위 지팡이가 부팅 때마다 해제되고, 마을 진입의 `grant_starting_loadout`은 **시작 무기만**
+	#   채우므로 그대로 다운그레이드된 채 판에 들어간다(에러 없음).
+	#   ⚠ 12줄 위 서브 슬롯 로드가 같은 사실을 근거로 이미 같은 결정을 내려 뒀다 — 두 축의 규약을 맞춘다.
+	#   실제 필터는 **직업이 확정되는 경계**(apply_job_loadout: 로비→마을 진입·마을 직업 변경)가 건다.
 	_notify_inventory()
 	_notify_growth()

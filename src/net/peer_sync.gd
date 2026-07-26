@@ -52,6 +52,12 @@ func has_player(peer_id: int) -> bool:
 # 그 피어가 G_STATS로 **공지한** 착용 무기 id (미공지면 ""). 호스트가 G_SHOOT의 무기 주장을 교차검증할 때 쓴다
 # (rules §3 — 발사 메시지의 "w"를 그대로 믿으면 전사가 지팡이를 사칭해 차지 배율·폭발을 얻는다, 2026-07-24 리뷰).
 # 공지 자체는 여전히 발신자 트러스트지만, 장비 스탯(atk/hp)과 **같은 한 장의 공지**로 묶여 표면이 늘지 않는다.
+# 그 피어가 G_JOB으로 공지한(그리고 스테이지에선 첫 공지로 잠긴) 직업 id. 미공지면 "".
+# 호스트가 공지 무기를 그 직업이 들 수 있는지 대조할 때 쓴다 (rules §3 — peer_weapon_id와 한 쌍).
+func peer_job_id(peer_id: int) -> String:
+	return str(_peer_jobs.get(peer_id, ""))
+
+
 func peer_weapon_id(peer_id: int) -> String:
 	var st_v: Variant = _peer_stats.get(peer_id)
 	if st_v == null:
@@ -164,11 +170,17 @@ func _on_job_change_requested(job_id: String) -> void:
 	if not GameState.job_ids().has(job_id) or job_id == GameState.selected_job_id:
 		return
 	GameState.selected_job_id = job_id
+	# 🔴 **직업 공지가 먼저다.** 아래 apply_job_loadout이 무기 해제·지급으로 G_STATS를 여러 번 쏘는데,
+	#   G_JOB이 그보다 늦게 나가면 상대는 그 창 동안 "새 무기 + 옛 직업"으로 본다 — 고치려던 불일치의
+	#   거울상이다(마을엔 전투가 없어 무해하지만, 순서를 맞춰 두는 값이 0이다).
+	_announce_job()
+	# 직업 전환 뒤처리 3종 — 마을 진입(main)과 **같은 한 줄**. 없으면 직업만 바뀌고 맨손으로 남고,
+	# 메인 하위 직업이 옛 계열에 남아 메인 특성·5스탯이 통째로 꺼진다.
+	GameState.apply_job_loadout()
 	var lp := player(Net.my_id)
 	if lp != null:
 		lp.set_job(GameState.selected_job())
-	_announce_job()        # 상대에게 새 직업 공지 (마을이라 G_JOB 잠금 해제됨)
-	_apply_local_stats()   # 무기 겉모습·max_hp 재반영 + G_STATS 재공지
+	_apply_local_stats()   # 무기 겉모습·max_hp 재반영 + G_STATS 재공지(최종 상태가 마지막에 이긴다)
 
 
 func _on_peer_joined(_peer_id: int) -> void:
