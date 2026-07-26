@@ -101,6 +101,7 @@ wait $HP   # 출력: LATENCY_OK rtt_ms min/p50/p95/max/mean + [budget] 회피 �
   var d := ResourceLoader.load("res://data/enemies/<새로 온 것>.tres")
   print("LOAD: %s" % ("실패" if d == null else "OK"))
   ```
+- 🔴 **익스포트/임포트를 돌린 뒤 `git diff -- '*.import'`를 확인해라.** 임포트가 실패하면 Godot이 그 `.import` 사이드카를 **`valid=false`로 덮어써** 워킹 트리를 오염시킨다 — 상대가 커밋한 **정상 임포트 기록(`path=`·`dest_files`)이 지워진다.** 그걸 모르고 커밋하면 남의 환경에서 멀쩡했던 에셋까지 깨뜨린다(2026-07-26 실제로 `boss_wraith.aseprite.import`가 이렇게 바뀌어 `git checkout`으로 되돌렸다). **내 환경에서 임포트 못 하는 에셋이 있는 채로 빌드했다면 이 확인은 필수다.**
 - **상대가 남긴 인수인계·주의목록 파일을 먼저 읽어라**(`b_hyoung/` 등). 임시 축소·미배선 실험물·되돌려야 할 것이 적혀 있다 — 실제로 챕터 칸 수 축소·죽은 보스 템플릿이 그렇게 걸러졌다.
 - **양쪽이 겹쳐 건드린 파일**을 확인해라: `comm -12 <(git diff --name-only $BASE origin/master|sort) <(git diff --name-only $BASE HEAD|sort)`. 자동 머지가 됐다고 **의미가 맞는 건 아니다** — 특히 새 네트워크 kind 이름 충돌(§5)·같은 함수의 다른 개정.
 
