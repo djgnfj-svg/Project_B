@@ -56,7 +56,12 @@ model: inherit
 | | `walk` | 4 | 7 |
 | | `attack` | 3 | 8 (`ATTACK_ANIM_LEAD_S`와 미러) |
 | | `death` | 3 | 7 |
-| 보스(망령) | `idle`/`swing`/`slam`/`spray`/`death` | 3~6 | 4~6 (각 `BossPatternDef.telegraph_s`와 미러) |
+| 보스(망령) | `idle` | 4 | 6 |
+| | `swing` | 5 | **12** |
+| | `slam`/`spray` | 5 | **10** |
+| | `death` | 5 | 8 |
+
+🔴 **보스 공격 애니의 fps는 지금 `telegraph_s`와 어긋나 있다 — 위 값은 "현재 실측"이지 "맞는 값"이 아니다.** 아래 「보스」 절의 결함 ③을 읽어라.
 
 - 🔴 **4방향 명명 = `<base>_e` / `<base>_s` / `<base>_n`** (서쪽은 `_e`를 코드가 flip). **이름이 틀리면 코드가 2방향으로 조용히 폴백한다** — 에러가 없어서 "왜 4방향이 아니지"만 남는다(rules §5).
 - 🔴 **애니 이름 집합은 엔진 호출부와 정확히 일치해야 한다.** 프레임 구성을 바꿔 이름이 사라지면 그 애니는 조용히 안 나온다. 클립을 손대면 리드에게 **`play("...")`·`autoplay` grep 대조**를 요청해라.
@@ -109,8 +114,19 @@ FX는 크기가 곧 판정이라 다른 에셋과 규칙이 다르다. `projectb
 
 - **배선:** `data/enemies/wraith_boss.tres`(64px) → `boss_wraith_frames.tres` · 씬 `src/enemies/boss.tscn`(노드 `Boss`) · 스크립트 `src/enemies/boss.gd`.
 - `boss.gd`는 **어떤 `BossDef`든 돌리는 데이터 주도 공용 배우**다(특정 몬스터 전용이 아니다) — 그래서 이름에 종을 박지 않는다. 새 보스를 만들면 `.tres` 한 장 + 시트 한 장이고 이 스크립트는 안 건드린다.
-- 🔵 **망령 시트에 `walk`가 없다**(idle/swing/slam/spray/death 5종). `boss.gd`가 `_has_anim()` 가드로 없는 애니를 건너뛰므로 **보스가 이동할 때 idle 자세로 미끄러진다**(에러 없음). **walk 4프레임(64×64)** 을 추가하면 해소된다.
-- 🔴 **콘 텔레그래프 각이 지금 어긋나 있다:** `telegraph_cone.png`에 그려진 각은 **전체 68.6°** 인데 망령 swing은 `half_angle 0.75` = **전체 85.9°** 다 → 보이는 예고보다 판정이 좌우 각 8.6° 넓다. 텍스처를 **86°로 다시 그리는 것**이 아트 쪽 해소책이다(데이터를 0.6으로 내리는 쪽은 밸런스 변경이라 사용자 판단).
+- 🔵 **결함 ① 망령 시트에 `walk`가 없다**(idle/swing/slam/spray/death 5종 — 2026-07-26 재확인). `boss.gd`가 `_has_anim()` 가드로 없는 애니를 건너뛰므로 **보스가 이동할 때 idle 자세로 미끄러진다**(에러 없음). **walk 4프레임(64×64)** 을 추가하면 해소된다 — 시트가 1536×64(24프레임) → 1792×64(28프레임)이 되고 `boss_wraith_frames.tres` region 재계산이 딸린다.
+- 🔴 **결함 ② 콘 텔레그래프 각이 어긋나 있다:** `telegraph_cone.png`에 그려진 각은 **전체 68.6°** 인데 망령 swing은 `half_angle 0.75` = **전체 85.9°** 다 → 보이는 예고보다 판정이 좌우 각 8.6° 넓다. 텍스처를 **86°로 다시 그리는 것**이 아트 쪽 해소책이다(데이터를 0.6으로 내리는 쪽은 밸런스 변경이라 사용자 판단). **2026-07-26 사용자 결정 = 텍스처 재작화**(착수 전이다).
+- 🔴 **결함 ③ 공격 애니가 예고 시간의 3분의 1에서 끝난다 (2026-07-26 발견, 미해소):** `boss.gd`가 WINDUP 진입 시 공격 애니를 **1회** 재생하고(`:247`) 끝나면 `idle`로 되돌리는데(`:123-124`), 애니 길이가 `telegraph_s`보다 **훨씬 짧다**:
+
+  | 패턴 | 애니 길이 | `telegraph_s` | idle로 서 있는 시간 |
+  |---|---|---|---|
+  | `swing` | 5f @12fps = **0.42s** | 1.2s | **0.78s** |
+  | `slam` | 5f @10fps = **0.50s** | 1.3s | **0.80s** |
+  | `spray` | 5f @10fps = **0.50s** | 1.5s | **1.00s** |
+
+  즉 **보스가 휘두르는 동작을 마치고 가만히 선 채로 0.8~1초 뒤에 타격**한다(호스트는 지연 보상분이 더해져 더 벌어진다). `projectb-rules` §3이 요구하는 "**애니 총 길이 ≈ telegraph_s**" 미러가 깨진 상태다 — 에러가 없어 조용하고, "예고는 뜨는데 보스는 가만히 있다"로만 드러난다.
+  - **해소 선택지 ⑴ 데이터만** — `boss_wraith_frames.tres`의 speed를 내린다(swing 12→4.2 · slam 10→4 · spray 10→3.3). 공짜지만 동작이 느릿해 보일 수 있다. ⑵ **프레임 추가**(아트) — 5프레임을 12~15프레임으로 늘려 현 fps를 유지한 채 길이를 맞춘다. 결과가 가장 좋지만 시트가 커진다.
+  - ⚠ 어느 쪽이든 **`telegraph_s`(데이터)와 SpriteFrames speed는 미러**다 — 한쪽을 조이면 다른 쪽도 본다.
 
 ## ⚠ 죽은 세대 — 이 파일들을 기준으로 삼지 마라
 
@@ -120,8 +136,12 @@ FX는 크기가 곧 판정이라 다른 에셋과 규칙이 다르다. `projectb
 - `enemies/goblin_*_anim.png`(384×32) + `goblin_*_frames.tres` — 잔몹 32px 세대
 - `enemies/boss_wraith_{cast,idle,swing,death}.png`(256×64) — 망령 분할 시트 이전 형태
 - `enemies/{brute_48,drake_c,kobold_b,goblin_*_c}.png` — 옛 32/48px 적
-- `village/ground/*`(낡은 것 12장 — 현행은 `baked_960.png`) · `items/blueprint.png` · `ui/icon_weapon.png`
-- `fx/coop_*.png` 9장(64×64)은 **죽은 게 아니라 미착수**다(협동 보스 패턴 설계의 짝) — 지우지 말고 남긴다.
+- `village/ground/*`(낡은 것 12장 + `baked.png` — 현행은 `baked_960.png`) · `village/buildings/smoke.png`
+
+🔴 **이 목록에서 두 번 틀린 적이 있다 — 참조 스캔은 반드시 `.gd`를 포함해라.** `.tres`/`.tscn`만 훑은 스캔이 살아 있는 에셋을 "참조 0"으로 잘못 분류했다(2026-07-26 두 건 적발):
+- **`items/blueprint.png`는 살아 있다** — `src/stage/drop_field.gd:15`가 preload한다(바닥에 떨어지는 도면 드랍 아이콘).
+- **`ui/icon_weapon.png`도 살아 있다** — `src/ui/inventory_panel.gd:14`가 `WEAPON_PLACEHOLDER`로 쓴다. **빈 무기 슬롯을 표시하는 픽토그램**이라 3색·채움 10%가 정상이다(미완성이 아니다 — 화려하면 오히려 "뭔가 장착돼 있다"로 오해된다).
+- **`fx/coop_*.png` 9장(64×64)도 살아 있다 — "미착수"가 아니라 배선 완료다.** `src/stage/coop_authority.gd`가 9장 전부 preload하고, `src/stage/stage_boss.tscn:74`에 `CoopAuthority` 노드로 붙어 있다(협동 파훼 패턴). 지우지 마라.
 
 ## 🔴 Aseprite MCP 함정 (반드시 지켜라)
 
