@@ -30,6 +30,9 @@ const GAZE_TEX := preload("res://assets/sprites/fx/coop_gaze.png")      # 직면
 const METEOR_TEX := preload("res://assets/sprites/fx/coop_meteor.png")  # 만료 시 낙하 메테오
 const IMPACT_TEX := preload("res://assets/sprites/fx/coop_impact.png")  # 착탄 폭발
 const DOOM_TEX := preload("res://assets/sprites/fx/coop_doom.png")      # 즉사 장판(케이지 피해자)
+# 유령/데이터 필터 — 모든 협동 FX에 공유 씌워 반투명 유령 + 지직 데이터로 통일(재작화 없이).
+# 표시 전용(네트워크·권한 무접촉). 그림 형태는 유지하고 질감만 얹는다. 계약 = assets/shaders/wraith_fx.gdshader.
+const WRAITH_FX_SHADER := preload("res://assets/shaders/wraith_fx.gdshader")
 
 const DANGER_LEAD_S := 1.5       # 만료 전 붉은 예고 고조 구간
 const REACH_RADIUS := 40.0       # 별낙하 표식 도달 반경
@@ -257,8 +260,24 @@ func _mk_sprite(tex: Texture2D, pos: Vector2, col: Color, z: int) -> Sprite2D:
 	s.modulate = col
 	s.global_position = pos
 	s.z_index = z
+	s.material = _wraith_mat()   # 유령/데이터 필터 (공유 머티리얼)
 	get_parent().add_child(s)
 	return s
+
+
+# 공유 유령 필터 머티리얼 — 1회 생성, 모든 FX가 문다(TIME 구동이라 공유해도 무방). uniform 전부 명시(웹 안전).
+var _wraith_mat_cache: ShaderMaterial = null
+func _wraith_mat() -> ShaderMaterial:
+	if _wraith_mat_cache == null:
+		var m := ShaderMaterial.new()
+		m.shader = WRAITH_FX_SHADER
+		m.set_shader_parameter(&"alpha_mul", 0.82)
+		m.set_shader_parameter(&"flicker", 0.14)
+		m.set_shader_parameter(&"scan_amt", 0.22)
+		m.set_shader_parameter(&"glitch", 0.03)
+		m.set_shader_parameter(&"dissolve", 0.22)
+		_wraith_mat_cache = m
+	return _wraith_mat_cache
 
 
 func _clear_marker() -> void:
