@@ -94,6 +94,8 @@ var _charge_traveled: float = 0.0            # 돌진 이동 거리 안전 상�
 var _parry_open_t: float = -1.0   # >=0 = 받아치기 창 열림 카운트다운, -1 = 아직 안 열림
 var _parry_used: bool = false     # 이번 돌진에서 이른 F로 헛치면 잠금(스팸 방지)
 var _lock_linger: float = 0.0     # 잠금(빨간 ✕)을 눈에 보이게 잠깐 더 유지
+var _clashing: bool = false       # 클래시(성공 연출) 진행 중 — 이때도 구르기 억제(연타 F가 tween과 충돌해 벽 뚫는 것 방지)
+var _f_cd: float = 0.0            # 받아치기 F 쿨타임(0.5s) — 연타 방지
 
 
 func _ready() -> void:
@@ -678,7 +680,7 @@ func _update_counter(lp: PlayerActor, delta: float) -> void:
 	if _counter_marker == null or not is_instance_valid(_counter_marker) or _boss == null:
 		return
 	_counter_t += delta
-	lp.roll_suppressed = (_cstate != CS_IDLE)   # 카운터 시퀀스(눈 반짝~돌진) 내내 F=카운터, 구르기 억제(안 그러면 튀어나감)
+	lp.roll_suppressed = (_cstate != CS_IDLE) or _clashing   # 카운터 시퀀스+클래시 내내 구르기 억제(연타 F 튀어나감 방지)
 	var h := _boss.get_node_or_null("Health") as HealthComponent
 	if h == null or h.hp <= 0:   # 죽으면 전부 끔
 		_reset_counter()
@@ -822,6 +824,8 @@ func _counter_strike(lp: PlayerActor) -> void:
 	var b_clash: Vector2 = _clamp_arena(clash + to_boss * 16.0)
 	var p_recoil: Vector2 = _clamp_arena(clash - to_boss * 48.0)
 	var b_recoil: Vector2 = _clamp_arena(clash + to_boss * 60.0)
+	_clashing = true          # 클래시 동안 구르기 억제(연타 F가 tween과 안 싸우게)
+	lp.roll_suppressed = true
 	lp.velocity = Vector2.ZERO
 	var bspr := _boss.get_node_or_null("Sprite") as AnimatedSprite2D
 	if bspr != null:
@@ -836,6 +840,7 @@ func _counter_strike(lp: PlayerActor) -> void:
 	# 3) 서로 반대로 튕겨남
 	tw.tween_property(lp, "global_position", p_recoil, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tw.parallel().tween_property(_boss, "global_position", b_recoil, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.chain().tween_callback(func() -> void: _clashing = false)   # 클래시 끝 → 구르기 복구
 	# 잔상 (달려들 때)
 	if spr != null:
 		var at := create_tween()
@@ -1233,6 +1238,8 @@ func _on_boss_phase(phase: int) -> void:
 
 func _process(_delta: float) -> void:
 	_env_t += _delta          # 환경 연출 공용 시간 (② 조명 · ④ 제단이 같이 읽음)
+	if _f_cd > 0.0:
+		_f_cd -= _delta       # 받아치기 F 쿨타임
 	# ⑤ 오염을 목표로 부드럽게 램프 → 오버레이 셰이더 corruption uniform에 반영
 	_corruption = move_toward(_corruption, _corruption_target, _delta * 0.6)
 	if _overlay_mat != null:
@@ -1284,5 +1291,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			_panel_layer.visible = not _panel_layer.visible
 		get_viewport().set_input_as_handled()
 	elif ke.physical_keycode == KEY_F:
-		_try_counter()   # 카운터
+		if _f_cd <= 0.0:      # 0.5s 쿨타임 — 연타 방지
+			_f_cd = 0.5
+			_try_counter()
 		get_viewport().set_input_as_handled()
