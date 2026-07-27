@@ -22,9 +22,8 @@ void fragment() {
 	// 움직이는 스캔라인 (0..1)
 	float sl = 0.5 + 0.5 * sin((UV.y * scan_count + TIME * scan_speed) * 6.2831853);
 	float scan = sl * scan_amount;
-	// 오염 시 틴트가 붉게 물들고 스캔라인이 강해짐 (⑤ 대비 훅 — corruption=0이면 무영향)
-	vec3 tint = mix(tint_color, vec3(0.55, 0.12, 0.14), corruption);
-	vec3 col = mix(tint, vignette_color, vig);
+	// 페이즈2 오염 시 스캔라인만 강해진다(붉은 틴트는 제거 — 화면 빨개짐 없앰, 사용자 요청).
+	vec3 col = mix(tint_color, vignette_color, vig);
 	float a = clamp(vig + tint_amount + scan * (1.0 + corruption), 0.0, 1.0);
 	COLOR = vec4(col, a);
 }

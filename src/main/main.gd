@@ -70,6 +70,11 @@ func _to_boss_test() -> void:
 # 씬 id → 씬 매핑 — id는 net_schema SCENE_*가 단일 소스. 모르는 id는 무시(allowlist).
 # 스테이지 씬 경로는 GameState(챕터 좌표 — scene_flow 검증을 통과한 값)에서 리졸브한다.
 func _on_scene_change(scene_id: String) -> void:
+	# 테스트 랩(?test=1): 보스를 깨거나 전멸해도 마을로 안 가고 **새 보스로 다시** 시작한다.
+	# 마을 왕복 없이 같은 보스를 반복 테스트하기 위함 (프로덕션 무접촉 — TestMode 게이트).
+	if TestMode.is_active() and scene_id == NetSchema.SCENE_VILLAGE:
+		_to_boss_test()
+		return
 	match scene_id:
 		NetSchema.SCENE_VILLAGE:
 			GameState.leave_chapter()  # 귀환 = 챕터 종료 (완주·전멸 공통) — 이월 HP 리셋

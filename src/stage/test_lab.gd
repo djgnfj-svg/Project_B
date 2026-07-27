@@ -8,6 +8,8 @@ extends Node
 const PlayerScene := preload("res://src/player/player.tscn")
 const PlayerActor := preload("res://src/player/player.gd")
 const HealthComponent := preload("res://src/combat/health_component.gd")
+const UiTheme := preload("res://src/ui/ui_theme.gd")   # UI 톤 단일 소스 (HUD·패널과 같은 팔레트 — class_name 대신 preload, rules §0)
+const NetSchema := preload("res://src/core/net_schema.gd")  # SCENE_* id (새 보스 리셋 = 스테이지 재진입)
 
 # 보스 공격 패턴 버튼 (id = wraith_boss.tres 패턴 id)
 const BOSS_BTNS: Array = [["검기", "swing"], ["슬램", "slam"], ["물뿌리기", "spray"]]
@@ -45,6 +47,23 @@ var _env_noise: FastNoiseLite = null
 var _corruption: float = 0.0
 var _corruption_target: float = 0.0
 
+# 상단 보스 HP바 (글리치 스타일) — 이름 "Ghost Nos" + 노이즈 채움바. enemy_hp_confirmed 구독.
+const BOSS_NAME := "Ghost Nos"
+const HPBAR_W := 340.0
+const HPBAR_H := 16.0
+const HPBAR_TOP_PCT := 0.03   # 상단에서 3% 내려
+var _boss_hp_layer: CanvasLayer = null
+var _boss_hp_fill: ColorRect = null
+var _boss_hp_text: Label = null
+var _boss_max_hp: int = 1
+var _boss_hp_innerw: float = 0.0
+
+# 시야 콘 — 플레이어 조준(_aim_angle) 방향으로 벌어지는 시야 표시. 어두운 성역에서 방향 가독성.
+const VISION_HALF := deg_to_rad(46.0)   # 콘 반각 (넓게 — 시야 느낌 강조)
+const VISION_R0 := 16.0                 # 시작 반경(플레이어 몸 바깥)
+const VISION_LEN := 170.0               # 시야 길이
+var _vision: Node2D = null
+
 
 func _ready() -> void:
 	if not TestMode.is_active():
@@ -61,10 +80,15 @@ func _setup() -> void:
 		_boss.debug_hold = true       # 보스 자동공격 정지 (버튼으로만)
 	if _coop != null:
 		_coop.debug_hold = true       # 코옵 자동순환 정지 (버튼으로만)
+		# 상단 코옵 디버그 상태줄(버전·boss·인원·host next) 숨김 — 랩 화면 정리(마스터 실플레이엔 무접촉).
+		var coop_status := _coop.get("_status") as CanvasItem
+		if coop_status != null:
+			coop_status.visible = false
 	_apply_invincible()
 	_spawn_npc()
 	_reposition()             # 보스·NPC=보스 방, 플레이어=진입 방
 	_build_bounds()           # 2방 벽 + 진입 방 바닥 + 바깥 void
+	_setup_vision()           # 조준 방향 시야 콘 (로컬 플레이어)
 	_setup_camera()           # 방 카메라 (클램프+스냅)
 	_setup_lighting()         # 2D 라이팅 — 어두운 성역 + 발광 지점(맵 퀄업)
 	_apply_boss_rim()         # 보스 밝은 림(뒤 실루엣) — 청록 배경에서 또렷하게
@@ -73,6 +97,7 @@ func _setup() -> void:
 	_setup_altar_feature()    # ④ 제단 발광 룬 서클(맥동+회전) — 보스 발밑
 	_setup_overlay()          # ① 풀스크린 포스트 오버레이 (비네트+틴트+스캔라인 = "시스템 안")
 	EventBus.boss_phase_changed.connect(_on_boss_phase)   # ⑤ 페이즈2 → 환경 오염
+	_setup_boss_hpbar()       # 상단 글리치 보스 HP바
 	_build_panel()
 
 
@@ -235,6 +260,118 @@ func _setup_overlay() -> void:
 	_overlay_mat = mat
 
 
+# 상단 글리치 보스 HP바 — 이름 "Ghost Nos"(크로매틱 글리치) + 노이즈 채움바. 상단 10% 중앙정렬.
+# enemy_hp_confirmed(eid, hp) 구독으로 채움 갱신. 전체를 CanvasLayer.offset로 미세 노이즈 진동.
+func _setup_boss_hpbar() -> void:
+	_boss_hp_layer = CanvasLayer.new()
+	_boss_hp_layer.layer = 6   # 오버레이(2) 위, 힌트(19)/패널(20) 아래
+	add_child(_boss_hp_layer)
+	if _boss != null:
+		_boss_max_hp = maxi(1, int(_boss.get("_max_hp")))
+	# 이름 — 3중 라벨(시안/마젠타 뒤 + 흰 앞 = 크로매틱 글리치)
+	var name_holder := Control.new()
+	name_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	name_holder.anchor_left = 0.5
+	name_holder.anchor_right = 0.5
+	name_holder.anchor_top = HPBAR_TOP_PCT
+	name_holder.anchor_bottom = HPBAR_TOP_PCT
+	name_holder.offset_left = -HPBAR_W * 0.5
+	name_holder.offset_right = HPBAR_W * 0.5
+	name_holder.offset_top = 0.0
+	name_holder.offset_bottom = 26.0
+	_boss_hp_layer.add_child(name_holder)
+	# 🔴 시안/마젠타 색수차는 이 게임 팔레트(차가운 청록 뮤트)에 없어 튄다 — 뺐다(projectb-art 팔레트 규율).
+	# 대신 은은한 어두운 오프셋 하나 = 살짝 어긋난 글리치 느낌만 남긴다.
+	_add_name_label(name_holder, Vector2(1.5, 1.5), Color(0.05, 0.02, 0.03, 0.6))   # 어두운 오프셋
+	_add_name_label(name_holder, Vector2(0, 0), Color(0.9, 0.94, 0.96, 1.0))        # 흰 앞
+
+	# HP바 — 어두운 테두리 패널 + 글리치 채움 + 수치 텍스트
+	var panel := Panel.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = HPBAR_TOP_PCT
+	panel.anchor_bottom = HPBAR_TOP_PCT
+	panel.offset_left = -HPBAR_W * 0.5
+	panel.offset_right = HPBAR_W * 0.5
+	panel.offset_top = 28.0
+	panel.offset_bottom = 28.0 + HPBAR_H
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = UiTheme.BAR_BG                    # HUD 바탕과 동일 (정본 팔레트)
+	sb.border_color = Color(0.5, 0.2, 0.22, 0.75)  # 뮤트 어두운 빨강 테두리
+	sb.set_border_width_all(1)
+	panel.add_theme_stylebox_override("panel", sb)
+	_boss_hp_layer.add_child(panel)
+
+	_boss_hp_innerw = HPBAR_W - 4.0
+	var fill := ColorRect.new()
+	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fill.position = Vector2(2, 2)
+	fill.size = Vector2(_boss_hp_innerw, HPBAR_H - 4.0)
+	if ResourceLoader.exists("res://assets/shaders/glitch_bar.gdshader"):
+		var mat := ShaderMaterial.new()
+		mat.shader = load("res://assets/shaders/glitch_bar.gdshader")
+		# 넓은 바라 정본 빨강도 화면상 공격적 → 살짝 어둡게 + 번쩍임 제거해 평평하고 차분하게.
+		mat.set_shader_parameter(&"base_color", Color(0.62, 0.13, 0.13))  # HP_FILL보다 조금 어두운 빨강(눈에 덜 쏜다)
+		mat.set_shader_parameter(&"hi_color", UiTheme.HP_FILL)            # 셰이딩 상단만 정본 빨강까지 (밝게 안 튐)
+		mat.set_shader_parameter(&"rows", 6.0)
+		mat.set_shader_parameter(&"scan_speed", 2.5)
+		mat.set_shader_parameter(&"noise_amt", 0.06)   # 노이즈 흔적만
+		mat.set_shader_parameter(&"glitch_amt", 0.0)   # 번쩍이는 다크밴드 제거 (불쾌감의 주범)
+		fill.material = mat
+	panel.add_child(fill)
+	_boss_hp_fill = fill
+
+	var hp_text := Label.new()
+	hp_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hp_text.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hp_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hp_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hp_text.add_theme_font_size_override("font_size", 10)
+	hp_text.add_theme_color_override("font_color", Color(0.95, 1.0, 0.98))
+	hp_text.add_theme_color_override("font_outline_color", UiTheme.OUTLINE)
+	hp_text.add_theme_constant_override("outline_size", 3)
+	panel.add_child(hp_text)
+	_boss_hp_text = hp_text
+
+	EventBus.enemy_hp_confirmed.connect(_on_boss_hp)
+	_set_boss_hp(_boss_max_hp)   # 초기 = 풀
+
+
+func _add_name_label(holder: Control, shift: Vector2, col: Color) -> void:
+	var l := Label.new()
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.text = BOSS_NAME
+	l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	l.offset_left = shift.x
+	l.offset_right = shift.x
+	l.offset_top = shift.y
+	l.offset_bottom = shift.y
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.add_theme_font_size_override("font_size", 20)
+	l.add_theme_color_override("font_color", col)
+	if col.a >= 1.0:   # 앞(흰) 라벨만 외곽선 — 뒤 오프셋은 번지게 둔다
+		l.add_theme_color_override("font_outline_color", UiTheme.OUTLINE)
+		l.add_theme_constant_override("outline_size", 4)
+	holder.add_child(l)
+
+
+# enemy_hp_confirmed(eid, hp) — 이 보스면 채움/수치 갱신.
+func _on_boss_hp(eid: String, hp: int) -> void:
+	if _boss == null or eid != String(_boss.get("eid")):
+		return
+	_set_boss_hp(hp)
+
+
+func _set_boss_hp(hp: int) -> void:
+	var ratio := clampf(float(hp) / float(maxi(1, _boss_max_hp)), 0.0, 1.0)
+	if _boss_hp_fill != null:
+		_boss_hp_fill.size.x = _boss_hp_innerw * ratio
+	if _boss_hp_text != null:
+		_boss_hp_text.text = "%d / %d" % [maxi(hp, 0), _boss_max_hp]
+
+
 # 2D 라이팅 — CanvasModulate로 씬을 어둡게 하고, 룬·제단·대문·균열이 빛나게(PointLight2D 가산).
 # 배경(아레나 Sprite2D)이 조명을 받는다(2d-essentials §4·§10). Compatibility에서 작동.
 func _light_tex() -> GradientTexture2D:
@@ -349,10 +486,9 @@ func _animate_lights(delta: float) -> void:
 		# 깜빡 — 빠른 노이즈가 음수 문턱 아래로 떨어질 때만 살짝 꺼진다(손상 전력). 라이트별 표본 좌표 분리.
 		var n := _env_noise.get_noise_1d(_env_t * 9.0 + float(i) * 100.0)
 		var flick := 1.0 - maxf(0.0, -n - 0.35) * float(e["flick"]) * 3.0
-		# ⑤ 오염 시 색을 붉게 + 살짝 밝게 (손상 심화)
-		var corrupt_col := Color(0.75, 0.2, 0.16)
-		l.color = (e["col"] as Color).lerp(corrupt_col, _corruption)
-		l.energy = base * breathe * maxf(flick, 0.2) * (1.0 + 0.25 * _corruption)
+		# 페이즈2에도 조명은 청록 유지 (붉은 적화 제거 — 화면 빨개짐 없앰, 사용자 요청)
+		l.color = e["col"]
+		l.energy = base * breathe * maxf(flick, 0.2)
 
 
 func _setup_lighting() -> void:
@@ -397,6 +533,65 @@ func _apply_boss_rim() -> void:
 	spr.add_sibling(rim)
 	rim.position = spr.position
 	_boss_rim = rim
+
+
+# 시야 콘 — 로컬 플레이어 자식으로 붙여 조준각(_aim_angle)만큼 돌린다(_process). 스케치처럼 V자 경계선 +
+# 어두운 바닥에서 방향이 읽히게 은은한 가산 발광 채움(부채꼴). 입력 안 먹음(Line2D/Polygon2D는 무해).
+func _setup_vision() -> void:
+	_ensure_vision(_local_player())
+
+
+# 시야 콘이 현재 로컬 플레이어에 없으면 만든다 — 부활/재스폰으로 몸이 새 노드로 갈려도 자동 복구.
+func _ensure_vision(lp: Node) -> void:
+	if lp == null:
+		return
+	var existing := lp.get_node_or_null("VisionCone")
+	if existing != null:
+		_vision = existing as Node2D
+		return
+	var holder := Node2D.new()
+	holder.name = "VisionCone"
+	holder.z_index = -1   # 바닥(-8) 위, 플레이어 몸(0) 아래 — 캐릭터를 안 가림
+	lp.add_child(holder)
+	# 부채꼴 채움 (가산 발광) — 시야 안을 은은하게 밝힌다
+	var poly := Polygon2D.new()
+	var pts := PackedVector2Array()
+	pts.append(Vector2(VISION_R0, 0.0).rotated(-VISION_HALF))
+	var steps := 12
+	for i in steps + 1:
+		var a: float = lerpf(-VISION_HALF, VISION_HALF, float(i) / float(steps))
+		pts.append(Vector2(VISION_LEN, 0.0).rotated(a))
+	pts.append(Vector2(VISION_R0, 0.0).rotated(VISION_HALF))
+	poly.polygon = pts
+	poly.color = Color(1, 1, 1, 1)
+	# apex(플레이어 쪽)는 밝고 바깥 호는 페이드 = 손전등 같은 시야 빔. 가산 블렌드라 알파가 곧 밝기.
+	var vcols := PackedColorArray()
+	var inner := Color(0.55, 0.78, 0.95, 0.30)
+	var outer := Color(0.45, 0.66, 0.85, 0.015)
+	vcols.append(inner)                       # inner-left
+	for _i in steps + 1:
+		vcols.append(outer)                   # outer arc
+	vcols.append(inner)                       # inner-right
+	poly.vertex_colors = vcols
+	var pm := CanvasItemMaterial.new()
+	pm.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	poly.material = pm
+	holder.add_child(poly)
+	# 경계선 두 개 (스케치의 V) — 시작은 밝고 끝으로 갈수록 페이드(시야 광선 느낌)
+	var lg := Gradient.new()
+	lg.set_color(0, Color(0.6, 0.85, 1.0, 0.5))
+	lg.set_color(1, Color(0.6, 0.85, 1.0, 0.0))
+	for s: float in [-1.0, 1.0]:
+		var ln := Line2D.new()
+		ln.points = PackedVector2Array([
+			Vector2(VISION_R0, 0.0).rotated(s * VISION_HALF),
+			Vector2(VISION_LEN, 0.0).rotated(s * VISION_HALF),
+		])
+		ln.width = 2.0
+		ln.gradient = lg
+		ln.material = pm
+		holder.add_child(ln)
+	_vision = holder
 
 
 # 방 카메라 = 플레이어 카메라를 현재 방 경계에 클램프(따라가되 방 안에만). 경계 넘으면 리밋 스왑 = 스냅.
@@ -602,6 +797,7 @@ func _build_panel() -> void:
 	_cb_coop = _add_check(g_chk, "코옵정지", true, _on_coop_hold)
 	_cb_npc = _add_check(g_chk, "NPC", _npc_on, _on_npc_toggle)
 	_add_check(g_chk, "오염P2", false, _on_corrupt_toggle)   # ⑤ 페이즈2 환경 오염 미리보기
+	_add_btn(vb, "새 보스", _on_new_boss)   # 스테이지 재진입 = 새 보스 (마을 안 감, main의 TestMode 게이트)
 	_add_btn(vb, "HP 회복", _heal_full)
 	_hp_label = Label.new()
 	_hp_label.add_theme_font_size_override("font_size", 11)
@@ -667,6 +863,12 @@ func _on_corrupt_toggle(on: bool) -> void:
 	_corruption_target = 1.0 if on else 0.0
 
 
+# 새 보스 = 스테이지 재진입. main._on_scene_change가 TestMode에서 SCENE_VILLAGE를 _to_boss_test로 되돌린다
+# (마을 안 감). 죽이지 않고도 풀 HP·페이즈1 새 보스로 리셋하는 가장 견고한 방법(전체 재구성).
+func _on_new_boss() -> void:
+	EventBus.scene_change.emit(NetSchema.SCENE_VILLAGE)
+
+
 func _on_boss_hold(on: bool) -> void:
 	if _boss != null:
 		_boss.debug_hold = on
@@ -698,6 +900,12 @@ func _process(_delta: float) -> void:
 		_overlay_mat.set_shader_parameter(&"corruption", _corruption)
 	_animate_lights(_delta)   # ② 환경 빛 맥동+깜빡
 	_animate_altar(_delta)    # ④ 제단 룬 서클 회전+맥동
+	# 상단 HP바 전체를 미세 노이즈로 진동(노이즈 강조) — 아주 느리고 작게, 오염 시만 조금 더
+	if _boss_hp_layer != null and _env_noise != null:
+		var jit := 0.3 + 1.0 * _corruption
+		var jx := _env_noise.get_noise_1d(_env_t * 4.0)
+		var jy := _env_noise.get_noise_1d(_env_t * 4.0 + 500.0)
+		_boss_hp_layer.offset = Vector2(jx, jy) * jit
 	# 보스 림 실루엣을 실제 스프라이트와 프레임/방향 동기화
 	if _boss_rim != null and is_instance_valid(_boss_rim) and _boss != null:
 		var bspr := _boss.get_node_or_null("Sprite") as AnimatedSprite2D
@@ -709,6 +917,10 @@ func _process(_delta: float) -> void:
 	var lp := _local_player()
 	if lp == null:
 		return
+	# 시야 콘: 부활/재스폰으로 잃으면 재생성 + 조준각으로 회전 (플레이어 자식이라 위치는 자동으로 따라옴)
+	_ensure_vision(lp)
+	if _vision != null and is_instance_valid(_vision):
+		_vision.rotation = float(lp.get("_aim_angle"))
 	# 방 전환(젤다식): 경계 넘으면 카메라 스냅 + 보스 방 진입 시 뒤 통로 봉쇄
 	var room := 2 if lp.global_position.x >= ROOM_SPLIT_X else 1
 	if room != _cur_room:
