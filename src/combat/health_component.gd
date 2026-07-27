@@ -15,6 +15,10 @@ var max_hp: int = 0
 # 로컬 플레이어·랩 NPC에만 세운다(TestMode 게이트, 외부에서). 여긴 필드만 — 오토로드 전역 참조 금지(-s, rules §5).
 var invincible: bool = false
 
+# 테스트 랩 데미지 캡 — 켜지면 모든 apply_damage가 1로(전 개체 공용). 기본 false라 프로덕션·헤드리스 무영향.
+# 정적이라 랩이 한 번만 켜면 보스·잔몹 전부 적용. 오토로드 참조 아님(rules §5 준수 — 외부가 켠다).
+static var force_damage_one: bool = false
+
 var _respawns: bool = false
 var _respawn_delay: float = 0.0
 var _respawn_left: float = 0.0  # apply_damage(권한 경로)만 arm한다
@@ -54,11 +58,13 @@ func set_max_hp(p_max: int) -> void:
 
 # 호스트 권한 경로 전용 — 데미지 확정. 사망 + respawns면 부활 타이머 arm.
 # 음수 dmg 방어: 힐 경로가 아니다 — 회복은 confirm_hp로 (공용 컴포넌트 방어선)
-func apply_damage(dmg: int, crit: bool = false) -> void:
-	if invincible:
-		return  # 테스트 랩 무적 — 데미지 무시 (로컬 플레이어·NPC 더미)
+func apply_damage(dmg: int, crit: bool = false, bypass_invincible: bool = false) -> void:
+	if invincible and not bypass_invincible:
+		return  # 무적(테스트 랩) — 단 bypass_invincible이면 뚫는다(특정 판정만 대가를 주게)  # 테스트 랩 무적 — 데미지 무시 (로컬 플레이어·NPC 더미)
 	if hp <= 0 or dmg <= 0:
 		return
+	if force_damage_one:
+		dmg = 1  # 테스트 랩 — 모든 데미지 1
 	last_crit = crit  # emit 직전 덮어쓰기 (평타가 이전 치명 강조를 물려받지 않게)
 	hp = maxi(0, hp - dmg)
 	hp_changed.emit(hp, true)

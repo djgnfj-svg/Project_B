@@ -68,6 +68,11 @@ const CAPE_VEL_K := 0.0014      # 이동속도(px/s) → 기울기 계수
 const CAPE_IDLE_AMP := 0.03     # 정지 시 흔들림 진폭(rad, 약 1.7°) — 줄임
 const CAPE_IDLE_HZ := 0.28      # 정지 흔들림 주기 — 느리게
 const CAPE_VEL_SMOOTH := 2.5    # 이동속도 저역통과 — 낮을수록 부드럽게(kiting 스터터 흡수)
+# 카운터 반응 — 약점(카운터 가능) 동안 몸색 변화 + 성공 시 잠깐 꿇음. 표시 전용(보스가 자기 채널 소유).
+const COUNTER_TINT := Color(1.5, 1.2, 0.55)  # 카운터 가능 시 몸색(밝은 앰버 — 약점 노출 신호)
+const STAGGER_DUR := 0.4        # 카운터 성공 꿇음 지속(s)
+const STAGGER_DROP := 9.0       # 꿇을 때 아래로 꺾이는 양(px, offset)
+const STAGGER_LEAN := 0.22      # 꿇을 때 앞으로 숙이는 skew
 
 enum State { IDLE, CHASE, WINDUP, RECOVER }
 
@@ -104,6 +109,9 @@ var _anim_scale: float = 1.0           # 지금 애니에 걸려 있어야 할 s
 var _life_t: float = 0.0               # 생명감 연출 시간 누적(부유·명멸·아우라 위상)
 var _prev_life_x: float = 0.0          # 망토 나부낌용 직전 x (이동량 = 위치 델타, 호스트/게스트 공통)
 var _cape_vel: float = 0.0             # 저역통과된 수평 이동속도 (kiting 스터터 흡수 — 망토가 홱 안 꺾임)
+var counter_ready: bool = false        # 약점 표식이 떠 있는 동안 true (외부=랩이 매 프레임 설정) → 몸색 변화
+var speed_mult: float = 1.0            # 이동(접근) 속도 배수 — 외부(랩)가 설정, 기본 1이라 프로덕션 무영향
+var _stagger_t: float = 0.0            # 카운터 성공 꿇음 타이머
 var _aura: Sprite2D = null             # 보스 발밑 가산 발광(따라다님) — _ready에서 생성
 var _noise: FastNoiseLite = null       # 지터용 연속 노이즈(1D 표본) — _ready에서 생성
 
@@ -240,8 +248,9 @@ func _physics_process(delta: float) -> void:
 func _update_life_feel(delta: float) -> void:
 	if _health.is_dead():
 		_sprite.offset = Vector2.ZERO
-		_sprite.modulate.a = 1.0
+		_sprite.modulate = Color(1.0, 1.0, 1.0, 1.0)
 		_sprite.skew = 0.0
+		_stagger_t = 0.0
 		if _aura != null:
 			_aura.visible = false
 		return
@@ -259,10 +268,29 @@ func _update_life_feel(delta: float) -> void:
 	var target_skew := clampf(-_cape_vel * CAPE_VEL_K, -CAPE_SKEW_MAX, CAPE_SKEW_MAX)
 	target_skew += sin(_life_t * TAU * CAPE_IDLE_HZ) * CAPE_IDLE_AMP
 	_sprite.skew = lerpf(_sprite.skew, target_skew, minf(1.0, delta * 4.0))
-	_sprite.modulate.a = SHIMMER_MIN_A + (1.0 - SHIMMER_MIN_A) * (0.5 + 0.5 * sin(_life_t * TAU * SHIMMER_HZ))
+	# 카운터 성공 꿇음 — 잠깐 아래로 꺾이고 앞으로 숙인다(offset·skew에 덧댐). rise-fall 엔벨로프.
+	if _stagger_t > 0.0:
+		_stagger_t -= delta
+		var sk := sin((1.0 - clampf(_stagger_t / STAGGER_DUR, 0.0, 1.0)) * PI)
+		_sprite.offset.y += sk * STAGGER_DROP
+		_sprite.skew += sk * STAGGER_LEAN
+	# 명멸(알파) + 카운터 가능 시 몸색이 앰버로 맥동(약점 노출 신호). modulate는 HitFlash(material)와 안 겹침.
+	var shimmer_a := SHIMMER_MIN_A + (1.0 - SHIMMER_MIN_A) * (0.5 + 0.5 * sin(_life_t * TAU * SHIMMER_HZ))
+	if counter_ready:
+		var cp := 0.55 + 0.45 * sin(_life_t * TAU * 3.2)
+		_sprite.modulate = Color(lerpf(1.0, COUNTER_TINT.r, cp), lerpf(1.0, COUNTER_TINT.g, cp), lerpf(1.0, COUNTER_TINT.b, cp), shimmer_a)
+	else:
+		_sprite.modulate = Color(1.0, 1.0, 1.0, shimmer_a)
 	if _aura != null:
 		_aura.visible = true
 		_aura.scale = Vector2.ONE * (AURA_BASE_SCALE * (1.0 + AURA_PULSE * sin(_life_t * TAU * AURA_HZ)))
+		# 카운터 가능 시 아우라(청록)를 죽여 몸색(앰버) 변화가 드러나게
+		_aura.modulate.a = AURA_COLOR.a * (0.3 if counter_ready else 1.0)
+
+
+# 카운터 성공 시 외부(랩)가 호출 — 잠깐 꿇는다(_update_life_feel이 offset·skew로 연출). 표시 전용.
+func counter_stagger() -> void:
+	_stagger_t = STAGGER_DUR
 
 
 # 아우라용 방사 그라디언트(흰→투명) — 가산 블렌드로 발광. 정적 1회 생성(공유).
@@ -328,7 +356,7 @@ func _host_ai(delta: float) -> void:
 					dir = (anchor - global_position).normalized()   # 접근
 			else:
 				dir = (anchor - global_position).normalized()       # 추격(기본)
-			velocity = dir * def.move_speed
+			velocity = dir * def.move_speed * speed_mult
 			if dir != Vector2.ZERO:
 				move_and_slide()
 				_sprite.flip_h = velocity.x < 0.0

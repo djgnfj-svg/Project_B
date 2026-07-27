@@ -10,9 +10,8 @@ const PlayerActor := preload("res://src/player/player.gd")
 const HealthComponent := preload("res://src/combat/health_component.gd")
 const UiTheme := preload("res://src/ui/ui_theme.gd")   # UI 톤 단일 소스 (HUD·패널과 같은 팔레트 — class_name 대신 preload, rules §0)
 const NetSchema := preload("res://src/core/net_schema.gd")  # SCENE_* id (새 보스 리셋 = 스테이지 재진입)
+const Afterimage := preload("res://src/feel/afterimage.gd")  # 카운터 대시 잔상 (손맛 재사용)
 
-# 보스 공격 패턴 버튼 (id = wraith_boss.tres 패턴 id)
-const BOSS_BTNS: Array = [["검기", "swing"], ["슬램", "slam"], ["물뿌리기", "spray"]]
 # 코옵 파훼 버튼 (인덱스 = coop_authority MECHS 순서)
 const COOP_BTNS: Array = [["케이지", 0], ["별낙하", 1], ["봉인진", 2], ["분산", 3], ["뭉치기", 4], ["직면", 5]]
 
@@ -64,6 +63,38 @@ const VISION_R0 := 16.0                 # 시작 반경(플레이어 몸 바깥)
 const VISION_LEN := 170.0               # 시야 길이
 var _vision: Node2D = null
 
+# 카운터 — 보스 약점(F 표식)이 뜬 곳 근처에서 F를 눌러 카운터. 테스트: 무조건 플레이어 쪽에 뜬다.
+# (실제론 피오라 급소처럼 방향이 랜덤 — 그건 다음 스텝) 성공 = 보스 피해 + 캐릭터가 반대편으로 관통 대시.
+const COUNTER_OFFSET := 46.0    # F 표식이 뜨는 보스 중심으로부터 거리
+const COUNTER_DAMAGE := 45      # 카운터 1회 피해
+const EYE_OFFSET := Vector2(0.0, -6.0)   # 보스 눈 대략 위치(반짝 표시 지점)
+# 시퀀스: 5초 → 눈 반짝 → 조준(보스가 바라보며 줄 생김) → 돌진(도중 F=카운터, 아니면 명중).
+const COUNTER_INTERVAL := 5.0   # IDLE 대기(s)
+const COUNTER_GLINT := 0.5      # 눈 반짝(s)
+const CHARGE_AIM := 0.5         # 조준: 바라봄 + 줄 생김(s)
+const CHARGE_SPEED := 1550.0    # 돌진 속도(px/s) — x2.5 (반응해서 패링 가능한 속도)
+# 진짜 패링: 돌진 중 보스가 근접하면 받아치기 창이 열리고, 그 안에서만 F 성공. 이른 F는 헛침(잠금).
+const PARRY_OPEN_RANGE := 165.0 # 돌진 중 보스가 이 안이면 창 열림(여유 있게 미리)
+const PARRY_WINDOW := 0.28      # 창 지속(s) — 이 안에 F. 돌진 끝에 안 잘리고 제 시간 유지
+# 🔴 카운터/돌진은 tween으로 위치를 바꿔 벽 충돌을 우회 → 맵 밖으로 나감. 이 안전영역으로 클램프(벽 안쪽).
+const ARENA_SAFE := Rect2(-566.0, 170.0, 1472.0, 308.0)
+const CS_IDLE := 0
+const CS_GLINT := 1
+const CS_AIM := 2
+const CS_DASH := 3
+var _counter_marker: Node2D = null
+var _counter_poly: Polygon2D = null
+var _counter_label: Label = null
+var _eye_glint: Node2D = null
+var _counter_t: float = 0.0     # 마커 맥동 위상
+var _cstate: int = CS_IDLE
+var _cstate_t: float = 0.0
+var _charge_dir: Vector2 = Vector2.RIGHT     # 돌진 방향(조준 시 고정) — 이 방향으로 직진
+var _charge_traveled: float = 0.0            # 돌진 이동 거리 안전 상한용
+var _parry_open_t: float = -1.0   # >=0 = 받아치기 창 열림 카운트다운, -1 = 아직 안 열림
+var _parry_used: bool = false     # 이번 돌진에서 이른 F로 헛치면 잠금(스팸 방지)
+var _lock_linger: float = 0.0     # 잠금(빨간 ✕)을 눈에 보이게 잠깐 더 유지
+
 
 func _ready() -> void:
 	if not TestMode.is_active():
@@ -74,10 +105,12 @@ func _ready() -> void:
 
 
 func _setup() -> void:
+	HealthComponent.force_damage_one = true   # 테스트 랩 — 모든 데미지 1 (프로덕션 무영향, 정적 플래그)
 	_boss = get_parent().get_node_or_null("Boss")
 	_coop = get_parent().get_node_or_null("CoopAuthority")
 	if _boss != null:
 		_boss.debug_hold = true       # 보스 자동공격 정지 (버튼으로만)
+		_boss.speed_mult = 5.0        # 접근(추격) 속도 x5 (테스트) — 보스정지 해제 시 체감
 	if _coop != null:
 		_coop.debug_hold = true       # 코옵 자동순환 정지 (버튼으로만)
 		# 상단 코옵 디버그 상태줄(버전·boss·인원·host next) 숨김 — 랩 화면 정리(마스터 실플레이엔 무접촉).
@@ -89,6 +122,7 @@ func _setup() -> void:
 	_reposition()             # 보스·NPC=보스 방, 플레이어=진입 방
 	_build_bounds()           # 2방 벽 + 진입 방 바닥 + 바깥 void
 	_setup_vision()           # 조준 방향 시야 콘 (로컬 플레이어)
+	_setup_counter()          # 카운터 약점(F 표식) — 테스트: 플레이어 쪽에 상시
 	_setup_camera()           # 방 카메라 (클램프+스냅)
 	_setup_lighting()         # 2D 라이팅 — 어두운 성역 + 발광 지점(맵 퀄업)
 	_apply_boss_rim()         # 보스 밝은 림(뒤 실루엣) — 청록 배경에서 또렷하게
@@ -594,6 +628,306 @@ func _ensure_vision(lp: Node) -> void:
 	_vision = holder
 
 
+# 카운터 약점(F 표식) — 다이아몬드(가산 청록 맥동) + "F". _process가 플레이어 쪽 보스 가장자리로 옮긴다.
+func _setup_counter() -> void:
+	var holder := Node2D.new()
+	holder.name = "CounterMarker"
+	holder.z_index = 8
+	get_parent().add_child(holder)
+	var poly := Polygon2D.new()
+	var s := 15.0
+	poly.polygon = PackedVector2Array([Vector2(0, -s), Vector2(s, 0), Vector2(0, s), Vector2(-s, 0)])
+	poly.color = Color(0.4, 1.0, 0.8, 0.85)
+	var pm := CanvasItemMaterial.new()
+	pm.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	poly.material = pm
+	holder.add_child(poly)
+	_counter_poly = poly
+	var lbl := Label.new()
+	lbl.text = "F"
+	lbl.add_theme_font_size_override("font_size", 15)
+	lbl.add_theme_color_override("font_color", Color(0.95, 1.0, 0.98))
+	lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	lbl.add_theme_constant_override("outline_size", 4)
+	lbl.position = Vector2(-5.0, -12.0)
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(lbl)
+	_counter_label = lbl
+	_counter_marker = holder
+	# 눈 반짝(예고) — 보스 눈 위치에 밝은 두 점. GLINT 국면에만 보임.
+	var glint := Node2D.new()
+	glint.name = "EyeGlint"
+	glint.z_index = 8
+	glint.visible = false
+	get_parent().add_child(glint)
+	for dx: float in [-8.0, 8.0]:
+		var eye := Sprite2D.new()
+		eye.texture = _light_tex()
+		eye.scale = Vector2.ONE * 0.12
+		eye.modulate = Color(0.85, 1.0, 0.95, 1.0)
+		var em := CanvasItemMaterial.new()
+		em.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+		eye.material = em
+		eye.position = Vector2(dx, 0.0)
+		glint.add_child(eye)
+	_eye_glint = glint
+
+
+# 카운터 상태머신(호출: _process): IDLE(5초) → GLINT(눈 반짝) → AIM(바라봄+줄) → DASH(돌진, 도중 F=카운터).
+func _update_counter(lp: PlayerActor, delta: float) -> void:
+	if _counter_marker == null or not is_instance_valid(_counter_marker) or _boss == null:
+		return
+	_counter_t += delta
+	lp.roll_suppressed = (_cstate != CS_IDLE)   # 카운터 시퀀스(눈 반짝~돌진) 내내 F=카운터, 구르기 억제(안 그러면 튀어나감)
+	var h := _boss.get_node_or_null("Health") as HealthComponent
+	if h == null or h.hp <= 0:   # 죽으면 전부 끔
+		_reset_counter()
+		return
+	_cstate_t += delta
+	match _cstate:
+		CS_IDLE:
+			_counter_marker.visible = false
+			_eye_glint.visible = false
+			_boss.counter_ready = false
+			if _cstate_t >= COUNTER_INTERVAL:
+				_cstate = CS_GLINT
+				_cstate_t = 0.0
+		CS_GLINT:
+			# 눈 반짝(예고). 아직 조준·돌진 전.
+			_counter_marker.visible = false
+			_boss.counter_ready = false
+			_eye_glint.visible = true
+			_eye_glint.global_position = _boss.global_position + EYE_OFFSET
+			_eye_glint.scale = Vector2.ONE * (0.5 + 0.7 * absf(sin(_cstate_t * TAU * 5.0)))
+			if _cstate_t >= COUNTER_GLINT:
+				# 조준 개시 — 돌진 방향 고정(현재 플레이어 향) + 보스가 바라봄
+				_cstate = CS_AIM
+				_cstate_t = 0.0
+				var d: Vector2 = lp.global_position - _boss.global_position
+				d = d.normalized() if d.length() > 1.0 else Vector2.RIGHT
+				_charge_dir = d
+				_charge_traveled = 0.0
+				var bspr := _boss.get_node_or_null("Sprite") as AnimatedSprite2D
+				if bspr != null:
+					bspr.flip_h = d.x < 0.0
+		CS_AIM:
+			# 보스가 바라보며 줄 생김(플레이어까지 연결) + 몸색 앰버. 돌진 직전 조준.
+			_eye_glint.visible = false
+			_boss.counter_ready = true
+			_show_counter_marker_on_boss(lp)
+			if _cstate_t >= CHARGE_AIM:
+				_cstate = CS_DASH
+				_cstate_t = 0.0
+				_parry_open_t = -1.0     # 받아치기 창 초기화
+				_parry_used = false
+				EventBus.screen_shake.emit(4.0)
+		CS_DASH:
+			# 돌진 — 고정 방향으로 직진. 근접(내 앞)하면 창 열림, 그 안 F만 성공.
+			# 🔴 종료 = "보스가 내 캐릭터 뒤를 지나간 순간"(고정 지점 아님). 성공 시엔 클래시가 앞에서 멈춤.
+			_boss.counter_ready = true
+			# 앞에 있나(이동 전) — 창은 앞에서만 열림
+			var in_front: bool = (_boss.global_position - lp.global_position).dot(_charge_dir) <= 0.0   # _boss Node 타입 명시
+			var pd: float = _boss.global_position.distance_to(lp.global_position)
+			if not _parry_used and _parry_open_t < 0.0 and pd <= PARRY_OPEN_RANGE and in_front:
+				_parry_open_t = PARRY_WINDOW   # 앞에서 근접 → 창 열림
+			if _parry_open_t >= 0.0:
+				_parry_open_t -= delta
+			_show_counter_marker_on_boss(lp)
+			# 이동(고정 방향 직진, 🔴 맵 클램프 — 벽 뚫고 날아가지 않게)
+			var step := CHARGE_SPEED * delta
+			_boss.global_position = _clamp_arena(_boss.global_position + _charge_dir * step)
+			_charge_traveled += step
+			# 종료: 뒤를 지나간 순간(이동 후 재판정) = 실패(잠금이면 빨간 ✕ 잠깐 유지) · 안전 상한도
+			var passed: bool = (_boss.global_position - lp.global_position).dot(_charge_dir) > 0.0
+			if passed or _charge_traveled > 550.0:
+				if _parry_used and _lock_linger > 0.0:
+					_lock_linger -= delta
+				else:
+					_charge_hit(lp)        # 내 뒤를 지나감 = 실패
+					_reset_counter()
+
+
+# F 표식을 보스 앞(대상 쪽)에 배치 + 맥동. 받아치기 창이 열리면 "지금!" 강조(흰노랑·크게).
+func _show_counter_marker_on_boss(lp: PlayerActor) -> void:
+	_counter_marker.visible = true
+	var to_p: Vector2 = lp.global_position - _boss.global_position
+	to_p = to_p.normalized() if to_p.length() > 1.0 else Vector2.RIGHT
+	_counter_marker.global_position = _boss.global_position + to_p * COUNTER_OFFSET
+	var open := _parry_open_t >= 0.0
+	# 3-상태: 잠김(빨간 ✕) / 지금!(노랑, 크게) / 대기(청록)
+	if _parry_used:
+		_counter_marker.scale = Vector2.ONE * 0.9
+		if _counter_poly != null:
+			_counter_poly.color = Color(0.9, 0.2, 0.2, 0.92)
+		if _counter_label != null:
+			_counter_label.text = "✕"
+			_counter_label.add_theme_color_override("font_color", Color(1.0, 0.55, 0.55))
+	else:
+		_counter_marker.scale = Vector2.ONE * ((1.35 if open else 0.9) + 0.18 * sin(_counter_t * TAU * 8.0))
+		if _counter_poly != null:
+			_counter_poly.color = Color(1.0, 1.0, 0.45, 0.98) if open else Color(0.35, 0.85, 0.7, 0.7)
+		if _counter_label != null:
+			_counter_label.text = "F"
+			_counter_label.add_theme_color_override("font_color", Color(0.95, 1.0, 0.98))
+
+
+# 카운터 국면 끝 — 전부 끄고 IDLE(다음 기회 5초 뒤).
+func _reset_counter() -> void:
+	_cstate = CS_IDLE
+	_cstate_t = 0.0
+	_parry_open_t = -1.0
+	_parry_used = false
+	_lock_linger = 0.0
+	if _counter_marker != null:
+		_counter_marker.visible = false
+	if _eye_glint != null:
+		_eye_glint.visible = false
+	if _boss != null:
+		_boss.counter_ready = false
+	var lp := _local_player()
+	if lp != null:
+		lp.roll_suppressed = false   # 카운터 끝 = 구르기 복구
+
+
+# F 입력 → 돌진 중에만. 받아치기 창(_parry_open_t≥0)이면 성공, 이르게 누르면 헛침(이번 돌진 잠금).
+func _try_counter() -> void:
+	if _cstate != CS_DASH or _boss == null or _parry_used:
+		return
+	var lp := _local_player()
+	if lp == null:
+		return
+	if _parry_open_t >= 0.0:
+		_reset_counter()      # 창 안 — 카운터 성공
+		_counter_strike(lp)
+	else:
+		_parry_used = true    # 이른 F — 헛침, 이번 돌진은 더 못 받아침(빨간 ✕)
+		_lock_linger = 0.5
+
+
+# 맵 밖 방지 — 카운터/돌진 tween 목표를 벽 안쪽으로 클램프.
+func _clamp_arena(p: Vector2) -> Vector2:
+	return Vector2(clampf(p.x, ARENA_SAFE.position.x, ARENA_SAFE.end.x),
+		clampf(p.y, ARENA_SAFE.position.y, ARENA_SAFE.end.y))
+
+
+# 카운터 성공 = 클래시 — 둘이 서로 마주 달려 부딪히고(스파크+프리즈) 서로 반대로 튕겨난다. 좌표 전부 맵 클램프.
+func _counter_strike(lp: PlayerActor) -> void:
+	var spr := lp.get_node_or_null("Sprite") as AnimatedSprite2D
+	var p0: Vector2 = lp.global_position
+	var b0: Vector2 = _boss.global_position
+	var to_boss: Vector2 = b0 - p0
+	to_boss = to_boss.normalized() if to_boss.length() > 0.5 else Vector2.RIGHT
+	var clash: Vector2 = _clamp_arena((p0 + b0) * 0.5)
+	var p_clash: Vector2 = _clamp_arena(clash - to_boss * 16.0)
+	var b_clash: Vector2 = _clamp_arena(clash + to_boss * 16.0)
+	var p_recoil: Vector2 = _clamp_arena(clash - to_boss * 48.0)
+	var b_recoil: Vector2 = _clamp_arena(clash + to_boss * 60.0)
+	lp.velocity = Vector2.ZERO
+	var bspr := _boss.get_node_or_null("Sprite") as AnimatedSprite2D
+	if bspr != null:
+		bspr.flip_h = p0.x < b0.x   # 보스가 플레이어 향함
+	var tw := create_tween()
+	# 1) 서로 클래시 지점으로 확 달려듦 (부딪힘)
+	tw.tween_property(lp, "global_position", p_clash, 0.06).set_trans(Tween.TRANS_QUINT).set_ease(Tween.EASE_IN)
+	tw.parallel().tween_property(_boss, "global_position", b_clash, 0.06).set_trans(Tween.TRANS_QUINT).set_ease(Tween.EASE_IN)
+	# 2) 부딪힘 — 스파크·프리즈·피해·스태거·흔들림·성공 표시
+	tw.chain().tween_callback(_clash_impact.bind(clash))
+	tw.tween_interval(0.1)
+	# 3) 서로 반대로 튕겨남
+	tw.tween_property(lp, "global_position", p_recoil, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(_boss, "global_position", b_recoil, 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	# 잔상 (달려들 때)
+	if spr != null:
+		var at := create_tween()
+		for _i in 5:
+			at.tween_callback(Afterimage.spawn.bind(spr, lp))
+			at.tween_interval(0.015)
+
+
+# 부딪힘 순간: 보스 피해 + 꿇음 + 스파크 + 카메라 흔들림 + "성공!" 표시.
+func _clash_impact(pos: Vector2) -> void:
+	if _boss == null:
+		return
+	var h := _boss.get_node_or_null("Health") as HealthComponent
+	if h != null:
+		h.apply_damage(COUNTER_DAMAGE, true)
+	if _boss.has_method("counter_stagger"):
+		_boss.counter_stagger()
+	_clash_fx(pos)
+	EventBus.screen_shake.emit(7.0)
+	_popup_text(pos + Vector2(0.0, -42.0), "성공!", Color(0.65, 1.0, 0.72))
+
+
+# 돌진 명중(안 침/잠금) = 실패 — 흔들림 + "실패" 표시 + 플레이어 피해(무적 무시, 실패에 대가) + 넉백.
+func _charge_hit(lp: PlayerActor) -> void:
+	if lp == null or _boss == null:
+		return
+	EventBus.screen_shake.emit(6.0)
+	_popup_text(lp.global_position + Vector2(0.0, -42.0), "실패", Color(1.0, 0.45, 0.42))
+	# 실패 = 돌진에 맞음 → 무적을 뚫고 피해(force_damage_one이 1로 캡). 실패에 실제 대가.
+	var ph := lp.get_node_or_null("Health") as HealthComponent
+	if ph != null:
+		ph.apply_damage(9, false, true)
+	# 넉백 — 보스 반대로 밀림 (맵 클램프)
+	var away: Vector2 = lp.global_position - _boss.global_position
+	away = away.normalized() if away.length() > 0.5 else Vector2.RIGHT
+	lp.velocity = Vector2.ZERO
+	var kb: Vector2 = _clamp_arena(lp.global_position + away * 42.0)
+	var tw := create_tween()
+	tw.tween_property(lp, "global_position", kb, 0.18).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+
+
+# 클래시 스파크 — 밝은 흰 확산 링 + 방사 스파크 선.
+func _clash_fx(pos: Vector2) -> void:
+	var s := Sprite2D.new()
+	s.texture = _ring_tex()
+	s.modulate = Color(1.0, 1.0, 0.9, 1.0)
+	var m := CanvasItemMaterial.new()
+	m.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	s.material = m
+	s.z_index = 11
+	get_parent().add_child(s)
+	s.global_position = pos
+	s.scale = Vector2.ONE * 0.2
+	var tw := create_tween()
+	tw.parallel().tween_property(s, "scale", Vector2.ONE * 2.1, 0.26)
+	tw.parallel().tween_property(s, "modulate:a", 0.0, 0.26)
+	tw.chain().tween_callback(s.queue_free)
+	for i in 6:
+		var ang: float = TAU * float(i) / 6.0
+		var d := Vector2(cos(ang), sin(ang))
+		var ln := Line2D.new()
+		ln.points = PackedVector2Array([pos + d * 7.0, pos + d * 28.0])
+		ln.width = 3.0
+		ln.default_color = Color(1.0, 0.96, 0.7, 0.95)
+		ln.z_index = 11
+		var lm := CanvasItemMaterial.new()
+		lm.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+		ln.material = lm
+		get_parent().add_child(ln)
+		var lt := create_tween()
+		lt.tween_property(ln, "modulate:a", 0.0, 0.16)
+		lt.tween_callback(ln.queue_free)
+
+
+# 성공/실패 월드 텍스트 팝 — 살짝 떠오르며 사라짐.
+func _popup_text(pos: Vector2, text: String, color: Color) -> void:
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.add_theme_font_size_override("font_size", 22)
+	lbl.add_theme_color_override("font_color", color)
+	lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	lbl.add_theme_constant_override("outline_size", 5)
+	lbl.z_index = 12
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	get_parent().add_child(lbl)
+	lbl.global_position = pos
+	var tw := create_tween()
+	tw.parallel().tween_property(lbl, "global_position", pos + Vector2(0.0, -26.0), 0.6)
+	tw.parallel().tween_property(lbl, "modulate:a", 0.0, 0.6)
+	tw.chain().tween_callback(lbl.queue_free)
+
+
 # 방 카메라 = 플레이어 카메라를 현재 방 경계에 클램프(따라가되 방 안에만). 경계 넘으면 리밋 스왑 = 스냅.
 func _setup_camera() -> void:
 	_apply_room_camera(1)   # 진입 방부터
@@ -781,10 +1115,10 @@ func _build_panel() -> void:
 	panel.add_child(vb)
 
 	_add_title(vb, "◆ 패턴 랩")
-	_add_title(vb, "· 보스")
-	var g_boss := _grid(vb, 3)
-	for e: Array in BOSS_BTNS:
-		_add_btn(g_boss, str(e[0]), _on_boss.bind(str(e[1])))
+	_add_title(vb, "· 카운터")
+	var g_cnt := _grid(vb, 2)
+	_add_btn(g_cnt, "눈반짝", _on_force_glint)   # 전체: 눈 반짝 → 조준 → 돌진
+	_add_btn(g_cnt, "돌진", _on_force_charge)     # 눈 반짝 건너뛰고 바로 조준→돌진
 	_add_title(vb, "· 코옵")
 	var g_coop := _grid(vb, 2)
 	for e: Array in COOP_BTNS:
@@ -844,9 +1178,14 @@ func _add_check(parent: Node, txt: String, on: bool, cb: Callable) -> CheckBox:
 
 
 # ── 버튼 핸들러 ──
-func _on_boss(pid: String) -> void:
-	if _boss != null and _boss.has_method("debug_force_pattern"):
-		_boss.debug_force_pattern(pid)
+func _on_force_glint() -> void:
+	_cstate = CS_GLINT      # 전체 시퀀스: 눈 반짝 → 조준 → 돌진
+	_cstate_t = 0.0
+
+
+func _on_force_charge() -> void:
+	_cstate = CS_GLINT      # 눈 반짝 건너뛰고 즉시 조준(AIM)으로
+	_cstate_t = COUNTER_GLINT
 
 
 func _on_coop(idx: int) -> void:
@@ -921,6 +1260,7 @@ func _process(_delta: float) -> void:
 	_ensure_vision(lp)
 	if _vision != null and is_instance_valid(_vision):
 		_vision.rotation = float(lp.get("_aim_angle"))
+	_update_counter(lp, _delta)   # 카운터 약점 배치·맥동·재무장
 	# 방 전환(젤다식): 경계 넘으면 카메라 스냅 + 보스 방 진입 시 뒤 통로 봉쇄
 	var room := 2 if lp.global_position.x >= ROOM_SPLIT_X else 1
 	if room != _cur_room:
@@ -937,7 +1277,12 @@ func _process(_delta: float) -> void:
 # P = 패턴 패널 토글 (기본 숨김 → 맵 깨끗). 게임 입력과 안 겹치는 키.
 func _unhandled_input(event: InputEvent) -> void:
 	var ke := event as InputEventKey
-	if ke != null and ke.pressed and not ke.echo and ke.physical_keycode == KEY_P:
+	if ke == null or not ke.pressed or ke.echo:
+		return
+	if ke.physical_keycode == KEY_P:
 		if _panel_layer != null:
 			_panel_layer.visible = not _panel_layer.visible
+		get_viewport().set_input_as_handled()
+	elif ke.physical_keycode == KEY_F:
+		_try_counter()   # 카운터
 		get_viewport().set_input_as_handled()

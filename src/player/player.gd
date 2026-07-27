@@ -140,6 +140,7 @@ var _attack_cd_left: float = 0.0
 var _roll_time_left: float = 0.0
 var _roll_cd_left: float = 0.0
 var _roll_dir: Vector2 = Vector2.RIGHT
+var roll_suppressed: bool = false   # 외부(테스트 랩)가 켜면 구르기 입력 무시 — 돌진 중 F=카운터가 구르기와 안 겹치게. 기본 false=프로덕션 무영향
 var _fx_left: float = 0.0
 var _fx_delay_left: float = 0.0
 # 검기 파형 진행 상태 (표시 전용) — 방향·출발/도착 거리를 스윙 시점에 굳혀 두고 선형 보간한다.
@@ -763,7 +764,7 @@ func _local_move(delta: float) -> void:
 		# 걷기만 늪 배율 적용. 기 모으는 중(charge 무기)이면 추가로 느려진다 — 모으는 대가(사용자 확정)
 		var charge_mult := CHARGE_MOVE_MULT if _charging else 1.0
 		velocity = dir * _move_speed() * _swamp_mult() * charge_mult
-		if _alive and Input.is_action_just_pressed("roll") and _roll_cd_left <= 0.0:
+		if _alive and not roll_suppressed and Input.is_action_just_pressed("roll") and _roll_cd_left <= 0.0:
 			_roll_dir = dir if dir != Vector2.ZERO else _aim_dir()
 			_roll_time_left = CombatMath.ROLL_TIME_S
 			# 🔴 로컬 쿨과 호스트 그랜트 검증(is_roll_grant_ok)이 **같은 함수**를 지난다(§3) —
