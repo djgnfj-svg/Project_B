@@ -181,6 +181,16 @@ var _combo_left: float = 0.0        # 근접 콤보가 이어지는 남은 시�
 #   산술을 하므로(양쪽이 같은 함수를 지나려면) 클라도 같은 형태로 재야 한다.
 var _shot_combo_index: int = 0
 var _last_shot_msec: int = -1000000000
+# 홀드 연사(속사수 `auto_fire` 특성) — 버튼을 누르고 있는 동안 쿨다운마다 자동 발사 중인가.
+# ⚠ **엣지로만 켜진다**(첫 발은 반드시 클릭) — 차지와 같은 관용구다: 시작은 `_unhandled_input`이라
+#   UI가 소비한 클릭으로는 안 열리고, 유지만 폴링으로 본다. 폴링으로 시작까지 하면 패널 위에서
+#   클릭할 때마다 화살이 나간다(rules §5 mouse_filter 규약을 우회하게 된다).
+# 🔴 **막는 것은 "시작"뿐이다 — 이미 켜진 연사는 모달 위에서도 이어진다** (2026-07-28 netreview M-2).
+#   유지가 원시 폴링(`Input.is_action_pressed`)이라 마우스를 누른 채 F1/I를 열면 Backdrop(STOP)이
+#   클릭을 먹는 것과 **무관하게** 화살이 계속 나간다. `_tick_charge`가 같은 트레이드오프를 의도적으로
+#   택했으므로(UI 위에서 버튼을 떼도 발사되게) 규약 위반은 아니지만, **실기에서 발사율을 잴 때는
+#   패널을 열기 전에 버튼을 떼라** — 안 그러면 로그가 오염된다.
+var _auto_firing: bool = false
 var _swing_from: float = 0.0        # 이번 스윙의 시작 각 오프셋(rad) — 콤보 타수에 따라 방향이 뒤집힌다
 var _swing_to: float = 0.0          # 이번 스윙의 끝 각 오프셋(rad)
 var _swing_lunge_mult: float = 1.0  # 이번 스윙의 내지르기 배율(마무리 타만 크게)
@@ -405,6 +415,7 @@ func _apply_weapon_feel(equip: EquipDef) -> void:
 	# 무기가 바뀌면 콤보도 처음부터 — 리듬은 무기가 정하므로 옛 무기의 타수를 이어받으면 새 무기의
 	# 배율 배열에 엉뚱한 칸이 걸린다(호스트는 자기 간격으로 세니 표시만 어긋난다).
 	_shot_combo_index = 0
+	_auto_firing = false  # 무기가 바뀌면 홀드 연사도 끊는다 — 새 무기가 shoot가 아닐 수 있다
 	_refresh_growth_derived()  # 무기 교체도 파생 입력 — 새 base에 현재 haste를 다시 곱한다
 	if is_node_ready():
 		# 차지 오브 = 그 무기의 투사체 텍스처(표시 전용) — 모으는 탄과 날아가는 탄이 같은 그림.
@@ -806,18 +817,52 @@ func _local_combat(delta: float) -> void:
 	_attack_queued = false
 	if not _alive:
 		_cancel_charge()  # 사망 = 모으던 것 소멸 (고스트가 계속 모으지 않게)
+		_stop_auto_fire()  # 사망 = 홀드 연사도 소멸 (고스트가 계속 쏘지 않게 — 차지와 대칭)
 		return
 	# 무장 해제(무기 미착용) = 공격 불가 — 판정·궤적·소리 전부 안 나간다. 무기가 곧 공격 수단.
 	var motion := _weapon_motion()
 	if motion == "charge" and _is_armed():
 		_tick_charge(delta, want)  # 누르고 있는 동안 모으고, 떼면 발사 (쿨다운 게이트는 안에서)
 		return
+	# 홀드 연사(속사수 `auto_fire`) — 이미 켜져 있으면 버튼 유지가 곧 다음 발의 입력이다.
+	# ⚠ `motion == "shoot"`을 여기서 다시 본다 — 무기 교체가 이미 끄지만(set_weapon_visual), 이 조건이
+	#   없으면 그 리셋을 한 곳이라도 놓쳤을 때 **근접 무기가 홀드로 연타되는** 훨씬 나쁜 상태가 된다.
+	# ⚠ `seated` 가드 — 앉으면 홀드가 끊긴다(GDD §5 "앉는 동안 무방비"). 클릭 발사는 `_attack_queued`가
+	#   서서 `_local_move`가 스스로 일어나는데, 홀드는 그 큐를 안 거치므로 **앉은 채로 계속 쏘고
+	#   회복까지 받는** 경로가 열려 있었다(2026-07-28 netreview I4). 다시 클릭하면 큐가 서서 일어난다.
+	# ⚠ `is_trait_on`을 유지 조건에서도 다시 본다 — 마을에서 속사수를 슬롯에서 빼면 그 즉시 끊긴다.
+	#   안 보면 버튼을 놓을 때까지 연사가 이어져 "표시(특성 없음) ≠ 상태(연사 중)"가 된다(판정 차이는
+	#   없다 — 호스트는 `auto_fire`를 안 읽는다 — 순수 표시 정합, 2026-07-28 netreview M-3).
+	if _auto_firing:
+		if (motion == "shoot" and not seated
+				and CombatMath.is_trait_on("auto_fire", trait_value("auto_fire"))
+				and Input.is_action_pressed("attack")):
+			want = true
+		else:
+			_stop_auto_fire()
 	if want and _attack_cd_left <= 0.0 and _roll_time_left <= 0.0 and _is_armed():
 		var dir := _aim_dir()
 		# 모션 타입 분기 (§2 게이트): shoot = 원거리 발사(화살), charge = 위에서 처리, 그 외 = 근접 호 스윙.
 		if motion == "shoot":
-			# 🔴 쿨다운을 콤보가 정한다 — 다음 타에 뜸이 붙어 있으면 그만큼 길어진다("평·평·쭉").
-			_attack_cd_left = _advance_shot_combo()
+			if _auto_firing:
+				# 🔴 홀드로 나가는 발사는 **콤보를 전진시키지 않는다**(사용자 확정: 홀드 = 균일 연사).
+				#   전진시키면 마무리 타(사거리 2배·데미지 2.5배)가 자동으로 무한 반복돼 화력 예산 밖이
+				#   되고, "끊어 쳐서 쭉을 쓴다"는 선택 자체가 사라진다.
+				#   ⚠ 호스트는 이 결론에 **독립적으로** 도달한다 — G_SHOOT "cb"에 0이 실리고
+				#   authoritative_combo가 `min(주장, 자기 계수)`이라 0으로 눌린다(판정 ≤ 표시, §3).
+				#   즉 이 줄이 지워져도 호스트 판정은 안 세지고 **내 화면만** 마무리 타로 그려진다
+				#   (안전한 방향의 갈라짐 — 그래도 표시가 거짓이 되므로 지우지 마라).
+				_shot_combo_index = 0
+				_last_shot_msec = Time.get_ticks_msec()
+				# 🔴 쿨다운이 아니라 `auto_fire_gap_s` — 호스트 발사율 게이트의 여유가 궁수 0.15초에서
+				#   15ms뿐이라, 쿨다운 그대로 쏘면 정직한 화살이 지터로 조용히 거부된다(그 함수 주석).
+				_attack_cd_left = CombatMath.auto_fire_gap_s(job, _haste())
+			else:
+				# 🔴 쿨다운을 콤보가 정한다 — 다음 타에 뜸이 붙어 있으면 그만큼 길어진다("평·평·쭉").
+				_attack_cd_left = _advance_shot_combo()
+				# 이 클릭부터 홀드 반복을 연다(특성이 있을 때만). **첫 발은 항상 콤보 경로**를 지나므로
+				# 딸깍 한 번은 특성 유무와 무관하게 기존과 완전히 같다(항등).
+				_auto_firing = CombatMath.is_trait_on("auto_fire", trait_value("auto_fire"))
 			_fire_projectile(dir, 0)
 		else:
 			_attack_cd_left = CombatMath.effective_cooldown(job, _haste())
@@ -859,6 +904,20 @@ func _cancel_charge() -> void:
 	_charging = false
 	_charge_held = 0.0
 	_charge_level = 0
+
+
+# 홀드 연사 종료 — **플래그만 끈다. 콤보 상태는 절대 건드리지 않는다.**
+# 🔴 첫 판에 여기서 `_shot_combo_index`·`_last_shot_msec`을 지웠다가 **속사수가 3타를 영영 못 내는**
+#   상태를 만들었다(2026-07-28 netreview C1). `_auto_firing`은 **첫 클릭에** 켜지므로, 딸깍 한 번만
+#   쳐도 다음 프레임에 여기가 불려 콤보가 소거된다 → 다음 클릭의 `elapsed_s`가 1e6초가 되어
+#   `advance_combo`가 영원히 0을 돌려준다. 즉 "끊어 쳐서 쭉을 쓴다"는 이 특성의 존재 이유가
+#   구현에서 사라졌는데 **cb가 항상 0이라 호스트와 어긋나지도 않아** 에러도 desync도 없었다.
+# ⚠ `_last_shot_msec` 소거는 원래 `_on_death`(:528)가 명시적으로 금지한 동작이기도 하다 —
+#   호스트는 자기 기록을 사망으로 지우지 않으므로 클라만 지우면 타수가 어긋난다.
+# 홀드 뒤 첫 클릭이 "2타"로 이어지는 것은 이미 auto 분기가 막는다(매 발 index 0 · last_shot = now로
+# 정규화한다) — 종료 시점에 지울 것이 없다.
+func _stop_auto_fire() -> void:
+	_auto_firing = false
 
 
 # 원거리 평타 콤보 전진 — 이번 발사의 타수(_shot_combo_index)를 굳히고, **다음 타의 뜸까지 포함한**

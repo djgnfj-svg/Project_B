@@ -85,6 +85,34 @@ func _initialize() -> void:
 	failures += _check(CombatMath.trait_text("reach", 0.3).ends_with("+30%"), "trait_text: 증가 축은 + 표기")
 	failures += _check(CombatMath.trait_text("", 0.3) == "", "trait_text: 특성 없음 = 빈 문자열")
 
+	# --- on/off 특성: 홀드 연사(auto_fire) — **첫 토글 축** (속사수, 2026-07-28) ---
+	# 🔴 나머지 7키는 전부 비율인데 이것만 스위치다. 그래서 검사 축이 둘이다 —
+	#   ⑴ 카탈로그 등록 3곳(다른 키와 같은 함정: 하나라도 빠지면 상한 0으로 **조용히** 폐기된다)
+	#   ⑵ 토글 관용구 자체(비교 부호·표기·축 오용) — 이쪽은 이 키가 처음이라 준거가 없다.
+	var af_max := float(CombatMath.TRAIT_MAX.get("auto_fire", 0.0))
+	failures += _check("auto_fire" in CombatMath.TRAIT_KEYS, "auto_fire: TRAIT_KEYS 등록(묶음 clamp 순회 대상)")
+	failures += _check(is_equal_approx(af_max, 1.0), "auto_fire: 상한 1.0 (켜짐/꺼짐 — 비율이 아니다)")
+	failures += _check(is_equal_approx(float(CombatMath.clamp_traits({"auto_fire": 1.0}).get("auto_fire", -1.0)), 1.0),
+		"auto_fire: 묶음 clamp 통과 — TRAIT_MAX 미등록이면 여기가 0으로 빨개진다")
+	failures += _check("auto_fire" in CombatMath.TRAIT_TOGGLE,
+		"auto_fire: TRAIT_TOGGLE 등록 — 빠지면 아래 표기 두 줄이 '+100%'로 빨개진다")
+	# 🔴 판정 단일 소스는 `>` 여야 한다 — `>=`로 바뀌면 특성이 **없는**(0.0) 대상까지 홀드 연사를 얻는다.
+	# ⚠ 이것은 **로컬 입력 모드**의 정확성이지 신뢰 경계가 아니다(호스트는 auto_fire를 안 읽는다).
+	#   사칭 방어를 여기서 증명했다고 읽지 마라 — 그 축은 `is_trait_on` 주석 참조.
+	failures += _check(CombatMath.is_trait_on("auto_fire", 1.0), "auto_fire: 값 1.0 = 켜짐")
+	failures += _check(not CombatMath.is_trait_on("auto_fire", 0.0),
+		"auto_fire: 값 0.0 = 꺼짐 (>= 로 바뀌면 여기가 빨개진다 — 아무나 홀드 연사)")
+	failures += _check(not CombatMath.is_trait_on("auto_fire", -1.0), "auto_fire: 음수 → 꺼짐 (clamp 경유)")
+	failures += _check(not CombatMath.is_trait_on("auto_fire", INF), "auto_fire: INF(JSON 1e999) → 꺼짐 (유한성 가드)")
+	# 🔴 비율 키를 스위치로 오용하는 것 차단 — reach는 값이 커도 토글 축이 아니라 항상 false다
+	failures += _check(not CombatMath.is_trait_on("reach", 0.3),
+		"auto_fire: 비율 키는 is_trait_on이 항상 false (축 오용 차단)")
+	# 🔴 표기 — 스위치를 "+100%"로 내면 **곱해지는 축**처럼 읽혀 GDD §6 🔒 경계가 화면에서 흐려진다
+	failures += _check(CombatMath.trait_text("auto_fire", 1.0) == "홀드 연사",
+		"auto_fire: 켜짐 = 라벨만 (퍼센트 표기 금지)")
+	failures += _check(CombatMath.trait_text("auto_fire", 0.0) == "",
+		"auto_fire: 꺼짐 = 빈 문자열 (subjob_panel이 이걸로 스킵한다 — 안 그러면 '홀드 연사'가 항상 뜬다)")
+
 	# i-frame 창 — ROLL_TIME_S 0.25×1000 + GRACE 120 → 370ms
 	failures += _check(CombatMath.is_iframe_active(1000, 1000), "iframe: 그랜트 직후(0ms) 유효")
 	failures += _check(CombatMath.is_iframe_active(1000, 1370), "iframe: 창 경계(370ms) 유효")
@@ -781,6 +809,8 @@ func _initialize() -> void:
 	var swing_ok := true
 	var degenerate_ok := true
 	var lead_ok := true
+	var auto_fire_ok := true
+	var auto_fire_margin_ok := true
 	for jf: String in DirAccess.get_files_at("res://data/jobs"):
 		var jbase := jf.trim_suffix(".remap")
 		if jbase.get_extension() != "tres":
@@ -803,6 +833,21 @@ func _initialize() -> void:
 		# 퇴화 트립와이어: 유효 쿨다운 게이트가 SAME_SWING_MS(다중 타격 창)보다 짧아지면 쿨다운 검증이 무의미해진다
 		if CombatMath.effective_cooldown(j, float(CombatMath.LEVEL_STAT_MAX["haste"])) * 0.9 * 1000.0 <= float(CombatMath.SAME_SWING_MS):
 			degenerate_ok = false
+		# 🔴 **홀드 연사가 호스트 발사율 게이트 위에 오는가 — 직업 × haste 전수** (2026-07-28 netreview C2).
+		#    깨지면 정직한 홀드가 지터로 조용히 거부되는데 **표시 화살은 그대로 날아간다**(데미지만 0,
+		#    HUD·소리·반동 전부 정상) — 화면에 이유가 없는 부류다. 게다가 호스트 자신은 이 게이트를
+		#    안 지나(`combat_authority._on_player_shoot`) **게스트만** 손해 봐서 신고조차 엇갈린다.
+		# ⚠ 검사가 둘인 이유: ⑴만으로는 "지터 0에서 간신히 통과"도 초록이다. 실기에서 문제가 되는 것은
+		#    여유의 **크기**이므로 ⑵가 호스트 프레임 1주기를 흡수하는지 따로 본다.
+		for h2: float in [0.0, 0.25, float(CombatMath.LEVEL_STAT_MAX["haste"])]:
+			var af_gap_ms := CombatMath.auto_fire_gap_s(j, h2) * 1000.0
+			# ⑴ 지터 0에서 통과하는가 (호스트 게이트와 **같은 함수**로 묻는다 — 임계식을 복제하지 않는다)
+			if not CombatMath.is_fire_rate_ok(0, int(af_gap_ms), j, h2):
+				auto_fire_ok = false
+			# ⑵ 여유 ≥ 호스트 프레임 1주기 — `auto_fire_gap_s`를 쿨다운 그대로 되돌리면 여기가 빨개진다
+			var af_thresh_ms := CombatMath.effective_cooldown(j, h2) * CombatMath.FIRE_RATE_SLACK * 1000.0
+			if af_gap_ms - af_thresh_ms < CombatMath.AUTO_FIRE_HOST_FRAME_S * 1000.0 - 0.001:
+				auto_fire_margin_ok = false
 		for ef: String in DirAccess.get_files_at("res://data/equipment"):
 			var ebase := ef.trim_suffix(".remap")
 			if ebase.get_extension() != "tres":
@@ -821,6 +866,8 @@ func _initialize() -> void:
 	failures += _check(swing_ok, "스윙 창 계약 전수: 모든 무기×직업×haste에서 swing_time < effective_cooldown")
 	failures += _check(degenerate_ok, "퇴화 트립와이어: MAX_HASTE에서도 유효 쿨다운 게이트 > SAME_SWING_MS")
 	failures += _check(lead_ok, "외삽 상한 불변식: LAG_MAX_LEAD_DIST ≥ 최고 이속×구르기×최대 lead (전 직업)")
+	failures += _check(auto_fire_ok, "홀드 연사 전수: auto_fire_gap_s가 호스트 is_fire_rate_ok를 통과(직업×haste)")
+	failures += _check(auto_fire_margin_ok, "홀드 연사 전수: 게이트 여유 ≥ 호스트 프레임 1주기 (산발 유실 방어)")
 
 	# 🔴 **차지 가치 트립와이어 — "모으는 것이 탭 연타보다 나은가"** (법사 무기 분화, 2026-07-27).
 	#    유도: 레벨 L을 모아 쏘는 주기 = `쿨다운 + L×단계시간`, 위력 = `×CHARGE_DAMAGE_MULT[L]`.

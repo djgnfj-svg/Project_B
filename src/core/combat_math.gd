@@ -26,7 +26,7 @@ const MAX_REACH_BONUS := 0.5  # 하드 상한 +50% (GDD §6) — 근접이 원�
 #   LEVEL_STAT_KEYS와 같은 관용구 — 별도 매핑 표를 만들면 그게 두 번째 진실원이 되어 갈라진다.
 # 🔒 여기 들어올 수 있는 것 = **합계 데미지에 곱해지지 않는 축**뿐이다(GDD §6 예산).
 #   공격력·체력(장비 축)·공속·치명(5스탯 축)을 키로 추가하는 변경은 기획 변경이 선행 조건이다.
-const TRAIT_KEYS: Array[String] = ["reach", "roll_cd", "roll_dist", "campfire_heal", "kill_move", "drop_find", "proj_range"]
+const TRAIT_KEYS: Array[String] = ["reach", "roll_cd", "roll_dist", "campfire_heal", "kill_move", "drop_find", "proj_range", "auto_fire"]
 
 # 키별 **하드 상한** — 같은 키를 메인·서브가 같이 밀면 합산된 뒤 여기서 잘린다.
 # 🔴 상한을 두는 이유는 키마다 다르다(GDD §6에 근거를 남겼다):
@@ -59,9 +59,34 @@ const TRAIT_MAX: Dictionary = {
 	# ⚠ 값이 MAX_REACH_BONUS와 같지만 **별칭으로 묶지 않는다** — 근거가 다른 축이라(근접은 "직업 = 플레이
 	#   방식" 경계, 여기는 절삭 여유) 별칭으로 두면 한쪽 튜닝이 다른 쪽을 조용히 움직인다.
 	"proj_range": 0.5,
+	# 🔴 **첫 on/off 축이다** — 나머지 7개는 전부 비율인데 이것만 "켜짐/꺼짐"이다(상한 1.0 = 켜짐).
+	#   판정은 `is_trait_on` 하나로만 한다(아래) — 호출부에서 `> 0.0`을 직접 쓰면 다음 사람이 `>=`로
+	#   적는 순간 0.0(= 특성 없음)이 켜진 것으로 읽힌다.
+	# 🔴 **화력 예산 밖인 근거**: 발사 간격은 여전히 `effective_cooldown`이 정하고 호스트 게이트
+	#   (`is_fire_rate_ok`)도 그대로다 — 이 키가 여는 것은 **입력 유지 방식**(탭 연타 → 홀드)뿐이라
+	#   DPS **상한**이 안 움직인다. 움직이는 것은 그 상한에 도달하는 난이도다.
+	#   ⚠ 대신 홀드 중에는 콤보를 전진시키지 않는다(player `_local_combat`) — 안 그러면 마무리 타
+	#   (사거리 2배·데미지 2.5배)가 자동으로 무한 반복돼 그때는 진짜로 예산 밖이 된다.
+	"auto_fire": 1.0,
 }
+# on/off 축 — 값이 비율이 아니라 스위치라 UI에 "+100%"로 적으면 안 된다(`trait_text`가 라벨만 낸다).
+const TRAIT_TOGGLE: Array[String] = ["auto_fire"]
 
 const KILL_MOVE_TIME_S := 3.0  # 처치 후 이속 버프 지속(연출/손맛값 — §0 예외, 사용자가 조인다)
+
+
+# on/off 특성이 켜졌는지 판정하는 **단일 소스**. 비교식을 호출부에 흩뿌리면 다음 사람이 `>=`로 적어
+# 특성이 **없는**(0.0) 대상까지 켜진 것으로 읽는다. 토글 축이 아닌 키는 항상 false(비율 키 오용 차단).
+#
+# 🔴 **이것은 신뢰 경계 함수가 아니다 — 로컬 입력 모드 스위치다** (2026-07-28 netreview I2 정정).
+#   `auto_fire`를 읽는 곳은 `player._local_combat`(자기 아바타) **하나뿐이고 호스트는 어디서도 안 본다.**
+#   그래서 하위 직업 id를 사칭해 이 특성을 주장해도 얻는 것이 없다 — 변조 클라는 특성과 무관하게
+#   이미 `is_fire_rate_ok` 상한까지 G_SHOOT을 뿌릴 수 있다(수용 표면 증가 0).
+# ⚠ **호스트 판정 입력을 이 스위치에 매달지 마라.** `peer_traits`는 발신자 트러스트이고 보유 검증이
+#   없다(rules §2 G_STATS 게이트). 발사율 완화·콤보 규칙 분기처럼 **호스트가 보는 값**을 여기 걸면
+#   그때 비로소 진짜 구멍이 된다 — 그 순간 이 함수는 성격이 바뀌고 §2 게이트를 먼저 통과해야 한다.
+static func is_trait_on(key: String, value: float) -> bool:
+	return key in TRAIT_TOGGLE and clamp_trait(key, value) > 0.0
 
 
 # 🔴 비율 보너스를 **정수 수량**에 적용하는 단일 소스 — 소수 잔량을 누적해 1 이상일 때만 올린다.
@@ -113,6 +138,7 @@ const TRAIT_LABEL: Dictionary = {
 	"kill_move": "처치 후 이동속도",
 	"drop_find": "골드·재료 드랍",
 	"proj_range": "투사체 사거리",  # 근접 "평타 사거리"(reach)와 문구로도 구분된다 — 두 축이 서로 안 걸린다
+	"auto_fire": "홀드 연사",  # on/off 축 — 퍼센트가 아니라 라벨만 나간다(TRAIT_TOGGLE)
 }
 # 값이 클수록 "줄어드는" 축 — 부호를 뒤집어 표기한다(쿨다운 −15%).
 const TRAIT_REDUCTION: Array[String] = ["roll_cd"]
@@ -122,6 +148,10 @@ static func trait_text(key: String, value: float) -> String:
 	if key.is_empty() or not TRAIT_LABEL.has(key):
 		return ""
 	var v := clamp_trait(key, value)
+	# on/off 축은 수치가 의미를 갖지 않는다 — 꺼져 있으면 아예 문구가 없고(빈 문자열 = 특성 없음과
+	# 같은 취급), 켜져 있으면 라벨만. 여기서 "+100%"를 내면 값이 곱해지는 축처럼 읽힌다.
+	if key in TRAIT_TOGGLE:
+		return str(TRAIT_LABEL[key]) if is_trait_on(key, v) else ""
 	var sign_s := "−" if key in TRAIT_REDUCTION else "+"
 	return "%s %s%d%%" % [str(TRAIT_LABEL[key]), sign_s, int(round(v * 100.0))]
 
@@ -514,6 +544,37 @@ static func is_arrow_hit(arrow_pos: Vector2, enemy_pos: Vector2, enemy_radius: f
 # 근접의 is_hit_cooldown_ok와 달리 SAME_SWING 다중타격 허용이 없다 — 화살 하나=한 발이라 매 발사 독립 게이트.
 static func is_fire_rate_ok(last_shot_msec: int, now_msec: int, job: JobDef, haste: float = 0.0) -> bool:
 	return now_msec - last_shot_msec >= int(effective_cooldown(job, haste) * FIRE_RATE_SLACK * 1000.0)
+
+
+# 🔴 홀드 연사(`auto_fire`)가 **자동으로** 내는 발사 간격(s) — 위 게이트 **위**에 오도록 유도한다.
+#
+# 왜 쿨다운을 그대로 쓰면 안 되나 (2026-07-28 netreview C2):
+#   `is_fire_rate_ok`의 임계는 `cooldown × FIRE_RATE_SLACK`이라 **여유가 쿨다운에 비례**한다.
+#   궁수 0.15초에서 그 여유는 **15ms**뿐인데, 호스트가 재는 것은 자기 **수신 처리 시각**의 차라
+#   프레임 양자화 하나(웹 30fps = 33ms)만으로 넘어간다. 사람의 클릭은 경계에 안 붙어서 이 좁음이
+#   지금까지 안 드러났고, 홀드 연사는 **모든 발사를 경계에 못 박는다**.
+#   거부돼도 표시 화살(`arrow_field`)은 게이트 없이 날아가므로 **데미지만 0**이 된다 —
+#   HUD·소리·반동이 전부 정상이라 화면에 이유가 없다. 게다가 호스트 자신은 이 게이트를 안 지나
+#   (`combat_authority._on_player_shoot`) **게스트만** 손해 본다.
+#
+# 🔴 **클라가 물러선다 — 게이트를 넓히지 않는다.** `FIRE_RATE_SLACK`을 키우면 조작 클라의 스팸 상한이
+#   같이 올라가 신뢰 경계가 넓어진다(rules §2 4인/PvP 게이트 대상). 클라가 여유를 내면 표면은 그대로다.
+#   대가 = 홀드의 실효 DPS가 상한에 못 미치는 것인데, 그건 오히려 "홀드는 **편의**이지 강화가 아니다"
+#   (TRAIT_MAX["auto_fire"] 주석)와 부합한다. 클릭으로 끊어 치는 쪽이 리듬·사거리 둘 다 얻는다.
+#
+# 🔴 유도 — **여유의 목표선은 "호스트 프레임 1주기"이지 비율이 아니다.** 슬랙을 나눠서 되돌리는
+#   것(`cooldown / SLACK`)만으로는 궁수 0.15초에서 여유가 **31.7ms**라 30fps 프레임(33.3ms)에
+#   못 미친다 — 비율 여유는 쿨다운이 짧을수록 작아지는데 **양자화는 쿨다운에 비례하지 않기** 때문이다.
+#   그래서 둘 중 큰 쪽을 쓴다:
+#     ⑴ `cooldown / SLACK`      — 긴 쿨다운(전사 0.4·법사 0.5)에서 지배. 비율 여유가 이미 충분하다.
+#     ⑵ `cooldown × SLACK + 프레임` — 짧은 쿨다운(궁수 0.15)에서 지배. **임계 위에 프레임 하나**를 얹는다.
+#   경계는 `cooldown ≈ 0.158초`다. 결과적으로 궁수 홀드 간격 = 168ms(쿨다운 150ms의 **112%**) —
+#   실효 DPS가 클릭 리듬의 약 92%가 되어 "홀드는 편하지만 조금 약하다"가 데이터로 성립한다.
+const AUTO_FIRE_HOST_FRAME_S := 1.0 / 30.0  # 호스트 수신 처리의 최악 양자화(웹 30fps). 60fps면 절반이 여유로 남는다
+# ⚠ 실기에서 여전히 화살이 산발적으로 씹히면 여기를 조인다 — `docs/TUNING.md` §9.
+static func auto_fire_gap_s(job: JobDef, haste: float = 0.0) -> float:
+	var cd := effective_cooldown(job, haste)
+	return maxf(cd / FIRE_RATE_SLACK, cd * FIRE_RATE_SLACK + AUTO_FIRE_HOST_FRAME_S)
 
 
 # 호스트의 발사 원점 검증 — 원점이 발사자 net_anchor 근처인가 (순간이동 원점 스푸핑 완화, §3 신뢰 경계).
