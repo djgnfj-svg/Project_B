@@ -45,6 +45,23 @@ const ATTACK_ANIMS: Array[StringName] = [&"swing", &"slam", &"spray"]
 # 공격 애니 speed_scale 하한 — 0/음수는 애니를 세우거나 거꾸로 돌린다. 히트스톱 정지(0.0) 판별과도 겹치지 않게.
 const MIN_ANIM_SPEED_SCALE := 0.01
 
+# 유령 생명감 연출 (rules §0 예외 — 사용자가 조인다). 🔴 손맛 계층과 채널이 안 겹치게 골랐다:
+# 부유=offset.y(위치는 Flinch), 명멸=modulate.a(머티리얼은 HitFlash), 아우라=별도 자식 스프라이트.
+# scale은 HitStop, speed_scale은 _apply_anim_scale이 쥐고 있어 건드리지 않는다.
+const BOB_HZ := 0.7            # 부유 주기(Hz) — 아주 느긋하게
+const BOB_AMP := 0.8           # 부유 진폭(px) — 위아래는 거의 안 느껴질 만큼만
+const SWAY_HZ := 0.6          # 좌우 표류 주기(Hz) — 부유와 다른 주기라 정처 없이 떠도는 느낌
+const SWAY_AMP := 1.0         # 좌우 표류 진폭(px)
+# 노이즈 지터 — 손상된 데이터 프로세스가 지직거리는 흔들림(사인 드리프트에 얹음). 컨셉 = 데이터 망령.
+const NOISE_AMP := 1.6        # 노이즈 흔들림 진폭(px)
+const NOISE_SPEED := 1.2      # 노이즈 표본 이동 속도(클수록 빠른 지직임) — 느긋하게 꿈틀대게
+const SHIMMER_HZ := 2.2        # 명멸 주기(Hz)
+const SHIMMER_MIN_A := 0.84    # 명멸 최소 알파(1.0까지 왕복)
+const AURA_HZ := 1.35          # 아우라 맥동 주기(Hz)
+const AURA_BASE_SCALE := 1.15  # 아우라 기본 스케일(128px 방사 텍스처 기준)
+const AURA_PULSE := 0.1        # 아우라 맥동 폭(스케일 배수)
+const AURA_COLOR := Color(0.32, 0.8, 0.66, 0.42)  # 가산 청록 발광
+
 enum State { IDLE, CHASE, WINDUP, RECOVER }
 
 @export var eid: String = ""
@@ -77,6 +94,9 @@ var _telegraph_center: Vector2 = Vector2.ZERO
 # WINDUP 진입/예고 수신 때 한 번 확정해 표시·타격이 같은 값을 쓰게 한다(중간에 RTT가 흔들려도 안 갈라지게).
 var _telegraph_hold_s: float = 0.0
 var _anim_scale: float = 1.0           # 지금 애니에 걸려 있어야 할 speed_scale (공격 애니만 1.0이 아니다)
+var _life_t: float = 0.0               # 생명감 연출 시간 누적(부유·명멸·아우라 위상)
+var _aura: Sprite2D = null             # 보스 발밑 가산 발광(따라다님) — _ready에서 생성
+var _noise: FastNoiseLite = null       # 지터용 연속 노이즈(1D 표본) — _ready에서 생성
 
 @onready var _sprite: AnimatedSprite2D = $Sprite
 @onready var _collision: CollisionShape2D = $Collision
@@ -119,7 +139,25 @@ func _ready() -> void:
 	_health.hp_confirmed.connect(func(hp: int) -> void: EventBus.enemy_hp_confirmed.emit(eid, hp))
 	# 물뿌리기 N개 원 텔레그래프 + 애니 = 이 구독이 그린다 (호스트/게스트 공용 단일 경로).
 	EventBus.boss_spray.connect(_on_boss_spray)
+	_setup_aura()
+	_noise = FastNoiseLite.new()
+	_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	_noise.frequency = 1.0   # 표본 좌표를 _life_t*NOISE_SPEED로 직접 굴리므로 여기선 항등에 가깝게
 	_play(&"idle")
+
+
+# 발밑 가산 발광 — 유령이 오염 에너지에 감싸인 느낌. 보스 자식이라 이동을 따라온다(코드 생성 = 씬 무변경).
+func _setup_aura() -> void:
+	_aura = Sprite2D.new()
+	_aura.texture = _radial_tex()
+	_aura.z_index = -3                       # 몸(0) 아래·바닥(-10) 위 — 보스를 감싸는 발광
+	_aura.z_as_relative = false
+	_aura.modulate = AURA_COLOR
+	var m := CanvasItemMaterial.new()
+	m.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	_aura.material = m
+	_aura.scale = Vector2.ONE * AURA_BASE_SCALE
+	add_child(_aura)
 
 
 func _on_hp_changed(hp: int, dropped: bool) -> void:
@@ -167,6 +205,7 @@ func _physics_process(delta: float) -> void:
 		if _telegraph_left <= 0.0:
 			_telegraph.visible = false
 	_apply_anim_scale()
+	_update_life_feel(delta)
 	if _health.is_dead() or def == null:
 		_reassert_telegraph_pos()
 		return
@@ -184,6 +223,48 @@ func _physics_process(delta: float) -> void:
 	# "소유자가 자기 의도를 재주장한다"). 대안이던 `top_level = true`는 드로우 순서까지 바꿔 z 층
 	# (바닥 -10 < 예고 -1 < 몸 0)을 눈으로 재확인해야 하므로 고르지 않았다.
 	_reassert_telegraph_pos()
+
+
+# 유령 생명감 — 부유(offset.y)·명멸(modulate.a)·아우라 맥동. 표시 전용, 호스트/게스트 공통(로컬 위상).
+# 🔴 손맛 채널과 안 겹친다(선언부 주석): 위치=Flinch·스케일=HitStop·머티리얼=HitFlash·speed=애니.
+# 죽으면 정지하고 값을 원상 복구해 시체가 명멸/부유하지 않게 한다.
+func _update_life_feel(delta: float) -> void:
+	if _health.is_dead():
+		_sprite.offset = Vector2.ZERO
+		_sprite.modulate.a = 1.0
+		if _aura != null:
+			_aura.visible = false
+		return
+	_life_t += delta
+	# 사인 드리프트(정처 없이) + 노이즈 지터(지직거림). 노이즈는 x/y 표본 좌표를 멀리 떨어뜨려 상관 제거.
+	var nx := _noise.get_noise_1d(_life_t * NOISE_SPEED) if _noise != null else 0.0
+	var ny := _noise.get_noise_1d(_life_t * NOISE_SPEED + 1000.0) if _noise != null else 0.0
+	_sprite.offset.x = sin(_life_t * TAU * SWAY_HZ) * SWAY_AMP + nx * NOISE_AMP
+	_sprite.offset.y = sin(_life_t * TAU * BOB_HZ) * BOB_AMP + ny * NOISE_AMP
+	_sprite.modulate.a = SHIMMER_MIN_A + (1.0 - SHIMMER_MIN_A) * (0.5 + 0.5 * sin(_life_t * TAU * SHIMMER_HZ))
+	if _aura != null:
+		_aura.visible = true
+		_aura.scale = Vector2.ONE * (AURA_BASE_SCALE * (1.0 + AURA_PULSE * sin(_life_t * TAU * AURA_HZ)))
+
+
+# 아우라용 방사 그라디언트(흰→투명) — 가산 블렌드로 발광. 정적 1회 생성(공유).
+static var _radial: GradientTexture2D = null
+
+
+static func _radial_tex() -> GradientTexture2D:
+	if _radial == null:
+		var g := Gradient.new()
+		g.set_color(0, Color(1, 1, 1, 1))
+		g.set_color(1, Color(1, 1, 1, 0))
+		var t := GradientTexture2D.new()
+		t.gradient = g
+		t.fill = GradientTexture2D.FILL_RADIAL
+		t.fill_from = Vector2(0.5, 0.5)
+		t.fill_to = Vector2(1.0, 0.5)
+		t.width = 128
+		t.height = 128
+		_radial = t
+	return _radial
 
 
 func _host_ai(delta: float) -> void:
