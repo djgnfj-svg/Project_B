@@ -5,6 +5,8 @@ extends Control
 
 const SettingsPanelScene := preload("res://src/ui/settings_panel.tscn")  # rules §0: class_name 대신 preload
 const UiTheme := preload("res://src/ui/ui_theme.gd")  # UI 톤 단일 소스 (제작/인벤/HUD와 같은 테마)
+# 개발 모드 게이트 단일 소스. 오토로드 인스턴스 대신 **스크립트**를 물어 static으로 부른다.
+const DebugBridgeScript := preload("res://src/core/debug_bridge.gd")
 
 @onready var _url_edit: LineEdit = %UrlEdit
 @onready var _code_edit: LineEdit = %CodeEdit
@@ -12,6 +14,7 @@ const UiTheme := preload("res://src/ui/ui_theme.gd")  # UI 톤 단일 소스 (�
 @onready var _join_btn: Button = %JoinBtn
 @onready var _adv_btn: Button = %AdvBtn
 @onready var _settings_btn: Button = %SettingsBtn
+@onready var _debug_btn: Button = %DebugBtn  # 개발 모드 토글 — 켜 두면 F1 패널이 URL 없이 열린다
 @onready var _status: Label = %Status
 @onready var _job_btns: Dictionary[String, Button] = {  # job id -> 토글 버튼 (ButtonGroup로 라디오)
 	"warrior": %WarriorBtn as Button,
@@ -44,6 +47,18 @@ func _ready() -> void:
 	_host_btn.pressed.connect(_on_host_pressed)
 	_join_btn.pressed.connect(_on_join_pressed)
 	_adv_btn.pressed.connect(func() -> void: _url_edit.visible = not _url_edit.visible)
+	# 개발 모드 — `?debug=1`을 URL에 매번 붙이지 않으려고 만든 토글(사용자 요청 2026-07-28).
+	# ⚠ 다른 경로(URL `?debug=1` · 에디터/네이티브)로 이미 켜진 경우엔 **토글로 끌 수 없다** —
+	#   게이트가 OR이라 토글을 꺼도 그쪽이 계속 연다. 눌러도 안 꺼지는 버튼은 고장으로 읽히므로
+	#   비활성 + 사유를 툴팁에 적는다.
+	var elsewhere := DebugBridgeScript.panel_enabled() and not DebugBridgeScript.panel_forced()
+	_debug_btn.button_pressed = DebugBridgeScript.panel_forced() or elsewhere
+	_debug_btn.disabled = elsewhere
+	_debug_btn.tooltip_text = ("이미 켜져 있습니다 — URL의 debug=1 또는 개발 환경(에디터) 때문입니다"
+		if elsewhere else "켜면 게임 중 F1로 개발 패널(직업·장비·레벨·시험장)이 열립니다. 이 선택은 기억됩니다")
+	_debug_btn.toggled.connect(func(on: bool) -> void:
+		DebugBridgeScript.set_panel_forced(on)
+		_status.text = "개발 모드 %s — F1로 패널을 엽니다" % ("켬" if on else "끔"))
 	var settings := SettingsPanelScene.instantiate()
 	add_child(settings)  # CanvasLayer(layer 10) — 로비 위 오버레이
 	_settings_btn.pressed.connect(settings.open)

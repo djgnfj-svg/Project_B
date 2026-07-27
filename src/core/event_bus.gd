@@ -63,7 +63,20 @@ signal camera_kick(dir: Vector2, strength: float)
 # 소리/연출 트리거 (표시·소리 전용, 각 클라 로컬) — Audio가 SFX로, 필요시 연출이 구독.
 signal player_swing(world_pos: Vector2, sfx: String)   # 플레이어 공격 스윙(로컬·원격 연출 시점) — sfx = 무기 스윙음 id(EquipDef.swing_sfx). ⚠ 발사(EquipDef.swing_sfx)·**차지 단계 상승(charge_sfx)**도 이 훅을 재사용한다 = "소리 낼 순간" 훅에 가깝다. 여기에 스윙 궤적 같은 **시각** 연출을 매달면 기 모을 때마다 검을 휘두른다 — 시각을 붙일 땐 sfx id로 갈라내거나 별도 시그널을 파라
 signal player_roll(world_pos: Vector2)    # 플레이어 구르기 시작
-signal entity_died(kind: String, world_pos: Vector2)  # kind = "enemy"|"player" — 사망 확정 표시
+# kind = "enemy"|"player" — 사망 확정 표시.
+# 🔴 `respawns` = 그 적이 **되살아나는가**(EnemyDef.respawns — 훈련용 허수아비). 소리에는 무의미하지만
+#   「광란」(kill_move)처럼 **처치를 보상하는 구독자**는 이걸 보고 걸러야 한다 — 안 그러면 부활하는
+#   허수아비 앞에서 버프가 **상시 유지**된다(에러 없음). `exp_authority`가 무한 EXP 파밍을 코드로 막은
+#   것과 같은 부류이고, rules §2가 "허수아비를 씬에 배치하기 전"의 선행 조건으로 걸어 둔 항목이다.
+#   ⚠ 플레이어 사망은 항상 false(부활은 별도 경로 — 여기서 말하는 것은 적 데이터의 respawns다).
+signal entity_died(kind: String, world_pos: Vector2, respawns: bool)
+
+# 🔴 **개발 도구 전용** (2026-07-28) — 디버그 패널(src/ui)이 그 씬의 SceneFlow(src/net)에 스테이지 이동을
+#   요청한다. 모듈 간 직접 참조 금지(rules §0) 때문에 EventBus를 지나는 것이지, 새 권한 경로가 아니다.
+# 🔴 **신뢰 경계는 안 바뀐다** — 받는 쪽 `SceneFlow.request_stage`가 `Net.is_host()` + `_departed` +
+#   `GameState.is_valid_stage`(챕터 스캔 allowlist) 가드를 **그대로** 지난다. 게스트가 눌러도 아무 일도
+#   일어나지 않고, 없는 챕터를 주면 push_error로 끝난다. 네트워크 메시지도 새로 생기지 않는다(G_SCENE 재사용).
+signal debug_stage_requested(chapter_id: String, idx: int)
 # 내 무기가 적중(공격자 로컬 예측 — 호스트 확정 전 즉발). 무기별 타격 손맛: Audio가 sfx(비면 무음),
 # 카메라가 shake. 범용 "피격" 연출(플래시·데미지 숫자·범용 히트음)은 combat_impact가 별도로 담당한다.
 signal weapon_impact(world_pos: Vector2, sfx: String, shake: float)

@@ -11,6 +11,9 @@ var _departed: bool = false  # 전환 지시 중복 방지 (연타·수신 에�
 func _ready() -> void:
 	EventBus.net_msg.connect(_on_net_msg)
 	EventBus.leave_to_village_requested.connect(_on_leave_to_village)
+	# 개발 도구(디버그 패널 → 시험장). `request_stage`가 호스트·중복·allowlist 가드를 그대로 지나므로
+	# 여기 구독을 더해도 신뢰 경계가 넓어지지 않는다 — 게스트가 눌러도 조용히 무시된다.
+	EventBus.debug_stage_requested.connect(request_stage)
 
 
 # 설정 "마을로 가기" — 호스트만 전원 귀환 지시(request가 게스트/중복 호출을 조용히 무시).

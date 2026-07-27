@@ -16,11 +16,56 @@ var _cb_hurt: JavaScriptObject = null
 var _cb_smite: JavaScriptObject = null
 
 
-func _ready() -> void:
-	if not OS.has_feature("web"):
+const SETTINGS_PATH := "user://settings.cfg"  # Audio와 **같은 파일**(섹션만 다르다 — 저장 시 병합한다)
+
+# 로비 「개발 모드」 토글 — URL에 `?debug=1`을 매번 붙이지 않아도 되게 한 것(사용자 요청 2026-07-28).
+# 한 번 켜면 `user://settings.cfg`(웹 = IndexedDB)에 남아 새로고침해도 유지된다. 세이브와는 별개 파일이라
+# 「새로하기」로 안 지워진다.
+static var _forced: bool = false
+static var _forced_loaded: bool = false
+
+
+static func _load_forced() -> void:
+	if _forced_loaded:
 		return
-	var search := str(JavaScriptBridge.eval("window.location.search", true))
-	if not ("debug=1" in search):
+	_forced_loaded = true  # 실패해도 다시 안 읽는다(매 호출 디스크 I/O 방지 — panel_enabled는 자주 불린다)
+	var cfg := ConfigFile.new()
+	if cfg.load(SETTINGS_PATH) == OK:
+		_forced = bool(cfg.get_value("debug", "panel", false))
+
+
+# 🔴 개발 도구 게이트의 **단일 소스** — 이 브리지와 디버그 패널(F1)이 같은 판정을 쓴다.
+#   여는 길은 셋: ⑴ 로비 토글(저장됨) ⑵ 웹이면 `?debug=1` ⑶ 웹이 아니면(에디터·네이티브 = 개발 환경) 항상.
+#   ⚠ 판정식을 호출부에 복제하지 마라 — 한쪽만 조이면 "브리지는 열렸는데 패널은 안 열린다"가 된다.
+static func panel_enabled() -> bool:
+	_load_forced()
+	if _forced:
+		return true
+	if not OS.has_feature("web"):
+		return true
+	return "debug=1" in str(JavaScriptBridge.eval("window.location.search", true))
+
+
+static func panel_forced() -> bool:
+	_load_forced()
+	return _forced
+
+
+# ⚠ 저장은 **병합**이다 — `cfg.load()`로 기존 값을 읽고 덮어써야 Audio의 볼륨·뮤트가 날아가지 않는다
+#   (`audio.gd._save_settings`와 같은 관용구. 한쪽이 병합을 빼면 다른 쪽 설정이 조용히 사라진다).
+static func set_panel_forced(on: bool) -> void:
+	_load_forced()
+	_forced = on
+	var cfg := ConfigFile.new()
+	cfg.load(SETTINGS_PATH)
+	cfg.set_value("debug", "panel", on)
+	cfg.save(SETTINGS_PATH)
+
+
+func _ready() -> void:
+	# 브리지(window.pb_*)는 **웹에서만** 의미가 있다 — 네이티브엔 붙일 window가 없다.
+	# 그래서 패널 게이트(비웹 = 항상 true)와 달리 여기서 웹을 한 번 더 본다.
+	if not OS.has_feature("web") or not panel_enabled():
 		return
 	_cb_press = JavaScriptBridge.create_callback(_on_press)
 	_cb_release = JavaScriptBridge.create_callback(_on_release)

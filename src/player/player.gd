@@ -299,8 +299,15 @@ func trait_value(key: String) -> float:
 # 「광란」(kill_move) — 적이 쓰러지면 잠깐 빨라진다. **로컬 아바타만** 굴린다(원격은 좌표를 수신으로 받는다).
 # 🔴 협동이라 **누가 막타를 냈는지 묻지 않는다** — EXP 전원 동일 지급과 같은 철학이고, 막타는 호스트만
 #   아는 정보라 게스트에게 알리려면 새 메시지가 필요하다(그만한 값이 안 나온다).
-func _on_entity_died(kind: String, _world_pos: Vector2) -> void:
+func _on_entity_died(kind: String, _world_pos: Vector2, respawns: bool) -> void:
 	if not is_local or kind != "enemy":
+		return
+	# 🔴 **되살아나는 적(훈련용 허수아비)은 광란을 주지 않는다** — 안 그러면 시험장에서 버프가
+	#   **상시 유지**된다(때리고 또 때리면 되니까). 데이터 값(`exp`)을 0으로 두는 것에 기대지 않고
+	#   `exp_authority`가 EXP를 **코드로** 제외한 것과 같은 자리다 — 다음 사람이 값을 넣으면 그만이니까.
+	#   rules §2가 "허수아비를 씬에 배치하기 전"의 선행 조건으로 걸어 뒀던 항목이고, 시험장을 만들면서
+	#   해소했다(2026-07-28).
+	if respawns:
 		return
 	if trait_value("kill_move") > 0.0:
 		_kill_move_left = CombatMath.KILL_MOVE_TIME_S
@@ -498,7 +505,7 @@ func _on_hp_changed_feel(new_hp: int, dropped: bool) -> void:
 		Flinch.play(_sprite, global_position - opp)  # 피격원 반대로 흠칫
 	else:
 		EventBus.screen_shake.emit(5.0)  # 사망은 강하게
-		EventBus.entity_died.emit("player", global_position)
+		EventBus.entity_died.emit("player", global_position, false)  # 플레이어 부활은 별도 경로(적 데이터의 respawns가 아니다)
 
 
 # 사망 = 관전 고스트 (GDD §5): 공격·구르기 차단, 이동은 자유(충돌 off), G_POS는 계속 송신
