@@ -23,14 +23,14 @@ const REMOTE_TINT := Color(1.0, 0.75, 0.75)
 const GHOST_ALPHA := 0.4
 const ATTACK_FX_DELAY := 0.07        # 예비동작이 끝나고 스윕이 시작될 때 궤적을 표시
 const ATTACK_FX_TIME := 0.18         # 궤적 잔상 페이드 시간
-const SWOOSH_TEX_RADIUS := 23.0      # swoosh_arc.png의 호 바깥 반지름(px) — FX 스케일 기준 (텍스처와 미러)
+const SWOOSH_TEX_RADIUS := 46.0      # swoosh_arc.png의 호 바깥 반지름(px) — FX 스케일 기준 (텍스처와 미러)
 # 검기 파형 (검성 메인 특성, GDD v1.9) — **표시 전용**. 평타 스윙과 같은 프레임에 태어나 앞으로 뻗는다.
 # 🔴 파형은 판정을 만들지 않는다 — 판정은 확장된 사거리를 쓴 원형 질의 하나뿐이고, 파형은 그 사거리가
 #   왜 늘었는지를 눈에 보여주는 것이다(GDD §6: 파형 자체 데미지 없음). 그래서 도달 거리를 연출값으로
 #   따로 두지 않고 **항상 기하(attack_center_offset+attack_radius)에서 파생**한다 — 여기 값을 키워
 #   더 멀리 보이게 만들면 "보이는 곳 ≠ 맞는 곳"이 된다.
 const WAVE_FX_TIME := 0.22           # 파형이 뻗어 사라지기까지 (연출값 — 사용자 실기 튜닝, §0 예외)
-const WAVE_TEX_HALF_H := 6.0        # sword_wave.png 세로 반높이(px) — 판정 반경 정합 스케일 기준 (텍스처와 미러)
+const WAVE_TEX_HALF_H := 12.0        # sword_wave.png 세로 반높이(px) — 판정 반경 정합 스케일 기준 (텍스처와 미러)
 const WAVE_START_RATIO := 0.55       # 파형이 태어나는 지점 = 기본 사거리 도달점 × 이 비율 (스윙 궤적 안에서 출발)
 # ⚠ 미러(rules §3): 스윙 창은 모든 JobDef.attack_cooldown보다 짧아야 한다 (전사 0.4s) —
 #   원격 창-잠금 가드(play_attack_fx)가 정당한 연속 공격의 스윙을 무시하지 않으려면.
@@ -38,13 +38,13 @@ const WAVE_START_RATIO := 0.55       # 파형이 태어나는 지점 = 기본 �
 const ATTACK_ANIM_TIME := 0.25       # 스윙 창 기본값(폴백) — 무기별은 EquipDef.swing_time
 const SWING_HALF_ARC := 1.9          # 스윙 호 반각(rad) 기본값(폴백) — 무기별은 EquipDef.swing_arc
 const WEAPON_AIM_LERP := 18.0        # 원격 조준각 보간 속도
-const HOLD_DIST := 2.0               # 몸 중심 → 그립 거리 (몸에 붙지 않게 떨어뜨려 든다)
+const HOLD_DIST := 8.0               # 몸 중심 → 그립 거리 (몸에 붙지 않게 떨어뜨려 든다)
 const LUNGE_DIST := 5.0              # 스윕 중 앞으로 내지르는 거리
 const REMOTE_MAX_SPEED_MULT := 1.5  # 원격 변위 클램프 여유 — 순간이동 스푸핑 완화 (rules §3)
 const ENEMY_BODY_MASK := 1 << 2  # 물리 레이어 3 enemy_body — rules §5 배정표가 단일 소스
 # 발사(shoot 무기 = 궁수 활) — 표시 연출값(§0 예외, 사용자 튜닝). 화살 속도/사거리는 CombatMath(결정론 공용).
-const MUZZLE_OFFSET := 13.0          # 발사 원점 = 몸 중심 → 조준 방향 이만큼 앞. 16px 전환으로 26→13(몸 반경 8 + 탄 반길이) — 탄 뒤끝이 몸 밖에 있어야 겹쳐 보이지 않는다. SHOT_ORIGIN_TOL이 이 값+지연을 수용
-const RECOIL_DIST := 2.0             # 발사 시 활을 뒤로 당기는 거리(px) — 반동 손맛
+const MUZZLE_OFFSET := 26.0          # 발사 원점 = 몸 중심 → 조준 방향 이만큼 앞. 화살 길이 18(반9)+몸 반경 16 → 26이면 화살 뒤끝(17)이 몸 밖 (겹침 방지). SHOT_ORIGIN_TOL이 이 값+지연을 수용
+const RECOIL_DIST := 4.0             # 발사 시 활을 뒤로 당기는 거리(px) — 반동 손맛
 const RECOIL_TIME := 0.14            # 반동 복귀 시간(s)
 # 차지 발사(charge 무기 = 법사 지팡이) — 표시 연출값(§0 예외, 사용자 튜닝).
 # 단계 수·위력/반경 배율은 CombatMath.CHARGE_*(§3 단일 소스), 단계 시간은 무기별(EquipDef.charge_step_time).
@@ -109,7 +109,7 @@ var _kill_move_left: float = 0.0  # 「광란」(kill_move) 남은 지속 — �
 
 # 무기 겉모습 — 착용 무기(EquipDef.weapon_texture)에서 그린다. 미착용이면 직업 기본 무기로 폴백.
 # _weapon_grip은 _update_weapon이 매 프레임 참조 → 착용/직업에 따라 바뀌므로 멤버로 보관(job.weapon_grip 직참 금지).
-var _weapon_grip: Vector2 = Vector2(2.0, 4.0)
+var _weapon_grip: Vector2 = Vector2(4.0, 8.0)
 var _weapon_override: EquipDef = null       # 마지막 착용 무기 — set_job 재호출(재공지/재합류) 시 겉모습 유지용 보관. null = 무장 해제
 
 # 무기 손맛 — set_weapon_visual이 착용 무기(EquipDef)에서 세팅, 미착용/미지정이면 기본값 폴백. 전부 표시 전용(네트워크 0).
@@ -232,9 +232,7 @@ func set_job(j: JobDef) -> void:
 	job = j
 	if j.frames != null:
 		_sprite.sprite_frames = j.frames
-		# ⚠ 애니 이름을 여기서 못 박지 마라 — 4방향 시트는 "idle"이 없고 "idle_s" 등만 있다.
-		#   _update_anim이 매 프레임 _play_dir_anim으로 방향에 맞는 것을 고른다(폴백 포함).
-		_play_dir_anim(&"idle")
+		_sprite.play("idle")
 	# 무기 겉모습은 착용 무기(EquipDef)에서만 그린다(무기 = 장비). 직업 재공지/재합류로 set_job이
 	# 다시 불려도 override(마지막 착용) 재적용해 겉모습 유지. 미착용이면 무장 해제(무기 미표시).
 	set_weapon_visual(_weapon_override)
@@ -361,7 +359,7 @@ func roll_cooldown_ratio() -> float:
 func set_weapon_visual(equip: EquipDef) -> void:
 	_weapon_override = equip  # 재공지/재합류 대비 마지막 착용 무기 보관 (set_job이 재적용)
 	var tex: Texture2D = null  # 미착용 = 무장 해제 (직업 폴백 없음 — 무기 = 장비)
-	var grip := Vector2(2.0, 4.0)
+	var grip := Vector2(4.0, 8.0)
 	if equip != null and equip.weapon_texture != null:
 		tex = equip.weapon_texture
 		grip = equip.weapon_grip

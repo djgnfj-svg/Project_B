@@ -19,6 +19,6 @@ hp_per_level = 0
 max_level = 5
 upgrade_gold_base = 10
 weapon_texture = ExtResource("2")
-weapon_grip = Vector2(2, 4)
+weapon_grip = Vector2(4, 8)
 swing_texture = ExtResource("3")
 hit_shake = 1.2
