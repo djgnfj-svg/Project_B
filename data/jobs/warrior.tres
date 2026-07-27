@@ -1,7 +1,7 @@
 [gd_resource type="Resource" script_class="JobDef" load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://src/core/job_def.gd" id="1"]
-[ext_resource type="Texture2D" path="res://assets/sprites/player/warrior_icon16.png" id="2"]
+[ext_resource type="Texture2D" path="res://assets/sprites/player/warrior_32.png" id="2"]
 [ext_resource type="SpriteFrames" path="res://assets/sprites/player/warrior_frames.tres" id="3"]
 [ext_resource type="Texture2D" path="res://assets/sprites/weapons/greatsword.png" id="4"]
 
@@ -12,11 +12,11 @@ display_name = "전사"
 sprite = ExtResource("2")
 frames = ExtResource("3")
 weapon_texture = ExtResource("4")
-weapon_grip = Vector2(2, 4)
+weapon_grip = Vector2(4, 8)
 starting_weapon_id = "worn_greatsword"
 starting_sub_job_id = "warrior_swordsman"
 exp_curve = PackedInt32Array(0, 25, 60, 105, 160, 300)
 move_speed = 100.0
 attack_damage = 10
-attack_range = 21.0
+attack_range = 42.0
 attack_cooldown = 0.4
