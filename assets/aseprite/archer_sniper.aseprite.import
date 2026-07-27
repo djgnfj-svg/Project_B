@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://biw5kpxvj5tk2"
+path="res://.godot/imported/archer_sniper.aseprite-38ab96fd969d3c960f9c9fbb61153299.res"
+
+[deps]
+
+source_file="res://assets/aseprite/archer_sniper.aseprite"
+dest_files=["res://.godot/imported/archer_sniper.aseprite-38ab96fd969d3c960f9c9fbb61153299.res"]
+
+[params]
+

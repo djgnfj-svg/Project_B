@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://dinpqirh2cc0u"
+path="res://.godot/imported/archer_marksman.aseprite-df8179130f0cf32cb1aab4841e00e333.res"
+
+[deps]
+
+source_file="res://assets/aseprite/archer_marksman.aseprite"
+dest_files=["res://.godot/imported/archer_marksman.aseprite-df8179130f0cf32cb1aab4841e00e333.res"]
+
+[params]
+

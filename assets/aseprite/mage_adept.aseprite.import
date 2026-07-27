@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://uavmjs4c77bu"
+path="res://.godot/imported/mage_adept.aseprite-5142a95423edb129cad730bba2ad07d0.res"
+
+[deps]
+
+source_file="res://assets/aseprite/mage_adept.aseprite"
+dest_files=["res://.godot/imported/mage_adept.aseprite-5142a95423edb129cad730bba2ad07d0.res"]
+
+[params]
+
