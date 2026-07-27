@@ -78,6 +78,13 @@ const PARRY_OPEN_RANGE := 165.0 # 돌진 중 보스가 이 안이면 창 열림(
 const PARRY_WINDOW := 0.28      # 창 지속(s) — 이 안에 F. 돌진 끝에 안 잘리고 제 시간 유지
 # 🔴 카운터/돌진은 tween으로 위치를 바꿔 벽 충돌을 우회 → 맵 밖으로 나감. 이 안전영역으로 클램프(벽 안쪽).
 const ARENA_SAFE := Rect2(-566.0, 170.0, 1472.0, 308.0)
+# 룬 자물쇠 3개 — 시야 콘에 들어온 활성 룬만 반짝, 그 원 안에서 패링 성공 시 "파훼".
+const RUNE_POS: Array = [Vector2(430.0, 250.0), Vector2(630.0, 440.0), Vector2(830.0, 250.0)]
+const RUNE_RADIUS := 50.0       # 이 안에서 패링해야 파훼 (링 크기와 맞춰 넉넉하게 — 가장자리 실패 방지)
+var _runes: Array = []          # 각 원소 = {holder, pos}
+var _active_rune: int = 0       # 반짝이는 활성 룬 인덱스(0~2)
+var _parry_in_rune: bool = false  # 이번 패링이 활성 룬 안이었나 → 파훼 판정
+var _groggy_label: Label = null   # 보스 위 "그로기중..." 표시
 const CS_IDLE := 0
 const CS_GLINT := 1
 const CS_AIM := 2
@@ -125,6 +132,7 @@ func _setup() -> void:
 	_build_bounds()           # 2방 벽 + 진입 방 바닥 + 바깥 void
 	_setup_vision()           # 조준 방향 시야 콘 (로컬 플레이어)
 	_setup_counter()          # 카운터 약점(F 표식) — 테스트: 플레이어 쪽에 상시
+	_setup_runes()            # 룬 자물쇠 3개 (시야로 활성화, 안에서 패링=파훼)
 	_setup_camera()           # 방 카메라 (클램프+스냅)
 	_setup_lighting()         # 2D 라이팅 — 어두운 성역 + 발광 지점(맵 퀄업)
 	_apply_boss_rim()         # 보스 밝은 림(뒤 실루엣) — 청록 배경에서 또렷하게
@@ -630,6 +638,104 @@ func _ensure_vision(lp: Node) -> void:
 	_vision = holder
 
 
+# 룬 자물쇠 3개 — 원(링) + 자물쇠 글리프. 활성 1개는 시야 콘에 들어오면 반짝, 그 안 패링=파훼.
+func _setup_runes() -> void:
+	# 보스 위 "그로기중..." 라벨 (그로기 동안만 보임)
+	_groggy_label = Label.new()
+	_groggy_label.add_theme_font_size_override("font_size", 15)
+	_groggy_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+	_groggy_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	_groggy_label.add_theme_constant_override("outline_size", 4)
+	_groggy_label.z_index = 12
+	_groggy_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_groggy_label.visible = false
+	get_parent().add_child(_groggy_label)
+	_runes.clear()
+	for i in RUNE_POS.size():
+		var made := _make_rune_lock(RUNE_POS[i])
+		_runes.append({"holder": made["holder"], "label": made["label"], "pos": RUNE_POS[i], "num": i + 1})
+	_active_rune = randi() % _runes.size()   # 활성 룬 무작위
+
+
+func _make_rune_lock(pos: Vector2) -> Dictionary:
+	var holder := Node2D.new()
+	holder.z_index = -6
+	get_parent().add_child(holder)
+	holder.global_position = pos
+	var add := CanvasItemMaterial.new()
+	add.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	# 링(원)
+	var ring := Sprite2D.new()
+	ring.texture = _ring_tex()
+	ring.scale = Vector2.ONE * (100.0 / 128.0)   # 링 지름 ~100px = 판정 반경(50)과 맞춤
+	ring.modulate = Color(0.3, 0.7, 0.6, 0.4)
+	ring.material = add
+	holder.add_child(ring)
+	# 자물쇠 몸통(사각)
+	var body := Polygon2D.new()
+	body.polygon = PackedVector2Array([Vector2(-6, -1), Vector2(6, -1), Vector2(6, 9), Vector2(-6, 9)])
+	body.color = Color(0.4, 0.85, 0.7, 0.55)
+	body.material = add
+	holder.add_child(body)
+	# 자물쇠 고리(shackle, 반원)
+	var shackle := Line2D.new()
+	var pts := PackedVector2Array()
+	for i in 9:
+		var a: float = PI * float(i) / 8.0
+		pts.append(Vector2(cos(a) * 4.5, -sin(a) * 5.0 - 1.0))
+	shackle.points = pts
+	shackle.width = 2.0
+	shackle.default_color = Color(0.4, 0.85, 0.7, 0.55)
+	shackle.material = add
+	holder.add_child(shackle)
+	# 라벨 — 룬 구분/타겟 표시용. holder 밖(스테이지 직속)에 붙여 회색/금색 modulate에 안 눌리고 항상 읽히게.
+	var lbl := Label.new()
+	lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	lbl.add_theme_constant_override("outline_size", 4)
+	lbl.z_index = 10
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	get_parent().add_child(lbl)
+	lbl.global_position = pos + Vector2(-18.0, -44.0)
+	return {"holder": holder, "label": lbl}
+
+
+# 매 프레임 — 활성 룬이 시야 콘 안이면 강렬한 금색 "격파!", 나머지·시야밖은 회색 "룬 N". (호출: _process)
+func _update_runes(lp: PlayerActor) -> void:
+	for i in _runes.size():
+		var holder := _runes[i]["holder"] as Node2D
+		var lbl := _runes[i]["label"] as Label
+		if holder == null or not is_instance_valid(holder):
+			continue
+		var revealed: bool = (i == _active_rune) and _rune_in_vision(lp, _runes[i]["pos"])
+		if revealed:
+			holder.scale = Vector2.ONE * (1.2 + 0.18 * sin(_counter_t * TAU * 3.5))
+			holder.modulate = Color(2.2, 1.9, 0.5, 1.0)   # 강렬한 금색
+			lbl.text = "★ 격파 ★"
+			lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.3))
+			lbl.add_theme_font_size_override("font_size", 16)
+		else:
+			holder.scale = Vector2.ONE
+			holder.modulate = Color(0.55, 0.55, 0.55, 0.5)   # 회색(구분 안 됨)
+			lbl.text = "룬 %d" % int(_runes[i]["num"])
+			lbl.add_theme_color_override("font_color", Color(0.8, 0.85, 0.85))
+			lbl.add_theme_font_size_override("font_size", 12)
+
+
+func _rune_in_vision(lp: PlayerActor, rune_pos: Vector2) -> bool:
+	var to_r: Vector2 = rune_pos - lp.global_position
+	if to_r.length() > VISION_LEN:
+		return false
+	var aim: float = float(lp.get("_aim_angle"))
+	return absf(wrapf(to_r.angle() - aim, -PI, PI)) <= VISION_HALF
+
+
+func _player_in_active_rune(lp: PlayerActor) -> bool:
+	if _active_rune < 0 or _active_rune >= _runes.size():
+		return false
+	var rp: Vector2 = _runes[_active_rune]["pos"]
+	return lp.global_position.distance_to(rp) <= RUNE_RADIUS
+
+
 # 카운터 약점(F 표식) — 다이아몬드(가산 청록 맥동) + "F". _process가 플레이어 쪽 보스 가장자리로 옮긴다.
 func _setup_counter() -> void:
 	var holder := Node2D.new()
@@ -684,6 +790,10 @@ func _update_counter(lp: PlayerActor, delta: float) -> void:
 	var h := _boss.get_node_or_null("Health") as HealthComponent
 	if h == null or h.hp <= 0:   # 죽으면 전부 끔
 		_reset_counter()
+		return
+	if float(_boss.get("groggy_left")) > 0.0:   # 그로기(격파) 중 = 카운터 시퀀스 정지
+		if _cstate != CS_IDLE:
+			_reset_counter()
 		return
 	_cstate_t += delta
 	match _cstate:
@@ -799,6 +909,7 @@ func _try_counter() -> void:
 	if lp == null:
 		return
 	if _parry_open_t >= 0.0:
+		_parry_in_rune = _player_in_active_rune(lp)   # 활성 룬 안에서 쳤나 → 파훼 판정
 		_reset_counter()      # 창 안 — 카운터 성공
 		_counter_strike(lp)
 	else:
@@ -859,8 +970,16 @@ func _clash_impact(pos: Vector2) -> void:
 	if _boss.has_method("counter_stagger"):
 		_boss.counter_stagger()
 	_clash_fx(pos)
-	EventBus.screen_shake.emit(7.0)
-	_popup_text(pos + Vector2(0.0, -42.0), "성공!", Color(0.65, 1.0, 0.72))
+	if _parry_in_rune:
+		# 격파 — 화려하게: 추가 스파크 + 큰 흔들림 + 보스 그로기 10초
+		EventBus.screen_shake.emit(13.0)
+		_clash_fx(_boss.global_position)
+		_popup_text(pos + Vector2(0.0, -50.0), "파훼!", Color(1.0, 0.95, 0.4))
+		if _boss.has_method("enter_groggy"):
+			_boss.enter_groggy(10.0)
+	else:
+		EventBus.screen_shake.emit(7.0)
+		_popup_text(pos + Vector2(0.0, -42.0), "성공!", Color(0.65, 1.0, 0.72))
 
 
 # 돌진 명중(안 침/잠금) = 실패 — 흔들림 + "실패" 표시 + 플레이어 피해(무적 무시, 실패에 대가) + 넉백.
@@ -1266,6 +1385,16 @@ func _process(_delta: float) -> void:
 	if _vision != null and is_instance_valid(_vision):
 		_vision.rotation = float(lp.get("_aim_angle"))
 	_update_counter(lp, _delta)   # 카운터 약점 배치·맥동·재무장
+	_update_runes(lp)             # 룬 자물쇠 — 활성이 시야 안이면 색 드러남, 밖/비활성은 회색
+	# 보스 그로기 라벨 — "그로기중... N"
+	if _groggy_label != null and _boss != null:
+		var g: float = float(_boss.get("groggy_left"))
+		if g > 0.0:
+			_groggy_label.visible = true
+			_groggy_label.text = "그로기중... %d" % int(ceil(g))
+			_groggy_label.global_position = _boss.global_position + Vector2(-42.0, -72.0)
+		else:
+			_groggy_label.visible = false
 	# 방 전환(젤다식): 경계 넘으면 카메라 스냅 + 보스 방 진입 시 뒤 통로 봉쇄
 	var room := 2 if lp.global_position.x >= ROOM_SPLIT_X else 1
 	if room != _cur_room:

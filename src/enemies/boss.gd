@@ -111,6 +111,7 @@ var _prev_life_x: float = 0.0          # 망토 나부낌용 직전 x (이동량
 var _cape_vel: float = 0.0             # 저역통과된 수평 이동속도 (kiting 스터터 흡수 — 망토가 홱 안 꺾임)
 var counter_ready: bool = false        # 약점 표식이 떠 있는 동안 true (외부=랩이 매 프레임 설정) → 몸색 변화
 var speed_mult: float = 1.0            # 이동(접근) 속도 배수 — 외부(랩)가 설정, 기본 1이라 프로덕션 무영향
+var groggy_left: float = 0.0           # 그로기(격파 당함) 남은 시간 — 눕고 무방비. 외부가 enter_groggy로 설정.
 var _stagger_t: float = 0.0            # 카운터 성공 꿇음 타이머
 var _aura: Sprite2D = null             # 보스 발밑 가산 발광(따라다님) — _ready에서 생성
 var _noise: FastNoiseLite = null       # 지터용 연속 노이즈(1D 표본) — _ready에서 생성
@@ -254,6 +255,19 @@ func _update_life_feel(delta: float) -> void:
 		if _aura != null:
 			_aura.visible = false
 		return
+	# 그로기(격파) — 옆으로 눕고(회전) 바닥으로 내려앉아 무방비. 흔들림·아우라 정지.
+	if groggy_left > 0.0:
+		groggy_left -= delta
+		_sprite.rotation = lerp_angle(_sprite.rotation, 1.43, minf(1.0, delta * 9.0))  # ~82° 눕기
+		_sprite.offset = Vector2(0.0, 16.0)
+		_sprite.skew = 0.0
+		_sprite.modulate = Color(0.7, 0.72, 0.82, 0.9)   # 흐릿(무력)
+		if _aura != null:
+			_aura.visible = false
+		return
+	# 그로기 끝 — 회전 원위치로 복구
+	if not is_zero_approx(_sprite.rotation):
+		_sprite.rotation = lerp_angle(_sprite.rotation, 0.0, minf(1.0, delta * 9.0))
 	_life_t += delta
 	# 사인 드리프트(정처 없이) + 노이즈 지터(지직거림). 노이즈는 x/y 표본 좌표를 멀리 떨어뜨려 상관 제거.
 	var nx := _noise.get_noise_1d(_life_t * NOISE_SPEED) if _noise != null else 0.0
@@ -291,6 +305,11 @@ func _update_life_feel(delta: float) -> void:
 # 카운터 성공 시 외부(랩)가 호출 — 잠깐 꿇는다(_update_life_feel이 offset·skew로 연출). 표시 전용.
 func counter_stagger() -> void:
 	_stagger_t = STAGGER_DUR
+
+
+# 격파(활성 룬 파훼) 시 외부(랩)가 호출 — dur초 동안 누워서 무방비(그로기). _update_life_feel이 누운 포즈.
+func enter_groggy(dur: float) -> void:
+	groggy_left = maxf(groggy_left, dur)
 
 
 # 아우라용 방사 그라디언트(흰→투명) — 가산 블렌드로 발광. 정적 1회 생성(공유).
