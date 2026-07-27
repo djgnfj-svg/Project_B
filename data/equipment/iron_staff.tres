@@ -8,7 +8,7 @@
 script = ExtResource("1")
 id = "iron_staff"
 display_name = "철 지팡이"
-description = "철로 심을 박은 지팡이. 속성은 없지만 마력을 더 크게 모아 더 넓게 터뜨린다."
+description = "철로 심을 박은 지팡이. 낡은 지팡이가 못 하던 것 — 마우스를 눌러 기를 모으면 모을수록 더 세고 더 넓게 터진다."
 icon = ExtResource("2")
 slot_name = "weapon"
 job_id = "mage"
@@ -28,7 +28,7 @@ projectile_speed = 240.0
 projectile_spin = true
 swing_sfx = "staff_fire"
 swing_color = Color(0.88, 0.93, 1, 1)
-charge_step_time = 0.35
+charge_step_time = 0.25
 blast_radius = 24.0
 charge_sfx = "charge_step"
 blast_sfx = "blast"

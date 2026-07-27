@@ -8,38 +8,52 @@ extends Node
 # ⚠ 동적 스폰 등록(rules §2 게이트 정신): _ready 그룹 스캔 없음 — 발사 시점에만 _arrows에 등록/정리.
 
 const NetSchema := preload("res://src/core/net_schema.gd")
+const PeerSyncNode := preload("res://src/net/peer_sync.gd")
 const ArrowScene := preload("res://src/combat/arrow.tscn")
 const BlastScene := preload("res://src/combat/blast.tscn")
 const CombatMathLib := preload("res://src/core/combat_math.gd")
 
 const BLAST_SHAKE_BASE := 1.2  # 폭발 셰이크 기본 강도 (연출값 — 반경에 비례해 커진다)
 
+@export var peer_sync_path: NodePath  # 형제 PeerSync — 발사자 아바타 조회(특성 리졸브)에 필요
+
+var _peer_sync: PeerSyncNode = null
 var _arrows: Dictionary = {}  # aid(String) -> Arrow 노드 (조기 despawn용 — 자연 소멸은 tree_exited로 정리)
 var _blasts: Dictionary = {}  # aid(String) -> {radius: float, tint: Color, sfx: String} — 폭발탄(차지 무기)만. 종료 시점에 FX 반경을 로컬로 리졸브(전송 불필요)
 
 
 func _ready() -> void:
+	# 🔴 발사자 아바타 조회 경로를 **판정 쪽(CombatAuthority)과 같은 것**으로 맞춘다 (2026-07-27).
+	#   전에는 그룹 스캔이었는데, 판정은 _peer_sync.player()를 쓰고 있었다 — 같은 노드를 가리키긴 해도
+	#   경로가 둘이면 다음 사람이 한쪽만 고친다("맞는 곳 ≠ 보이는 곳"이 태어나는 자리 그 자체).
+	#   덤으로 씬 스왑 프레임의 유령 노드 문제(rules §5)가 구조적으로 사라진다 — PeerSync의 _players는
+	#   그 씬 것만 들고 있어서 부모 비교 같은 방어가 필요 없다.
+	_peer_sync = get_node_or_null(peer_sync_path) as PeerSyncNode
+	if _peer_sync == null:
+		push_error("[ArrowField] peer_sync_path 미배선 — 발사자 특성 리졸브 불능(사거리가 기본값으로 떨어진다)")
 	EventBus.player_shoot.connect(_on_player_shoot)
 	EventBus.arrow_gone_local.connect(_on_arrow_gone)
 	EventBus.net_msg.connect(_on_net_msg)
 
 
 # 로컬 발사 — 내 표시 투사체 스폰 (shooter_id == Net.my_id, player가 G_SHOOT도 별도 송신)
-func _on_player_shoot(_shooter_id: int, origin: Vector2, dir: Vector2, aid: String,
-		arrow_range: float, weapon_id: String, charge: int) -> void:
-	_spawn(aid, origin, dir, arrow_range, weapon_id, charge)
+func _on_player_shoot(shooter_id: int, origin: Vector2, dir: Vector2, aid: String,
+		arrow_range: float, weapon_id: String, charge: int, combo: int) -> void:
+	_spawn(aid, origin, dir, arrow_range, weapon_id, charge, shooter_id, combo)
 
 
 func _on_net_msg(from_id: int, data: Dictionary) -> void:
 	match str(data.get(NetSchema.KEY_KIND, "")):
 		NetSchema.G_SHOOT:
 			# 원격 피어의 발사 — 표시 투사체 스폰 (판정은 호스트 CombatAuthority가 별도).
-			# r = 사거리 폴백(무기 id 리졸브 실패 시만 사용) · w = 무기 id · c = 차지 레벨
+			# r = 사거리 폴백(무기 id 리졸브 실패 시만 사용) · w = 무기 id · c = 차지 레벨 · cb = 콤보 타수
+			# ⚠ cb는 **발신자 주장 그대로** 쓴다(표시 전용). 호스트 판정은 자기가 센 타수(≤ 주장)를 쓰므로
+			#   사칭자는 자기 화면에만 강화살이 그려지고 판정은 안 난다 — "w"(무기 사칭)와 같은 규약이다.
 			_spawn(str(data.get("aid", "")),
 				Vector2(float(data.get("ox", 0.0)), float(data.get("oy", 0.0))),
 				Vector2(float(data.get("dx", 1.0)), float(data.get("dy", 0.0))),
 				float(data.get("r", CombatMathLib.DEFAULT_ARROW_RANGE)),
-				str(data.get("w", "")), int(data.get("c", 0)))
+				str(data.get("w", "")), int(data.get("c", 0)), from_id, int(data.get("cb", 0)))
 		NetSchema.G_ARROW_HIT:
 			if from_id != NetSchema.HOST_ID:
 				return  # 투사체 종료 확정은 호스트 발신만 신뢰 (rules §3)
@@ -53,11 +67,14 @@ func _on_arrow_gone(aid: String, world_pos: Vector2) -> void:
 
 
 func _spawn(aid: String, origin: Vector2, dir: Vector2, arrow_range: float,
-		weapon_id: String, charge: int) -> void:
+		weapon_id: String, charge: int, shooter_id: int, combo: int) -> void:
 	if aid.is_empty() or _arrows.has(aid):
 		return
-	# 무기 파라미터 = 로컬 데이터 리졸브(단일 소스 §3) — 호스트 판정과 같은 값(결정론)
-	var p := GameState.projectile_params(weapon_id, arrow_range, charge)
+	# 무기 파라미터 = 로컬 데이터 리졸브(단일 소스 §3) — 호스트 판정과 같은 값(결정론).
+	# 사거리 특성(proj_range)도 호스트 판정과 **같은 소스**(발사자 아바타)에서 읽는다 — 아래 헬퍼.
+	# 콤보 타수는 표시 쪽만 주장값을 쓴다(위 _on_net_msg 주석 — 갈라짐은 안전한 방향으로만).
+	var p := GameState.projectile_params(weapon_id, arrow_range, charge,
+		_shooter_proj_range(shooter_id), combo)
 	var arrow := ArrowScene.instantiate() as Node2D
 	_arrows[aid] = arrow
 	var blast_r := float(p["blast"])
@@ -71,6 +88,27 @@ func _spawn(aid: String, origin: Vector2, dir: Vector2, arrow_range: float,
 	get_parent().add_child(arrow)  # 부모 = 스테이지 Node2D. 런타임 add_child라 안전 (rules §5 _ready 함정 무관)
 	arrow.setup(origin, dir, float(p["speed"]), float(p["life"]),
 		p["texture"] as Texture2D, float(p["scale"]), bool(p["spin"]))
+
+
+# 발사자 아바타의 「투사체 사거리」(proj_range) 특성 — 미스폰/미상이면 0(항등 = 보너스 없음).
+# 🔴 **항상 발사자 아바타에서 읽는다**(rules §3): peer_sync._peer_stats에는 로컬(내) 항목이 영원히
+#   없어서(Net 루프백 없음) 그쪽을 읽으면 "내 화살만 안 늘어난다"가 된다 — 2026-07-25 공속 Critical과
+#   같은 함정이다. 아바타 값은 로컬=GameState.active_traits() · 원격=그 피어 공지 id 리졸브(peer_sync가
+#   set_traits로 심는다)라, 호스트 판정(CombatAuthority)이 보는 값과 **같은 소스**다("맞는 곳=보이는 곳").
+# 🔴 조회 경로도 판정 쪽과 **같은 것**(_peer_sync.player)이다 — 옛 그룹 스캔은 같은 노드를 가리키긴 했지만
+#   경로가 둘이라 다음 사람이 한쪽만 고칠 수 있었다(2026-07-27 통일).
+# ⚠ 미스폰(첫 G_POS 전에 도착한 G_SHOOT)이면 0 — **게스트 발사에 한해** 안전하다. 호스트가 그 창에서
+#   발사 자체를 거부(`shooter == null`)하므로 표시만 짧아지고 판정은 아예 안 생긴다.
+# 🔴 **호스트 자기 발사에는 그 보호가 없다** (2026-07-27 netreview m2): 호스트는 자기 발사를 거부하지
+#   않으므로, 게스트가 아직 호스트의 아바타·특성(G_STATS)을 반영하지 못한 창에서 호스트가 쏘면
+#   **게스트 화면 150px / 호스트 판정 최대 210px**로 갈라진다 — 방향이 "화면에 없는데 맞는다"는 금지 쪽이다.
+#   창이 스폰 직후 한 번뿐이고(그 뒤 아바타가 계속 산다) 특성 보유자에게만 생겨 지금은 수용한다.
+#   ⚠ 넓히려면(재합류·4인) 여기가 아니라 **스냅샷**에서 고쳐라 — rules §2 재합류 게이트의 대상이다.
+func _shooter_proj_range(shooter_id: int) -> float:
+	if _peer_sync == null:
+		return 0.0
+	var p := _peer_sync.player(shooter_id)
+	return p.trait_value("proj_range") if p != null else 0.0
 
 
 # impact_pos = 종료 지점(호스트 권한 좌표). 폭발탄이면 그 자리에 폭발 FX(표시) — 판정은 호스트가 이미 확정.

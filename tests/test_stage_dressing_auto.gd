@@ -1,5 +1,8 @@
 extends SceneTree
-# 배경 드레싱(바닥 변주·디테일 스캐터·흔들리는 폴리지) 계약 — 2026-07-26.
+# 씬 계약 — ⑴ 배경 드레싱(바닥 변주·디테일 스캐터·흔들리는 폴리지, 2026-07-26)
+#           ⑵ 형제 컴포넌트 배선(`*_path` NodePath export 전수, 2026-07-27 netreview M2)
+# 둘의 공통점 = **씬 파일에만 있고 코드에는 없는 계약**이라 깨져도 에러가 안 난다. 그래서 한 스위트다.
+# (⑵는 `_check_scene_wiring()` — 이 파일 아래쪽. 다른 스위트가 씬을 안 읽어서 여기 얹었다.)
 #
 # 왜 표시 전용인데 테스트가 있나: 이 셋의 결함은 **에러를 안 낸다.**
 #   ⑴ 폴리지 회전 피벗이 밑동이 아니면 풀이 공중에서 빙빙 돈다(아트가 텍스처를 다시 그릴 때마다 재발 가능).
@@ -157,8 +160,100 @@ func _run() -> void:
 	else:
 		_check(false, "폴리지: 인스턴스가 없다")
 
+	_check_scene_wiring()
+
 	if _fail == 0:
 		print("TEST_OK stage_dressing")
 	else:
 		print("TEST_FAIL stage_dressing failures=%d" % _fail)
 	quit(1 if _fail > 0 else 0)
+
+
+# --- 씬 형제 배선 계약 (2026-07-27 netreview M2) ---
+#
+# 🔴 왜 여기 있나: 형제 컴포넌트 배선(`*_path` NodePath export)이 **빠져도 에러가 안 난다.** 새 씬은
+#   기존 씬을 복제해 만드는 것이 관례(rules §2)라 다음 씬에서 한 줄이 빠지는 경로가 상시 열려 있다.
+#   `ArrowField.peer_sync_path`가 특히 위험한데, 빠지면 **표시만 특성을 잃고 판정은 그대로**라
+#   "판정 > 표시"(화면에 없는데 맞는다)가 된다 — `authoritative_combo` 규약이 금지한 방향이다.
+#   런타임 `push_error`는 그 씬을 실제로 띄워야 보이므로 너무 늦다.
+#
+# ⚠ **인스턴스하지 않고 `SceneState`만 읽는다** — 씬을 띄우면 오토로드가 없는 `-s`에서 깨진다(rules §5).
+#   그래서 이 검사는 스크립트를 실행하지 않고 저장된 노드/프로퍼티 표만 본다.
+# ⚠ 전 `src/**/*.tscn` × 모든 `*_path` 프로퍼티가 대상이다 — `peer_sync_path`만 겨누면 다음에 생길
+#   형제 배선(현재도 `drop_authority_path`·`scene_flow_path`가 있다)이 같은 방식으로 조용히 빠진다.
+func _check_scene_wiring() -> void:
+	var scenes: Array[String] = []
+	_collect_scenes("res://src", scenes)
+	_check(scenes.size() >= 4, "씬 배선: 스캔된 씬 %d개 (0건이면 침묵 통과)" % scenes.size())
+	var bad := ""
+	var checked := 0
+	var arrow_fields := 0
+	for path: String in scenes:
+		var ps := load(path) as PackedScene
+		if ps == null:
+			bad += "%s(로드 실패) " % path.get_file()
+			continue
+		var st := ps.get_state()
+		var known: Dictionary = {}
+		for i: int in range(st.get_node_count()):
+			known[str(st.get_node_path(i))] = true
+		for i: int in range(st.get_node_count()):
+			var here := str(st.get_node_path(i))
+			var has_peer_sync := false
+			var is_arrow_field := false
+			for j: int in range(st.get_node_property_count(i)):
+				var pn := st.get_node_property_name(i, j)
+				var pv: Variant = st.get_node_property_value(i, j)
+				if pn == "script" and pv is Script \
+						and (pv as Script).resource_path == "res://src/stage/arrow_field.gd":
+					is_arrow_field = true
+				if not pn.ends_with("_path") or not (pv is NodePath):
+					continue
+				if pn == "peer_sync_path":
+					has_peer_sync = true
+				checked += 1
+				var rel := str(pv as NodePath)
+				if rel.is_empty():
+					bad += "%s:%s.%s(빈 값) " % [path.get_file(), here, pn]
+				elif not known.has(_resolve_node_path(here, rel)):
+					bad += "%s:%s.%s→%s(대상 없음) " % [path.get_file(), here, pn, rel]
+			if is_arrow_field:
+				arrow_fields += 1
+				# 🔴 **프로퍼티가 아예 없는 경우**도 잡아야 한다 — 미설정 export는 SceneState에 안 나타나므로
+				#   위 루프가 그냥 건너뛴다(= 배선을 지우면 검사가 조용히 통과한다).
+				if not has_peer_sync:
+					bad += "%s:%s(peer_sync_path 미배선) " % [path.get_file(), here]
+	_check(arrow_fields >= 4, "씬 배선: ArrowField를 문 씬 %d개 (전투/모닥불 4개 이상)" % arrow_fields)
+	_check(checked >= 8, "씬 배선: 검사한 *_path 배선 %d개" % checked)
+	_check(bad.is_empty(), "★씬 배선 전수: 모든 *_path가 같은 씬의 실제 노드를 가리킨다 (위반: %s)"
+		% ("없음" if bad.is_empty() else bad))
+
+
+func _collect_scenes(dir: String, out: Array[String]) -> void:
+	for f: String in DirAccess.get_files_at(dir):
+		var base := f.trim_suffix(".remap")
+		if base.get_extension() == "tscn":
+			out.append("%s/%s" % [dir, base])
+	for d: String in DirAccess.get_directories_at(dir):
+		_collect_scenes("%s/%s" % [dir, d], out)
+
+
+# SceneState 표기(루트 = ".", 자식 = "./A/B") 기준으로 상대 NodePath를 절대화한다.
+# 못 풀면 "" — 호출부가 "대상 없음"으로 처리한다(절대 경로 `/root/…`도 여기서 걸린다).
+func _resolve_node_path(base: String, rel: String) -> String:
+	if rel.begins_with("/"):
+		return ""  # 씬 밖 절대 경로 = 배선 계약 위반(복제한 씬에서 그대로 깨진다)
+	# ⚠ 상대 NodePath는 **그 노드 자신** 기준이다 — 여기서 미리 자기 이름을 떼면 안 된다("../X"의 ".."이
+	#   그 일을 한다). 처음에 떼도록 짰다가 이 테스트 자신에게 걸렸다(전 씬이 "대상 없음"으로 빨개졌다).
+	var parts: Array[String] = []
+	for seg: String in base.split("/", false):
+		if seg != ".":
+			parts.append(seg)
+	for seg: String in rel.split("/", false):
+		if seg == "..":
+			if parts.is_empty():
+				return ""  # 씬 루트 위로 나감
+			parts.remove_at(parts.size() - 1)
+		elif seg != ".":
+			parts.append(seg)
+	return "." if parts.is_empty() else "./" + "/".join(parts)

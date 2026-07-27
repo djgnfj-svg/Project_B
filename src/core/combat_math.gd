@@ -26,7 +26,7 @@ const MAX_REACH_BONUS := 0.5  # 하드 상한 +50% (GDD §6) — 근접이 원�
 #   LEVEL_STAT_KEYS와 같은 관용구 — 별도 매핑 표를 만들면 그게 두 번째 진실원이 되어 갈라진다.
 # 🔒 여기 들어올 수 있는 것 = **합계 데미지에 곱해지지 않는 축**뿐이다(GDD §6 예산).
 #   공격력·체력(장비 축)·공속·치명(5스탯 축)을 키로 추가하는 변경은 기획 변경이 선행 조건이다.
-const TRAIT_KEYS: Array[String] = ["reach", "roll_cd", "roll_dist", "campfire_heal", "kill_move", "drop_find"]
+const TRAIT_KEYS: Array[String] = ["reach", "roll_cd", "roll_dist", "campfire_heal", "kill_move", "drop_find", "proj_range"]
 
 # 키별 **하드 상한** — 같은 키를 메인·서브가 같이 밀면 합산된 뒤 여기서 잘린다.
 # 🔴 상한을 두는 이유는 키마다 다르다(GDD §6에 근거를 남겼다):
@@ -51,6 +51,14 @@ const TRAIT_MAX: Dictionary = {
 	#   ⚠ 별도 축으로 분리하고 싶으면 LAG_MAX_LEAD_DIST를 함께 재유도해야 한다(115 → ~150).
 	"kill_move": 0.15,         # 적 처치 후 일시 이동속도 증가율
 	"drop_find": 0.3,          # 골드·재료 드랍량 증가율
+	# 투사체 사거리 증가율 — 근접 reach의 원거리 대칭(reach는 근접 3함수 전용이라 활·지팡이엔 안 걸린다).
+	# 🔴 **상한 근거는 `MAX_ARROW_RANGE`(480)다** — 데이터상 최장 원거리 무기 iron_staff(arrow_range 260)가
+	#   260 × 1.5 = 390 < 480이라 정당한 무기가 `clamp_arrow_range`에서 **조용히 절삭되지 않는다**.
+	#   ⚠ 화면 해상도(640×360)에서 유도하지 마라 — GDD §9에서 아직 TBD라, 미확정 값이 판정 기하의 근거로
+	#   승격된다. `test_combat_math_auto`가 이 부등식을 원거리 무기 전수로 지킨다(넘으면 빨개진다).
+	# ⚠ 값이 MAX_REACH_BONUS와 같지만 **별칭으로 묶지 않는다** — 근거가 다른 축이라(근접은 "직업 = 플레이
+	#   방식" 경계, 여기는 절삭 여유) 별칭으로 두면 한쪽 튜닝이 다른 쪽을 조용히 움직인다.
+	"proj_range": 0.5,
 }
 
 const KILL_MOVE_TIME_S := 3.0  # 처치 후 이속 버프 지속(연출/손맛값 — §0 예외, 사용자가 조인다)
@@ -104,6 +112,7 @@ const TRAIT_LABEL: Dictionary = {
 	"campfire_heal": "모닥불 회복 속도",
 	"kill_move": "처치 후 이동속도",
 	"drop_find": "골드·재료 드랍",
+	"proj_range": "투사체 사거리",  # 근접 "평타 사거리"(reach)와 문구로도 구분된다 — 두 축이 서로 안 걸린다
 }
 # 값이 클수록 "줄어드는" 축 — 부호를 뒤집어 표기한다(쿨다운 −15%).
 const TRAIT_REDUCTION: Array[String] = ["roll_cd"]
@@ -154,12 +163,17 @@ static func attack_radius(job: JobDef, reach: float = 0.0) -> float:
 # 한 스윙이 여러 적을 치는 것은 허용하되(SAME_SWING_MS 안), 스윙 간격은 쿨다운(지터 여유 0.9배)을 강제.
 # 앵커(last_confirm_msec)는 새 스윙에서만 갱신해야 한다 — 매 확정마다 갱신하면 창이 미끄러져 연사 스팸이 뚫린다.
 const SAME_SWING_MS := 50
+# 🔴 호스트 간격 게이트의 **지터 여유** — 요구 간격을 이 배율만큼 깎아 정직한 발사가 네트워크 지터로
+#   거부되지 않게 한다. 근접 쿨다운·발사율·차지 시간·콤보 전진 **네 곳이 같은 값을 쓴다**: 여유를
+#   따로 두면 한쪽만 조였을 때 "어떤 공격은 관대하고 어떤 공격은 오탐 거부"가 되고, 그건 화면에
+#   "가끔 공격이 씹힌다"로만 보인다. 조일 땐 여기 한 곳.
+const FIRE_RATE_SLACK := 0.9
 
 
 # haste = 그 피어가 공지한(그리고 호스트가 clamp한) 공격속도 보너스 — 0 = 항등(성장축 도입 전과 동일).
 static func is_hit_cooldown_ok(last_confirm_msec: int, now_msec: int, job: JobDef, haste: float = 0.0) -> bool:
 	var dt := now_msec - last_confirm_msec
-	return dt <= SAME_SWING_MS or dt >= int(effective_cooldown(job, haste) * 0.9 * 1000.0)
+	return dt <= SAME_SWING_MS or dt >= int(effective_cooldown(job, haste) * FIRE_RATE_SLACK * 1000.0)
 
 
 # 구르기 타이밍 — 단일 소스 (§3). 로컬 이동(player)과 호스트 i-frame 검증이 같은 값을 읽는다.
@@ -241,6 +255,193 @@ static func clamp_projectile_speed(speed: float) -> float:
 	return clampf(speed, MIN_PROJECTILE_SPEED, MAX_PROJECTILE_SPEED)
 
 
+# 🔴 그 무기가 **탄을 쏠 수 있는가** — 호스트의 G_SHOOT 신뢰 경계 (2026-07-27 netreview M4).
+#   `EquipDef.motion_type`의 발사형 판정을 여기 한 곳에 모은다: `player._local_combat`의 모션 분기와
+#   호스트의 발사 수락이 같은 기준을 써야 "로컬은 못 쏘는데 호스트는 받아준다"가 안 생긴다.
+# ⚠ **null은 false다** — 다만 호출부는 null을 **거부하지 않는다.** null = "G_STATS 미도착" 정상 창이고,
+#   그 창의 폴백(기본 화살)은 의도된 동작이다. 거부 대상은 **리졸브에 성공했는데 발사형이 아닌** 무기다.
+# 🔴 왜 필요한가: `EquipDef.arrow_range` 기본값이 DEFAULT_ARROW_RANGE(360)이고 근접 무기 `.tres`엔
+#   그 필드가 아예 없다 — 즉 대검을 공지한 채 G_SHOOT을 쏘면 호스트가 **360px 권한 화살**을 등록하고
+#   전사 공격력으로 확정한다. 활 사거리를 150으로 내린 뒤로는 그 사칭 화살이 궁수의 정당한
+#   마무리 타(300/306px)보다도 **멀리** 나간다.
+static func is_projectile_weapon(equip: EquipDef) -> bool:
+	return equip != null and (equip.motion_type == "shoot" or equip.motion_type == "charge")
+
+
+# 유효 투사체 사거리 — proj_range 특성 + 콤보 타별 배율만큼 길어진다. 둘 다 기본값(0 / 1.0)이면
+# **도입 전과 완전 항등**이다.
+# 🔴 근접의 effective_attack_range와 같은 자리다: 표시(ArrowField)와 판정(CombatAuthority)이 **같은
+#   함수**를 지나야 "맞는 곳 = 보이는 곳"이 유지된다. 유일한 호출부는 GameState.projectile_params
+#   하나이고(사거리를 거기서만 리졸브한다), 사본을 만들면 표시 탄과 권한 탄의 수명이 갈라진다.
+# 🔴 결과는 그대로 projectile_lifetime_s → clamp_arrow_range(MAX_ARROW_RANGE)를 지난다 — **순서를
+#   바꿔 clamp를 우회하지 마라**(심층 방어: 데이터가 커져도 상한 밖으로는 못 나간다). 비유한 base도
+#   여기서 판단하지 않고 그 clamp가 DEFAULT로 떨어뜨린다(판단 지점을 늘리지 않는다).
+# proj_range = 그 피어가 공지한 하위 직업에서 **각 클라가 로컬 리졸브한** 특성값(player.trait_value).
+# combo_mult = 그 타의 사거리 배율(combo_range_mult_at) — **호스트가 센 타수**로 리졸브한다(아래 콤보 절).
+static func effective_projectile_range(base_range: float, proj_range: float = 0.0,
+		combo_mult: float = 1.0) -> float:
+	return base_range * (1.0 + clamp_trait("proj_range", proj_range)) * clamp_combo_mult(combo_mult)
+
+
+# --- 평타 콤보 (궁수 "평·평·쭉") 단일 소스 (§3, 2026-07-27) ---
+#
+# 🔴 **리듬은 무기가 정한다** — 값은 전부 `EquipDef.combo_*`(장비 축)에서 온다. 특성 축에 두면
+#   GDD §6 🔒("특성은 합계 데미지에 곱해지지 않는 축만")을 어긴다. 여기 함수들은 그 데이터를 읽는
+#   **유일한 창구**다: 로컬 입력(player)·표시(arrow_field)·호스트 판정(combat_authority)이 전부
+#   이 함수만 지나야 "맞는 곳 = 보이는 곳"과 "클라 리듬 = 호스트가 인정하는 리듬"이 함께 유지된다.
+# 🔴 **네트워크로 오가는 것은 타수(정수) 하나뿐**이다(G_SHOOT "cb") — 배율·뜸은 각자 로컬 .tres에서
+#   리졸브한다. 차지 레벨(G_SHOOT "c")과 정확히 같은 철학이다: 수치를 전송하면 그게 곧 스푸핑 표면.
+const MAX_COMBO_LEN := 8        # 콤보 길이 상한 — 데이터 실수(거대 배열)가 인덱스 산술을 오염시키지 않게
+const MAX_COMBO_MULT := 4.0     # 타별 배율 하드 상한 — 데이터 오타(100.0)가 100배 데미지가 되지 않게
+# 그 타를 치고 다음 타로 **이어지는** 여유(s). 이보다 더 쉬면 콤보가 처음으로 돌아간다.
+# 🔴 유도 = **전사 근접 콤보와 같은 총 창**(2026-07-27 netreview M3). 전사는 쿨다운 0.4 +
+#   `player.COMBO_WINDOW` 0.55 = **0.95s** 안에 다시 치면 이어진다. 궁수도 0.15 + 0.8 = **0.95s**.
+#   🔴 첫 값(0.45)은 총 0.60s라 훨씬 좁았고, **활은 홀드 연사가 아니라 클릭 1회 = 1발**이라
+#   조준하거나 굴렀다가 다시 쏘는 흔한 페이스(0.7s+)에서 콤보가 매번 리셋돼 **"쭉"이 영영 안 나왔다.**
+#   두 무기의 창이 갈라질 이유가 없다 — 리듬 느낌은 뜸(`combo_delay`)이 만들지 창이 만들지 않는다.
+# ⚠ 손맛값(§0 예외 — 사용자가 조인다)이지만 **호스트 판정에도 쓰인다**(로컬·호스트가 같은 창을 봐야
+#   타수가 안 갈라진다). 그래서 player.gd의 근접 COMBO_WINDOW와 달리 여기 산다.
+const COMBO_GRACE_S := 0.8
+
+
+# 그 무기의 콤보 길이 — 세 배열 중 **가장 긴 것**. 전부 비면 1(= 콤보 없음, 항등).
+# 한 축만 채워도 되게 max를 쓴다(길이를 손으로 맞추게 하면 다음 사람이 반드시 어긋나게 적는다).
+static func combo_len(equip: EquipDef) -> int:
+	if equip == null:
+		return 1
+	var n := maxi(equip.combo_range_mult.size(),
+		maxi(equip.combo_damage_mult.size(), equip.combo_delay.size()))
+	return clampi(n, 1, MAX_COMBO_LEN)
+
+
+static func clamp_combo_index(index: int, equip: EquipDef) -> int:
+	return clampi(index, 0, combo_len(equip) - 1)
+
+
+# 배율 clamp — 비유한/0 이하는 **1.0(항등)** 으로 떨어뜨린다. "데이터가 비었다"와 "데이터가 깨졌다"를
+# 같은 안전값으로 모으는 것이 규약이다(clamp_projectile_speed와 같은 관용구).
+static func clamp_combo_mult(mult: float) -> float:
+	if not is_finite(mult) or mult <= 0.0:
+		return 1.0
+	return minf(mult, MAX_COMBO_MULT)
+
+
+static func combo_range_mult_at(equip: EquipDef, index: int) -> float:
+	return _combo_arr_at(equip.combo_range_mult if equip != null else PackedFloat32Array(), index)
+
+
+static func combo_damage_mult_at(equip: EquipDef, index: int) -> float:
+	return _combo_arr_at(equip.combo_damage_mult if equip != null else PackedFloat32Array(), index)
+
+
+static func _combo_arr_at(arr: PackedFloat32Array, index: int) -> float:
+	if index < 0 or index >= arr.size():
+		return 1.0  # 배열이 짧으면(한 축만 채운 무기) 그 타는 항등
+	return clamp_combo_mult(arr[index])
+
+
+# 그 타 **직전**의 추가 뜸(s). 배열 밖·비유한·음수는 0(뜸 없음).
+# ⚠ 상한은 COMBO_GRACE_S가 아니라 창 유도식(combo_window_s)이 흡수한다 — 뜸이 길어지면 창도 같이 길어진다.
+static func combo_delay_at(equip: EquipDef, index: int) -> float:
+	if equip == null or index < 0 or index >= equip.combo_delay.size():
+		return 0.0
+	var d := equip.combo_delay[index]
+	if not is_finite(d) or d <= 0.0:
+		return 0.0
+	return d
+
+
+# 🔴 그 타를 치기 위한 **최소 간격**(s) = 직업 쿨다운 + 그 타의 뜸, 둘 다 haste로 짧아진다.
+#   뜸에도 haste_scale을 곱하는 이유는 쿨다운·스윙 창·차지 스텝과 같다(§3 haste 계약) — 안 곱하면
+#   공속을 올릴수록 리듬이 뜸에 지배돼 궁수에게 공속이 무가치해진다.
+# 로컬(player가 _attack_cd_left에 심는 값)과 호스트 판정(advance_combo)이 **같은 함수**를 지난다.
+static func combo_gap_s(job: JobDef, equip: EquipDef, index: int, haste: float = 0.0) -> float:
+	return (job.attack_cooldown + combo_delay_at(equip, index)) * haste_scale(haste)
+
+
+# 콤보가 이어지는 창(s) — 이보다 더 쉬면 처음(0타)으로 돌아간다.
+# 🔴 **gap에서 유도한다(독립 상수 금지)** — `window = gap + GRACE > gap > min_gap`이 항상 성립해야
+#   "너무 빨라서 리셋"과 "너무 쉬어서 리셋" 두 조건이 겹치지 않는다. 겹치면 어떤 데이터에서는
+#   정직한 발사가 **어느 쪽으로도 콤보를 못 잇는** 죽은 구간이 생긴다(에러 없이 3타가 영영 안 나온다).
+static func combo_window_s(job: JobDef, equip: EquipDef, index: int, haste: float = 0.0) -> float:
+	return combo_gap_s(job, equip, index, haste) + COMBO_GRACE_S
+
+
+# 🔴 호스트가 그 타를 **인정하는 최소 간격**(s) — `combo_gap_s`(클라가 실제로 내는 간격)보다 관대하다.
+#
+# 왜 따로 있나: 호스트가 재는 것은 **자기 수신 시각의 차**이지 상대가 쏜 시각의 차가 아니다.
+#   연속 두 G_SHOOT의 편도 지연이 다르면(앞 패킷이 더 늦게 도착하면) 측정 간격이 **실제보다 짧아** 보이고,
+#   그러면 뜸을 정직하게 낸 궁수가 마무리 타를 못 받는다 — 발사가 사라지는 것보단 낫지만
+#   "가끔 강화살이 안 나온다"가 되고 원인이 화면에 안 드러난다. 관대한 쪽으로 틀리는 것이 안전한 방향이다.
+#
+# 🔴 유도식 (독립 상수를 두지 않는다 — 전부 기존 값에서 나온다):
+#     min_gap(i) = (attack_cooldown × FIRE_RATE_SLACK + max(0, delay_i − LAG_MAX_ONE_WAY_MS)) × haste_scale
+#   ⑴ **기본 쿨다운분은 기존 관용구 그대로**(×FIRE_RATE_SLACK) — `is_fire_rate_ok`가 이미 그 값으로
+#      게이트하고 있으므로, 여기서 더 조이면 그 게이트를 통과한 발사를 두 번째 잣대로 다시 재는 셈이 된다.
+#   ⑵ **뜸(추가분)에서는 `LAG_MAX_ONE_WAY_MS`(200ms)를 통째로 깎는다.** 그 상수가 이 프로젝트가
+#      선언한 "편도 지연 인정 상한"이고, 측정 간격이 실제보다 짧아질 수 있는 양의 상한이 바로
+#      앞 패킷의 편도 지연이다(= 최악 200ms). 즉 **전송이 삼킬 수 있다고 우리가 이미 인정한 만큼**을
+#      정직한 플레이어에게 돌려준다. 이보다 좁게 잡을 근거가 이 코드베이스 안에 없다.
+#   ⚠ **delay ≤ LAG_MAX_ONE_WAY_MS면 뜸분이 0이 되어 게이트가 `is_fire_rate_ok`와 같아진다** — 즉
+#      "전송 불확실성보다 작은 뜸은 호스트가 검증할 수 없다"를 그대로 인정하는 것이다(있는 척하지 않는다).
+#      그 무기는 마무리 타를 사실상 공짜로 준다 → `test_combat_math_auto`가 **무기별로** 그 상태를
+#      단정해 빨개진다("최속 스팸이 마무리 타에 도달"). 조용한 절벽을 시끄럽게 만든 것이다.
+#
+# ⚠ 이 게이트는 **리듬 확인이지 치트 방지 원장이 아니다.** 조작 클라는 여기까지만 앞당길 수 있고
+#   (현 데이터에서 마무리 타 0.40s → 0.185s), 그 상한은 여전히 `is_fire_rate_ok`가 잡는다.
+#   협동 2인·PvP 없음이라 수용한다(rules §2 4인/PvP 게이트에서 재검토).
+static func combo_min_gap_s(job: JobDef, equip: EquipDef, index: int, haste: float = 0.0) -> float:
+	var extra := maxf(0.0, combo_delay_at(equip, index) - LAG_MAX_ONE_WAY_MS / 1000.0)
+	return (job.attack_cooldown * FIRE_RATE_SLACK + extra) * haste_scale(haste)
+
+
+# 🔴 다음 콤보 타수 — 로컬(player)과 호스트 판정(combat_authority)이 **같은 함수**를 지난다(§3).
+#   elapsed_s = 직전 발사로부터의 경과. 클라는 자기 발사 시각, 호스트는 자기 수신 시각으로 잰다.
+# 규칙은 셋뿐이다:
+#   ⑴ 콤보 없는 무기(길이 1) → 항상 0 (법사 지팡이 = 도입 전과 항등)
+#   ⑵ 너무 **쉬었으면**(> window) 처음부터 — 리듬이 끊긴 것
+#   ⑶ 🔴 너무 **빨랐으면**(< combo_min_gap_s) 처음부터 — **뜸을 내지 않은 자는 다음 타를 못 얻는다**
+#      ⚠ 기준이 `combo_gap_s`가 아니라 **`combo_min_gap_s`**(관대한 하한)인 것이 핵심이다 —
+#        호스트는 자기 수신 간격으로 재므로 지터가 정직한 간격을 짧아 보이게 만들 수 있다(그 함수 주석).
+# 🔴 ⑶이 "발사 거부"가 아니라 "리셋"인 것이 계약의 핵심이다. 거부로 만들면 호스트/클라의 타수가
+#   창 경계 지터로 한 번 어긋났을 때 **정당한 발사가 통째로 사라진다**(화살이 안 생기고 이유가 화면에
+#   안 드러난다 — 이 프로젝트가 반복해 겪은 "조용히 깨진다" 부류). 리셋이면 최악이 "이번 타는 평타"다.
+#   그러면서 방어력은 더 세다: 쿨다운만 지키며 스팸하는 조작 클라는 index가 0↔1만 오가 **마무리 타에
+#   영영 도달하지 못한다**(뜸이 곧 마무리 타의 대가라는 설계 그대로).
+static func advance_combo(prev_index: int, elapsed_s: float, job: JobDef, equip: EquipDef,
+		haste: float = 0.0) -> int:
+	var n := combo_len(equip)
+	if n <= 1 or job == null:
+		return 0
+	if not is_finite(elapsed_s):
+		return 0
+	var nxt := (clampi(prev_index, 0, n - 1) + 1) % n
+	if elapsed_s < combo_min_gap_s(job, equip, nxt, haste) \
+			or elapsed_s > combo_window_s(job, equip, nxt, haste):
+		return 0
+	return nxt
+
+
+# 🔴 **판정에 쓰는 콤보 타수 = 이 함수 하나**(호스트 전용, §3 신뢰 경계).
+#   claimed = G_SHOOT "cb"(발신자 주장, 표시용) · prev_index = 호스트가 그 피어에게 마지막으로 인정한 타수.
+# 🔴 호스트는 주장을 **믿지 않고 직접 센다** — 안 그러면 클라가 매 발사에 "나 마무리 타야"라고 주장해
+#   항상 강화살(사거리 2배·데미지 2.5배)을 얻는다. 근접 콤보(G_ATK "cb")가 궤적만 정해 조작돼도 화면만
+#   달라졌던 것과 **성격이 다르다** — 여기 타수는 사거리·데미지를 바꾸므로 신뢰 경계가 새로 생긴다.
+# 🔴 주장을 **상한으로만** 쓴다(min): 호스트가 센 값보다 크게는 못 가고, 작게 주장하면 자기 손해다.
+#
+# 🔴 **규약 — "화면에 없는데 맞는" 방향은 구조적으로 불가능해야 한다** (2026-07-27 리드 승격).
+#   표시(ArrowField)는 발신자 주장 타수를 그대로 그리므로 `min` 덕에 **판정 ≤ 표시**가 항상 성립한다.
+#   min이 없으면 창 경계 지터에서 **화면엔 짧은 화살인데 판정은 300px 밖 적을 죽이는** 방향이 열린다.
+#   있으면 갈라짐은 항상 "그려졌는데 안 맞는다"(빗나감으로 읽히는 쪽)로만 떨어진다.
+#   같은 규약의 다른 구현이 이미 둘 있다 — 보스 텔레그래프는 경계 여유를 격자에서 유도해 **틀리면 반드시
+#   과예고 방향**으로 고정했고(rules §3), `projectile_params`의 `w`(무기 사칭)는 사칭자 화면에만
+#   폭발을 그린다. **새 표시/판정 쌍을 만들 때 이 부등호의 방향부터 정해라.**
+static func authoritative_combo(claimed: int, prev_index: int, elapsed_s: float,
+		job: JobDef, equip: EquipDef, haste: float = 0.0) -> int:
+	var counted := advance_combo(prev_index, elapsed_s, job, equip, haste)
+	return mini(clamp_combo_index(claimed, equip), counted)
+
+
 # 투사체 수명(s) = clamp(사거리)/clamp(속도). arrow_lifetime_s의 일반화 —
 # 무기별 탄속이 갈리는 charge 무기(느린 마법탄)도 표시·권한이 같은 값을 리졸브해 결정론 유지.
 static func projectile_lifetime_s(travel_range: float, speed: float) -> float:
@@ -300,7 +501,7 @@ static func is_charge_time_ok(last_shot_msec: int, now_msec: int, level: int, st
 	# 차지 단계 시간도 공속으로 짧아진다(사용자 확정 2026-07-25) — 안 그러면 리듬이 차지에 지배되는
 	# 법사에게 공속이 무가치해진다. 검증도 같은 배율을 써야 빨라진 정당 차지가 거부되지 않는다.
 	var step := effective_charge_step(step_time, haste)
-	return now_msec - last_shot_msec >= int(float(lv) * step * 0.9 * 1000.0)
+	return now_msec - last_shot_msec >= int(float(lv) * step * FIRE_RATE_SLACK * 1000.0)
 
 
 # 화살 명중 판정 — 호스트만. 화살 현재 위치와 적 중심 거리 <= 화살굵기+적반경.
@@ -312,7 +513,7 @@ static func is_arrow_hit(arrow_pos: Vector2, enemy_pos: Vector2, enemy_radius: f
 # 호스트의 발사 쿨다운 검증 — 발사 간격은 공격자 job 쿨다운(지터 여유 0.9배) 강제. 스팸해도 정직한 발사율 이상 못 얻는다.
 # 근접의 is_hit_cooldown_ok와 달리 SAME_SWING 다중타격 허용이 없다 — 화살 하나=한 발이라 매 발사 독립 게이트.
 static func is_fire_rate_ok(last_shot_msec: int, now_msec: int, job: JobDef, haste: float = 0.0) -> bool:
-	return now_msec - last_shot_msec >= int(effective_cooldown(job, haste) * 0.9 * 1000.0)
+	return now_msec - last_shot_msec >= int(effective_cooldown(job, haste) * FIRE_RATE_SLACK * 1000.0)
 
 
 # 호스트의 발사 원점 검증 — 원점이 발사자 net_anchor 근처인가 (순간이동 원점 스푸핑 완화, §3 신뢰 경계).
@@ -572,15 +773,19 @@ static func crit_mult(crit_dmg: float) -> float:
 #   (charge_damage가 이미 round를 하므로, 치명을 그 밖에서 곱하면 이중 반올림이 된다).
 # 🔴 굴림(crit_roll01)은 **호출부(호스트 RNG)** 가 만든다 — CombatMath가 RNG를 쥐면 테스트가 결정론을 잃는다.
 #   굴림 단위 = 데미지 인스턴스 1회(폭발이 3마리를 때리면 3번 굴린다 — 사용자 확정 2026-07-25).
-# lv_stats 비어 있고 charge 0이면 calc_damage와 **정확히 같은 값**(항등 폴백).
+# lv_stats 비어 있고 charge 0·combo_mult 1이면 calc_damage와 **정확히 같은 값**(항등 폴백).
+# 🔴 combo_mult = 평타 콤보 타별 데미지 배율(combo_damage_mult_at). **곱셈 안쪽**에 넣어 반올림이
+#   여전히 1회이게 한다 — 호출부에서 결과에 곱하면 이중 반올림이 되고, 그게 정확히 이 함수가
+#   존재하는 이유다. 🔴 배율은 **호스트가 센 타수**로 리졸브한다(authoritative_combo) — 발신자가
+#   주장한 타수로 곱하면 매 발사가 마무리 타가 된다.
 static func confirm_damage(job: JobDef, bonus_attack: int, lv_stats: Dictionary,
-		charge_level: int, crit_roll01: float) -> Dictionary:
+		charge_level: int, crit_roll01: float, combo_mult: float = 1.0) -> Dictionary:
 	var base := float(calc_damage(job, bonus_attack))
 	var mult := CHARGE_DAMAGE_MULT[clamp_charge_level(charge_level)]
 	var chance := clamp_level_stat("crit", float(lv_stats.get("crit", 0.0)))
 	var is_crit := is_finite(crit_roll01) and crit_roll01 >= 0.0 and crit_roll01 < chance
 	var cmult := crit_mult(float(lv_stats.get("crit_dmg", 0.0))) if is_crit else 1.0
-	return {"damage": int(round(base * mult * cmult)), "crit": is_crit}
+	return {"damage": int(round(base * mult * clamp_combo_mult(combo_mult) * cmult)), "crit": is_crit}
 
 
 # 피흡 적립량(소수) — 🔴 **실제로 깎인 HP** 기준으로 부른다(오버킬 기준이면 1HP 잔몹을 치명타로 때려

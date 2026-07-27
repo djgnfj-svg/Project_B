@@ -203,7 +203,7 @@ func _initialize() -> void:
 	failures += _check(is_equal_approx(CombatMath.arrow_lifetime_s(9999.0), CombatMath.MAX_ARROW_RANGE / CombatMath.ARROW_SPEED), "arrow_lifetime(9999): MAX로 clamp된 수명")
 
 	# --- 차지 발사(법사 지팡이) §3 계약 — 레벨 clamp·홀드→레벨·위력/반경 배율·폭발 판정·차지 시간 검증 ---
-	var step := 0.35  # worn_staff.charge_step_time
+	var step := 0.35  # 합성 단계 시간(s) — 특정 무기 미러가 **아니다**(데이터를 조여도 이 단위 테스트는 안 흔들린다)
 	# 레벨 clamp — 게스트가 주장하는 c는 반드시 0..MAX 안으로 접힌다 (배열 인덱스 안전 + 위력 상한)
 	failures += _check(CombatMath.clamp_charge_level(-5) == 0, "charge clamp: 음수(-5) → 0")
 	failures += _check(CombatMath.clamp_charge_level(99) == CombatMath.MAX_CHARGE_LEVEL, "charge clamp: 과대(99) → MAX")
@@ -249,6 +249,374 @@ func _initialize() -> void:
 	failures += _check(is_equal_approx(CombatMath.projectile_lifetime_s(240.0, 0.0), 240.0 / CombatMath.ARROW_SPEED), "proj_lifetime: 속도 0 → 기본 속도로 계산")
 	# 터널링 불변식(§3 주석) — 프레임당 전진 < 최소 명중 지름. MAX_PROJECTILE_SPEED를 올리면 여기가 빨개진다.
 	failures += _check(CombatMath.MAX_PROJECTILE_SPEED / 60.0 < 2.0 * (CombatMath.ARROW_HIT_RADIUS + 6.0), "터널링 불변식: 프레임 전진 < 최소 명중 지름(body_radius 6 기준)")
+
+	# --- 원거리 특성: 투사체 사거리(proj_range) — §3 투사체 계약 (궁수·법사 계열) ---
+	# 🔴 값은 네트워크로 안 온다(하위 직업 id만) — 여기 검사는 "데이터 실수와 상한 초과 주장을 어디서 자르나"다.
+	# 🔴 reach는 근접 3함수 전용이라 원거리에 안 걸린다 — 그래서 별도 키다(두 축이 서로 안 샌다).
+	var pr_max := float(CombatMath.TRAIT_MAX.get("proj_range", 0.0))
+	failures += _check(is_equal_approx(CombatMath.clamp_trait("proj_range", 0.2), 0.2), "proj_range: 정상값(0.2) 통과")
+	failures += _check(is_equal_approx(CombatMath.clamp_trait("proj_range", 0.9), pr_max),
+		"proj_range: 상한 초과(0.9) → TRAIT_MAX(0.5) clamp")
+	failures += _check(is_equal_approx(pr_max, 0.5), "proj_range: 상한 = 0.5 (사용자 확정 — reach와 대칭)")
+	failures += _check(is_equal_approx(CombatMath.clamp_trait("proj_range", -1.0), 0.0),
+		"proj_range: 음수 → 0 (사거리 디버프 주입 차단)")
+	failures += _check(is_equal_approx(CombatMath.clamp_trait("proj_range", INF), 0.0),
+		"proj_range: INF(JSON 1e999) → 0 (유한성 가드)")
+	# 🔴 등록 3곳(TRAIT_KEYS·TRAIT_MAX·TRAIT_LABEL) — 하나라도 빠지면 clamp_trait가 상한 0으로 **조용히** 폐기한다
+	failures += _check("proj_range" in CombatMath.TRAIT_KEYS, "proj_range: TRAIT_KEYS 등록(묶음 clamp 순회 대상)")
+	failures += _check(is_equal_approx(float(CombatMath.clamp_traits({"proj_range": 0.3}).get("proj_range", -1.0)), 0.3),
+		"proj_range: 묶음 clamp 통과 — TRAIT_MAX 미등록이면 여기가 0으로 빨개진다")
+	failures += _check(CombatMath.trait_text("proj_range", 0.3).ends_with("+30%"),
+		"proj_range: TRAIT_LABEL 등록 + 증가 축 표기(+) — TRAIT_REDUCTION에 넣으면 빨개진다")
+	# 유효 사거리 — 표시(ArrowField)와 판정(CombatAuthority)이 **같이 지나는** 단일 소스
+	failures += _check(is_equal_approx(CombatMath.effective_projectile_range(240.0), 240.0),
+		"proj_range: 기본값 0 = 항등(특성 도입 전과 완전 동일)")
+	failures += _check(is_equal_approx(CombatMath.effective_projectile_range(240.0, 0.25), 300.0),
+		"proj_range: +25% → 300")
+	failures += _check(is_equal_approx(CombatMath.effective_projectile_range(240.0, 9.0), 240.0 * (1.0 + pr_max)),
+		"proj_range: 상한 초과 주장 → +50%까지만 (무한 사거리 주장 차단)")
+	# 🔴 항등 트립와이어 — 특성 0의 수명이 도입 전 값과 **정확히** 같아야 한다(궁수 기존 동작 회귀 방어)
+	failures += _check(is_equal_approx(
+			CombatMath.projectile_lifetime_s(CombatMath.effective_projectile_range(240.0, 0.0), 240.0),
+			CombatMath.projectile_lifetime_s(240.0, 240.0)),
+		"proj_range: 특성 0의 life = 도입 전 life (항등 폴백)")
+	failures += _check(
+		CombatMath.projectile_lifetime_s(CombatMath.effective_projectile_range(240.0, pr_max), 240.0)
+			> CombatMath.projectile_lifetime_s(240.0, 240.0),
+		"proj_range: 특성이 실제로 수명(=날아가는 거리)을 늘린다 ★안 늘면 표시만 바뀌고 판정은 그대로")
+	# 상한 밖 데이터는 여전히 MAX_ARROW_RANGE에서 잘린다 — 특성이 clamp를 우회하지 않는다(심층 방어)
+	failures += _check(is_equal_approx(
+			CombatMath.projectile_lifetime_s(CombatMath.effective_projectile_range(9999.0, pr_max), CombatMath.ARROW_SPEED),
+			CombatMath.MAX_ARROW_RANGE / CombatMath.ARROW_SPEED),
+		"proj_range: 과대 사거리 × 특성도 MAX_ARROW_RANGE clamp를 지난다(우회 없음)")
+	# 🔴 절삭 불변식 전수 (데이터가 늘면 여기가 빨개진다): 정당한 원거리 무기가 상한에 **조용히** 잘리지
+	#   않는가 — arrow_range × (1 + TRAIT_MAX) ≤ MAX_ARROW_RANGE. 이것이 상한 0.5의 근거 그 자체다
+	#   (현: 최장 iron_staff 260 × 1.5 = 390 < 480). 화면 해상도에서 유도하지 마라 — GDD §9 TBD다.
+	var proj_range_ok := true
+	for ef2: String in DirAccess.get_files_at("res://data/equipment"):
+		var ebase2 := ef2.trim_suffix(".remap")
+		if ebase2.get_extension() != "tres":
+			continue
+		var e2 := load("res://data/equipment/%s" % ebase2) as EquipDef
+		if e2 == null or (e2.motion_type != "shoot" and e2.motion_type != "charge"):
+			continue
+		if CombatMath.effective_projectile_range(e2.arrow_range, pr_max) > CombatMath.MAX_ARROW_RANGE:
+			proj_range_ok = false
+	failures += _check(proj_range_ok,
+		"proj_range 절삭 불변식 전수: 모든 원거리 무기 × 상한 ≤ MAX_ARROW_RANGE(480)")
+
+	# --- 평타 콤보 (궁수 "평·평·쭉") — §3 콤보 계약 (2026-07-27) ---
+	# 🔴 여기 검사의 핵심은 **신뢰 경계**다: 사거리·데미지를 바꾸는 타수를 클라가 주장할 수 있는데,
+	#   호스트가 그걸 그대로 믿으면 매 발사가 마무리 타(사거리 2배·데미지 2.5배)가 된다.
+	var bow := EquipDef.new()
+	bow.motion_type = "shoot"
+	bow.arrow_range = 150.0
+	bow.combo_range_mult = PackedFloat32Array([1.0, 1.0, 2.0])
+	bow.combo_damage_mult = PackedFloat32Array([1.0, 1.0, 2.5])
+	bow.combo_delay = PackedFloat32Array([0.0, 0.0, 0.25])
+	var plain := EquipDef.new()  # 콤보 없는 무기(법사 지팡이·구 궁수 활) — 전 경로 항등이어야 한다
+	plain.motion_type = "shoot"
+	plain.arrow_range = 150.0
+	var ajob := JobDef.new()
+	ajob.attack_damage = 1
+	ajob.attack_cooldown = 0.15
+
+	failures += _check(CombatMath.combo_len(bow) == 3, "combo: 길이 = 배열 최대 크기(3)")
+	failures += _check(CombatMath.combo_len(plain) == 1, "combo: 배열이 비면 길이 1 = 콤보 없음")
+	failures += _check(CombatMath.combo_len(null) == 1, "combo: 무기 미착용(null)도 길이 1 (항등 폴백)")
+	# 한 축만 채운 무기 — 모자란 칸은 배율 1.0·뜸 0.0으로 채워진다(길이를 손으로 맞추게 하지 않는다)
+	var partial := EquipDef.new()
+	partial.combo_damage_mult = PackedFloat32Array([1.0, 1.0, 3.0])
+	failures += _check(CombatMath.combo_len(partial) == 3, "combo: 한 축만 채워도 길이가 잡힌다")
+	failures += _check(is_equal_approx(CombatMath.combo_range_mult_at(partial, 2), 1.0),
+		"combo: 안 채운 축은 그 타에서 항등(1.0)")
+	# 배율 clamp — 데이터 오타(거대값·음수·NaN)가 판정에 새지 않는가
+	failures += _check(is_equal_approx(CombatMath.clamp_combo_mult(9999.0), CombatMath.MAX_COMBO_MULT),
+		"combo: 배율 상한 초과 → MAX_COMBO_MULT clamp (데이터 오타 100.0이 100배 데미지가 되지 않게)")
+	failures += _check(is_equal_approx(CombatMath.clamp_combo_mult(-2.0), 1.0), "combo: 음수 배율 → 1.0(항등)")
+	failures += _check(is_equal_approx(CombatMath.clamp_combo_mult(NAN), 1.0), "combo: NaN 배율 → 1.0(항등)")
+	failures += _check(is_equal_approx(CombatMath.combo_range_mult_at(bow, 99), 1.0),
+		"combo: 배열 밖 타수 주장(99) → 항등 (인덱스 오염 차단)")
+	failures += _check(is_equal_approx(CombatMath.combo_range_mult_at(bow, -5), 1.0),
+		"combo: 음수 타수 주장 → 항등")
+	# 뜸·간격·창 — 로컬 쿨다운(player)과 호스트 계수(advance_combo)가 같이 지나는 유도식
+	failures += _check(is_equal_approx(CombatMath.combo_delay_at(bow, 2), 0.25), "combo: 3타 뜸 = 0.25s")
+	failures += _check(is_equal_approx(CombatMath.combo_delay_at(bow, 0), 0.0), "combo: 1타 뜸 없음")
+	failures += _check(is_equal_approx(CombatMath.combo_gap_s(ajob, bow, 0), 0.15),
+		"combo: 1타 간격 = 직업 쿨다운(0.15)")
+	failures += _check(is_equal_approx(CombatMath.combo_gap_s(ajob, bow, 2), 0.40),
+		"combo: 3타 간격 = 쿨다운 + 뜸(0.40)")
+	# 🔴 뜸도 haste로 짧아진다 — 쿨다운·스윙 창·차지 스텝과 **같은 배율**(§3 haste 계약).
+	#   안 곱하면 공속을 올릴수록 리듬이 뜸에 지배돼 궁수에게 공속이 무가치해진다.
+	failures += _check(is_equal_approx(CombatMath.combo_gap_s(ajob, bow, 2, 0.25),
+			0.40 * CombatMath.haste_scale(0.25)),
+		"combo: 뜸에도 haste_scale이 걸린다 ★안 걸리면 공속이 궁수에게 무가치해진다")
+	# 🔴 창 > 실제 간격 > 인정 하한 불변식 — 겹치면 "너무 빨라서 리셋"과 "너무 쉬어서 리셋"이 만나
+	#   정직한 발사가 **어느 쪽으로도 콤보를 못 잇는** 죽은 구간이 생긴다(3타가 영영 안 나온다).
+	failures += _check(CombatMath.combo_window_s(ajob, bow, 2) > CombatMath.combo_gap_s(ajob, bow, 2)
+			and CombatMath.combo_gap_s(ajob, bow, 2) > CombatMath.combo_min_gap_s(ajob, bow, 2),
+		"combo: 창 > 실제 간격 > 인정 하한 (죽은 구간 없음)")
+	# 🔴 인정 하한(combo_min_gap_s)의 유도 — 기본 쿨다운분은 is_fire_rate_ok와 **같은 값**이고,
+	#   뜸에서만 LAG_MAX_ONE_WAY_MS(전송이 삼킬 수 있다고 이미 인정한 양)를 깎는다.
+	failures += _check(is_equal_approx(CombatMath.combo_min_gap_s(ajob, bow, 2),
+			0.15 * CombatMath.FIRE_RATE_SLACK + (0.25 - CombatMath.LAG_MAX_ONE_WAY_MS / 1000.0)),
+		"combo: 인정 하한 = 쿨다운×0.9 + (뜸 − 편도지연 상한) = 0.185s")
+	failures += _check(is_equal_approx(CombatMath.combo_min_gap_s(ajob, bow, 0),
+			0.15 * CombatMath.FIRE_RATE_SLACK),
+		"combo: 뜸 없는 타의 인정 하한 = is_fire_rate_ok와 **정확히 같은 값**(두 잣대로 재지 않는다)")
+	failures += _check(CombatMath.combo_min_gap_s(ajob, bow, 2) < CombatMath.combo_gap_s(ajob, bow, 2),
+		"combo: 인정 하한 < 실제 간격 (정직한 플레이어에게 여유가 실제로 있다)")
+	# 🔴 **창의 구조적 하한 — 구르기 한 번보다는 길어야 한다** (2026-07-27 netreview M3).
+	#   활은 클릭 1회 = 1발이라 "언제 다시 쏘나"를 아무것도 강제하지 않는다. 창이 구르기(0.25s)보다
+	#   짧으면 **한 번만 굴러도 콤보가 반드시 끊겨** 마무리 타가 구조적으로 도달 불가능해진다.
+	#   ⚠ 값 자체는 사용자 튜닝 노브(docs/TUNING.md §9)라 등호로 못 박지 않는다 — 취향은 자유롭게 두되
+	#     "굴러서 피하면 리듬이 사라지는" 구간만 막는다.
+	failures += _check(CombatMath.COMBO_GRACE_S > CombatMath.ROLL_TIME_S,
+		"★combo: 창(%.2fs) > 구르기 1회(%.2fs) — 한 번 구르면 마무리 타가 불가능해지는 구간 차단"
+			% [CombatMath.COMBO_GRACE_S, CombatMath.ROLL_TIME_S])
+
+	# 전진 규칙 ⑴ 콤보 없는 무기는 항상 0 (법사·구 궁수 = 도입 전과 완전 항등)
+	failures += _check(CombatMath.advance_combo(0, 0.15, ajob, plain) == 0,
+		"combo: 콤보 없는 무기는 언제 쏴도 0타 (항등 폴백)")
+	failures += _check(CombatMath.advance_combo(0, 0.15, ajob, null) == 0, "combo: 무기 null도 0타")
+	# ⑵ 정직한 리듬 — 0 → 1 → 2 → 0 순환
+	failures += _check(CombatMath.advance_combo(0, 0.15, ajob, bow) == 1, "combo: 1타 뒤 쿨다운(0.15) → 2타")
+	failures += _check(CombatMath.advance_combo(1, 0.40, ajob, bow) == 2,
+		"combo: 2타 뒤 뜸까지 기다림(0.40) → 마무리 타")
+	failures += _check(CombatMath.advance_combo(2, 0.15, ajob, bow) == 0, "combo: 마무리 뒤 다시 1타로 순환")
+	# ⑶ 너무 쉬면 처음부터
+	failures += _check(CombatMath.advance_combo(0, 5.0, ajob, bow) == 0, "combo: 오래 쉬면(5s) 처음부터")
+	failures += _check(CombatMath.advance_combo(1, 0.40 + CombatMath.COMBO_GRACE_S + 0.01, ajob, bow) == 0,
+		"combo: 창을 막 넘기면(gap+GRACE 초과) 처음부터")
+	failures += _check(CombatMath.advance_combo(1, 0.40 + CombatMath.COMBO_GRACE_S - 0.01, ajob, bow) == 2,
+		"combo: 창 안이면 마무리 타 유지 (경계 바로 안)")
+	# 🔴 ⑷ 너무 빠르면 처음부터 — **뜸을 안 낸 자는 마무리 타를 못 얻는다**(이게 delay의 강제 수단)
+	failures += _check(CombatMath.advance_combo(1, 0.15, ajob, bow) == 0,
+		"combo: 뜸을 안 내고 쿨다운만에 쏘면 마무리 타가 아니라 리셋 ★조작 클라의 스팸 차단")
+	var min_gap2 := CombatMath.combo_min_gap_s(ajob, bow, 2)
+	failures += _check(CombatMath.advance_combo(1, min_gap2, ajob, bow) == 2, "combo: 인정 하한 경계 = 인정")
+	failures += _check(CombatMath.advance_combo(1, min_gap2 - 0.01, ajob, bow) == 0,
+		"combo: 인정 하한보다 빠르면 리셋")
+	# 🔴 **지터 여유 — 이 규약의 존재 이유이자 마진 뮤테이션의 표적.**
+	#   호스트는 자기 **수신 시각**의 차로 재므로, 앞 패킷이 더 늦게 도착하면 정직한 0.40s가 짧아 보인다.
+	#   그때 마무리 타를 뺏기면 "가끔 강화살이 안 나온다"가 되고 원인이 화면에 안 드러난다.
+	#   ★마진을 없애면(인정 하한 = 실제 간격) 아래 세 줄이 빨개진다.
+	var honest_gap2 := CombatMath.combo_gap_s(ajob, bow, 2)
+	for shrink_ms: int in [60, 120, 200]:
+		failures += _check(
+			CombatMath.advance_combo(1, honest_gap2 - float(shrink_ms) / 1000.0, ajob, bow) == 2,
+			"★지터 여유: 정직한 0.40s가 %dms 짧게 측정돼도 마무리 타 유지" % shrink_ms)
+	# 여유의 상한 근거 = LAG_MAX_ONE_WAY_MS(전송이 삼킬 수 있다고 이 프로젝트가 선언한 양) 전부를 준다
+	failures += _check(is_equal_approx(honest_gap2 - CombatMath.combo_min_gap_s(ajob, bow, 2),
+			CombatMath.LAG_MAX_ONE_WAY_MS / 1000.0 + 0.15 * (1.0 - CombatMath.FIRE_RATE_SLACK)),
+		"★지터 여유의 크기 = 편도지연 상한(200ms) + 쿨다운 관용구분(15ms) = 215ms")
+	# 🔴 스팸 시뮬 — 쿨다운만 지키며 연사하는 조작 클라는 0↔1만 오가 **마무리 타에 영영 도달 못 한다**.
+	#   ⚠ 클라 자기 쿨다운(0.15)이 아니라 **호스트가 허용하는 최속**(is_fire_rate_ok 문턱 = 쿨다운×0.9)으로
+	#     민다 — 조작 클라는 자기 쿨다운을 안 지키므로 그게 실제 최악이다.
+	var fastest := 0.15 * CombatMath.FIRE_RATE_SLACK
+	var spam_idx := 0
+	var spam_reached_finish := false
+	for _i: int in range(30):
+		spam_idx = CombatMath.advance_combo(spam_idx, fastest, ajob, bow)
+		if spam_idx == 2:
+			spam_reached_finish = true
+	failures += _check(not spam_reached_finish,
+		"★combo: 호스트 허용 최속(135ms) 스팸 30발 동안 마무리 타 0회 — 마진을 줘도 스팸은 못 닿는다")
+	# 🔴 **무기별 전수** — 위 성질은 데이터에 달려 있다. 뜸이 LAG_MAX_ONE_WAY_MS(200ms) 이하로 내려가면
+	#   인정 하한이 is_fire_rate_ok 문턱과 같아져 **최속 스팸이 마무리 타를 공짜로 얻는다**(조용한 절벽).
+	#   여기서 무기마다 확인해 그 절벽을 시끄럽게 만든다 — 뜸을 낮추는 튜닝은 이 줄을 빨갛게 만들어야 한다.
+	var spam_free := ""
+	var combo_weapons := 0
+	for ef4: String in DirAccess.get_files_at("res://data/equipment"):
+		var ebase4 := ef4.trim_suffix(".remap")
+		if ebase4.get_extension() != "tres":
+			continue
+		var ew := load("res://data/equipment/%s" % ebase4) as EquipDef
+		if ew == null or CombatMath.combo_len(ew) <= 1:
+			continue  # 콤보 없는 무기는 애초에 마무리 타가 없다
+		var jw := load("res://data/jobs/%s.tres" % ew.job_id) as JobDef
+		if jw == null:
+			continue
+		combo_weapons += 1
+		var last := CombatMath.combo_len(ew) - 1
+		var idx := 0
+		var fast := jw.attack_cooldown * CombatMath.FIRE_RATE_SLACK
+		for _i2: int in range(30):
+			idx = CombatMath.advance_combo(idx, fast, jw, ew)
+			if idx == last:
+				spam_free += "%s " % ew.id
+				break
+	failures += _check(combo_weapons > 0, "무기 전수: 콤보 무기가 실제로 스캔됐다(스캔 0건 = 침묵 통과 방지)")
+	failures += _check(spam_free.is_empty(),
+		"★무기 전수: 최속 스팸이 마무리 타에 닿는 무기 없음 (닿는 무기: %s)"
+			% ("없음" if spam_free.is_empty() else spam_free))
+	# 정직한 리듬 시뮬 — 0.15 / 0.15 / 0.40을 반복하면 3발마다 정확히 한 번 마무리 타
+	var honest_idx := 0
+	var honest_finishes := 0
+	for i2: int in range(30):
+		var gap_s := CombatMath.combo_gap_s(ajob, bow, (honest_idx + 1) % 3)
+		honest_idx = CombatMath.advance_combo(honest_idx, gap_s, ajob, bow)
+		if honest_idx == 2:
+			honest_finishes += 1
+	failures += _check(honest_finishes == 10,
+		"combo: 정직한 리듬 30발 = 마무리 타 10회 ★로컬 쿨다운이 심는 간격이 호스트 게이트를 항상 통과한다")
+
+	# 🔴 신뢰 경계 — authoritative_combo. **판정에 쓰는 타수는 이 함수 하나**다.
+	#   ★뮤테이션 표적: 이 함수를 `return claimed`(클라 주장 그대로)로 되돌리면 아래 두 줄이 빨개진다.
+	failures += _check(CombatMath.authoritative_combo(2, 1, 0.15, ajob, bow) == 0,
+		"★신뢰 경계: 쿨다운만에 쏘며 '나 마무리 타'라고 주장 → 0 (주장 그대로 믿으면 여기가 빨개진다)")
+	failures += _check(CombatMath.authoritative_combo(2, 0, 0.15, ajob, bow) == 1,
+		"★신뢰 경계: 호스트가 센 값이 1인데 2를 주장 → 1 (호스트 계수가 상한)")
+	failures += _check(CombatMath.authoritative_combo(99, 1, 0.40, ajob, bow) == 2,
+		"신뢰 경계: 범위 밖 주장(99)도 호스트 계수(2)로 잘린다")
+	failures += _check(CombatMath.authoritative_combo(-3, 1, 0.40, ajob, bow) == 0,
+		"신뢰 경계: 음수 주장은 clamp 후 min → 0 (자기 손해, 무해)")
+	# 🔴 min 규약 — 주장이 호스트 계수보다 **작으면 주장을 따른다**(판정 ≤ 표시).
+	#   표시는 주장값을 그리므로, 이게 없으면 "화면엔 짧은 화살인데 판정은 300px 밖 적을 죽이는" 방향이 열린다.
+	failures += _check(CombatMath.authoritative_combo(0, 1, 0.40, ajob, bow) == 0,
+		"★판정 ≤ 표시: 호스트는 2로 셌지만 주장이 0이면 0 (안 그리고 맞히는 방향 차단)")
+	failures += _check(CombatMath.authoritative_combo(3, 1, 0.40, ajob, plain) == 0,
+		"신뢰 경계: 콤보 없는 무기에 실린 타수 주장은 전부 0 (지팡이가 강화탄을 얻지 못한다)")
+	# 🔴 **"거부 신호가 없다"가 계약이다** — 어떤 입력에도 유효한 타수만 돌아온다(음수 sentinel 없음).
+	#   ⚠ 이 함수가 -1 같은 값을 돌려주게 바꾸면 호출부(combat_authority)가 그걸 "발사 거부"로 쓰기
+	#     쉬워지는데, 그러면 창 경계 지터에서 **정당한 화살이 조용히 사라진다**. 최악은 "이번 타는
+	#     평타"여야 한다. 실제 "발사를 안 떨군다"는 호출부 성질이라 여기선 반환 계약만 못박는다.
+	var sentinel_ok := true
+	for claim: int in [-999, -1, 0, 1, 2, 3, 999]:
+		for el: float in [-1.0, 0.0, 0.001, 0.185, 0.40, 5.0, INF, NAN]:
+			for prev: int in [-7, 0, 2, 42]:
+				var r := CombatMath.authoritative_combo(claim, prev, el, ajob, bow)
+				if r < 0 or r >= CombatMath.combo_len(bow):
+					sentinel_ok = false
+	failures += _check(sentinel_ok,
+		"★신뢰 경계: 어떤 주장·간격·이전 타수에도 반환은 항상 [0, len) — 거부 sentinel이 없다")
+
+	# 데미지 배율 — confirm_damage **안쪽**에서 곱해져 반올림이 여전히 1회인가
+	var no_stats: Dictionary = {}
+	var d_plain := int(CombatMath.confirm_damage(ajob, 3, no_stats, 0, 1.0).get("damage", -1))
+	var d_combo := int(CombatMath.confirm_damage(ajob, 3, no_stats, 0, 1.0, 2.5).get("damage", -1))
+	failures += _check(d_plain == 4, "combo 데미지: 기준 = 직업1 + 장비3 = 4")
+	failures += _check(int(CombatMath.confirm_damage(ajob, 3, no_stats, 0, 1.0, 1.0).get("damage", -1)) == d_plain,
+		"combo 데미지: 배율 1.0 = 도입 전과 완전 항등")
+	failures += _check(d_combo == 10, "combo 데미지: ×2.5 → 10 ★적용 지점 검출(안 곱하면 4로 남는다)")
+	# 🔴 반올림 1회 — **이중 반올림이면 값이 실제로 갈라지는 케이스**로 확인한다(안 그러면 검출력 0).
+	#   base 7(직업1+장비6) × 콤보 1.5 × 치명 1.5(crit_dmg 0):
+	#     안쪽 한 번   = round(7 × 1.5 × 1.5) = round(15.75) = 16  ← 계약
+	#     밖에서 곱함  = round(round(7 × 1.5) × 1.5) = round(11 × 1.5) = round(16.5) = 17  ← 빨개져야 한다
+	var crit_stats: Dictionary = {"crit": 1.0, "crit_dmg": 0.0}
+	failures += _check(int(CombatMath.confirm_damage(ajob, 6, crit_stats, 0, 0.0, 1.5).get("damage", -1)) == 16,
+		"★combo 데미지: 콤보 × 치명이 한 식에서 곱해진다(반올림 1회 — 밖에서 곱하면 17)")
+	failures += _check(int(CombatMath.confirm_damage(ajob, 3, no_stats, 0, 1.0, 9999.0).get("damage", -1))
+			== int(round(4.0 * CombatMath.MAX_COMBO_MULT)),
+		"combo 데미지: 상한 밖 배율도 MAX_COMBO_MULT를 지난다(데이터 오타 방어)")
+
+	# 🔴 절삭 불변식 전수 — 콤보 사거리 배율까지 포함해서 정당한 무기가 조용히 잘리지 않는가.
+	#   예산 = base × max(combo_range_mult) ≤ MAX_ARROW_RANGE / (1 + TRAIT_MAX["proj_range"]) = 320.
+	#   ⚠ 넘으면 clamp_arrow_range가 **에러 없이** 사거리를 깎아 "보이는 곳 ≠ 맞는 곳"이 된다.
+	var combo_range_ok := true
+	var worst_id := ""
+	var worst_val := 0.0
+	for ef3: String in DirAccess.get_files_at("res://data/equipment"):
+		var ebase3 := ef3.trim_suffix(".remap")
+		if ebase3.get_extension() != "tres":
+			continue
+		var e3 := load("res://data/equipment/%s" % ebase3) as EquipDef
+		if e3 == null or (e3.motion_type != "shoot" and e3.motion_type != "charge"):
+			continue
+		for ci: int in range(CombatMath.combo_len(e3)):
+			var reach_px := CombatMath.effective_projectile_range(
+				e3.arrow_range, pr_max, CombatMath.combo_range_mult_at(e3, ci))
+			if reach_px > worst_val:
+				worst_val = reach_px
+				worst_id = "%s[%d]" % [e3.id, ci]
+			if reach_px > CombatMath.MAX_ARROW_RANGE:
+				combo_range_ok = false
+	failures += _check(combo_range_ok,
+		"★콤보 절삭 불변식 전수: 모든 원거리 무기 × 모든 타수 × proj_range 상한 ≤ 480 (최대 %s = %.1f)"
+			% [worst_id, worst_val])
+
+	# 🔴 **비감소(단조) 불변식 전수** — `min` 규약이 실제로 보장해야 하는 것은 **"판정 거리 ≤ 표시 거리"**인데,
+	#   `authoritative_combo`의 min이 직접 주는 것은 **"판정 index ≤ 표시 index"** 뿐이다. 둘을 잇는
+	#   `index → 배율` 사상이 비감소여야 부등호가 실제로 넘어간다.
+	#   ⚠ 뒤집힌 배열(`[2,1,1]` = "첫 발이 강한 활")을 .tres 한 장으로 넣으면 min이 오히려
+	#     **판정 300px / 표시 150px**(화면에 없는데 맞는다)를 만든다 — 규약이 금지한 바로 그 방향이고
+	#     다른 모든 단정은 그린이다. 보스 콘 계약이 "각도"만 적어 형태가 갈라졌던 것과 같은 실패 형태.
+	var mono_bad := ""
+	for ef5: String in DirAccess.get_files_at("res://data/equipment"):
+		var ebase5 := ef5.trim_suffix(".remap")
+		if ebase5.get_extension() != "tres":
+			continue
+		var e5 := load("res://data/equipment/%s" % ebase5) as EquipDef
+		if e5 == null:
+			continue
+		for ci2: int in range(1, CombatMath.combo_len(e5)):
+			if CombatMath.combo_range_mult_at(e5, ci2) < CombatMath.combo_range_mult_at(e5, ci2 - 1):
+				mono_bad += "%s.range[%d] " % [e5.id, ci2]
+			if CombatMath.combo_damage_mult_at(e5, ci2) < CombatMath.combo_damage_mult_at(e5, ci2 - 1):
+				mono_bad += "%s.damage[%d] " % [e5.id, ci2]
+	failures += _check(mono_bad.is_empty(),
+		"★콤보 배율 비감소 전수: 뒤 타가 앞 타보다 작은 무기 없음 — 뒤집히면 '판정 > 표시'가 된다 (위반: %s)"
+			% ("없음" if mono_bad.is_empty() else mono_bad))
+	# 합성 데이터로 **검출력 자체**를 확인한다 — 위 전수는 현 데이터가 통과라 "루프가 도는가"를 못 보여준다.
+	var flipped := EquipDef.new()
+	flipped.combo_range_mult = PackedFloat32Array([2.0, 1.0, 1.0])
+	var flip_caught := false
+	for ci3: int in range(1, CombatMath.combo_len(flipped)):
+		if CombatMath.combo_range_mult_at(flipped, ci3) < CombatMath.combo_range_mult_at(flipped, ci3 - 1):
+			flip_caught = true
+	failures += _check(flip_caught, "★비감소 검사의 검출력: 뒤집힌 배열([2,1,1])을 실제로 잡는다")
+
+	# --- 발사형 판정 (호스트 G_SHOOT 신뢰 경계, 2026-07-27 netreview M4) ---
+	# 🔴 근접 무기가 이 경로에 새면 `arrow_range` 기본값 360짜리 권한 화살이 전사 공격력으로 확정된다.
+	var gsword := EquipDef.new()
+	gsword.motion_type = "swing"
+	var thrust := EquipDef.new()
+	thrust.motion_type = "thrust"  # 예약 모션 — 아직 발사형이 아니다
+	failures += _check(CombatMath.is_projectile_weapon(bow), "발사형: shoot = 발사 가능")
+	# ⚠ **charge 갈래는 실제 charge 무기로 겨눈다** — worn_staff는 2026-07-27에 shoot(마법볼)로 갈라져서
+	#   그걸 계속 겨누면 라벨만 "charge"이고 실제로는 shoot 갈래를 두 번 재게 된다(조용히 커버리지 상실).
+	failures += _check(CombatMath.is_projectile_weapon(load("res://data/equipment/iron_staff.tres") as EquipDef),
+		"발사형: charge(철 지팡이) = 발사 가능")
+	failures += _check(CombatMath.is_projectile_weapon(load("res://data/equipment/worn_staff.tres") as EquipDef),
+		"발사형: shoot(낡은 지팡이 = 마법볼) = 발사 가능")
+	failures += _check(not CombatMath.is_projectile_weapon(gsword),
+		"★발사형: swing(대검) = 발사 거부 — 새면 전사 공격력짜리 권한 화살이 확정된다")
+	failures += _check(not CombatMath.is_projectile_weapon(thrust), "★발사형: thrust(예약) = 발사 거부")
+	failures += _check(not CombatMath.is_projectile_weapon(null),
+		"발사형: null = false (⚠ 호출부는 null을 **거부하지 않는다** — G_STATS 미도착 정상 창)")
+	# 🔴 **두 번째 방어층 — `EquipDef.arrow_range` 기본값이 안전한가** (2026-07-27 netreview M4 후속).
+	#   위 가드는 씬 글루(combat_authority)에 있어 헤드리스가 **겨눌 수 없다** — 지워도 스위트가 초록이다.
+	#   그래서 "가드가 뚫려도 위협이 아닌" 층을 데이터 쪽에 세운다: 근접 무기 `.tres`엔 이 필드가 없으니
+	#   기본값이 곧 "근접 무기가 쏠 경우의 사거리"다. 전에는 360이라 궁수의 정당한 마무리 타보다 멀었다.
+	var melee_range := 0.0     # 근접 무기가 실제로 갖는 사거리(= 기본값)
+	var longest_real := 0.0    # 정당한 원거리 무기의 최장 도달
+	var missing_range := ""    # 발사형인데 사거리를 명시 안 한 무기
+	for ef6: String in DirAccess.get_files_at("res://data/equipment"):
+		var ebase6 := ef6.trim_suffix(".remap")
+		if ebase6.get_extension() != "tres":
+			continue
+		var e6 := load("res://data/equipment/%s" % ebase6) as EquipDef
+		if e6 == null:
+			continue
+		if CombatMath.is_projectile_weapon(e6):
+			# 🔴 발사형은 **반드시 명시**해야 한다 — 빠뜨리면 기본값 0 → clamp가 MIN(40)으로 떨어뜨려
+			#   40px짜리 화살이 된다. ⚠ 실패 방향이 안전하다: "조용히 멀어짐"이 아니라 "눈에 띄게 짧아짐".
+			if e6.arrow_range <= 0.0:
+				missing_range += "%s " % e6.id
+			for ci4: int in range(CombatMath.combo_len(e6)):
+				longest_real = maxf(longest_real,
+					e6.arrow_range * CombatMath.combo_range_mult_at(e6, ci4))
+		else:
+			melee_range = maxf(melee_range, e6.arrow_range)
+	failures += _check(missing_range.is_empty(),
+		"★발사형 무기는 arrow_range를 명시했다 — 빠뜨리면 40px 화살이 된다 (누락: %s)"
+			% ("없음" if missing_range.is_empty() else missing_range))
+	failures += _check(is_equal_approx(melee_range, 0.0),
+		"★근접 무기의 arrow_range = 0 (기본값) — 사칭 화살의 사거리 원천을 없앤 두 번째 방어층")
+	# 가드를 뚫고 근접 무기가 발사 경로에 새더라도 위협이 안 되는가 = clamp 후 정당한 최단 사거리보다 짧은가
+	failures += _check(CombatMath.clamp_arrow_range(melee_range) <= CombatMath.MIN_ARROW_RANGE,
+		"★사칭 화살의 사거리 = %.0fpx (MIN clamp) ≪ 정당한 최장 원거리 %.0fpx — 뚫려도 위협이 아니다"
+			% [CombatMath.clamp_arrow_range(melee_range), longest_real])
 
 	# --- 지연 보상 (§3, 2026-07-24) — "피했는데 맞았다"를 없애는 계약 ---
 	# 편도 지연 정규화: 음수·NaN·스파이크를 판정에 쓸 수 있는 값으로
@@ -453,6 +821,55 @@ func _initialize() -> void:
 	failures += _check(swing_ok, "스윙 창 계약 전수: 모든 무기×직업×haste에서 swing_time < effective_cooldown")
 	failures += _check(degenerate_ok, "퇴화 트립와이어: MAX_HASTE에서도 유효 쿨다운 게이트 > SAME_SWING_MS")
 	failures += _check(lead_ok, "외삽 상한 불변식: LAG_MAX_LEAD_DIST ≥ 최고 이속×구르기×최대 lead (전 직업)")
+
+	# 🔴 **차지 가치 트립와이어 — "모으는 것이 탭 연타보다 나은가"** (법사 무기 분화, 2026-07-27).
+	#    유도: 레벨 L을 모아 쏘는 주기 = `쿨다운 + L×단계시간`, 위력 = `×CHARGE_DAMAGE_MULT[L]`.
+	#    따라서 모으는 쪽이 이기려면   mult(L)×cd > cd + L×step   ⇔   cd > L×step / (mult(L) − 1).
+	#    현 배율표에서 가장 빡빡한 것은 **L=1**이다(0.35/0.7 = cd > 0.5, L=3은 1.05/2.4 = 0.4375).
+	# 🔴 **왜 트립와이어인가 — 쿨다운을 "답답하다"는 이유로 낮추는 순간 이 부등식이 조용히 뒤집힌다.**
+	#    그러면 차지 무기가 **"탭 연타가 더 센 무기"** 가 되어, 보스가 100% 드랍하는 도면(iron_staff)의
+	#    제작 보상이 통째로 무의미해진다. 에러도 경고도 없고 화면에도 안 드러난다(DPS를 재봐야 안다) —
+	#    이 프로젝트가 반복해 겪은 "에러 없이 설계만 죽는" 부류다. 실제로 이 작업의 초안이 쿨다운
+	#    0.8 → 0.4였고, 그 값이면 1~3단계가 **전부** 연타만 못하다(아래 ★검출력이 그 조합을 쓴다).
+	# ⚠ haste 불변이다 — 양변에 haste_scale이 똑같이 곱해진다(§3 haste 계약, 쿨다운·차지 스텝 공유).
+	#    그래도 전 구간을 쓸어 "배율 공유가 실제로 성립한다"를 데이터로도 보인다.
+	var charge_worth_ok := true
+	for ef7: String in DirAccess.get_files_at("res://data/equipment"):
+		var ebase7 := ef7.trim_suffix(".remap")
+		if ebase7.get_extension() != "tres":
+			continue
+		var e7 := load("res://data/equipment/%s" % ebase7) as EquipDef
+		if e7 == null or e7.motion_type != "charge":
+			continue
+		for jf7: String in DirAccess.get_files_at("res://data/jobs"):
+			var jbase7 := jf7.trim_suffix(".remap")
+			if jbase7.get_extension() != "tres":
+				continue
+			var j7 := load("res://data/jobs/%s" % jbase7) as JobDef
+			if j7 == null:
+				continue
+			# 직업 귀속 — 실제로 착용 가능한 조합만 본다(스윙 창 전수와 같은 규약). 비면 범용.
+			if not e7.job_id.is_empty() and e7.job_id != j7.id:
+				continue
+			for h7: float in [0.0, 0.25, float(CombatMath.LEVEL_STAT_MAX["haste"])]:
+				var cd7 := CombatMath.effective_cooldown(j7, h7)
+				var st7 := CombatMath.effective_charge_step(e7.charge_step_time, h7)
+				if cd7 <= 0.0 or st7 <= 0.0:
+					continue  # 차지 못 하는 데이터 — is_charge_time_ok가 별도로 거부한다
+				for lv7: int in range(1, CombatMath.MAX_CHARGE_LEVEL + 1):
+					if CombatMath.CHARGE_DAMAGE_MULT[lv7] / (cd7 + float(lv7) * st7) <= 1.0 / cd7:
+						charge_worth_ok = false
+	failures += _check(charge_worth_ok,
+		"차지 가치 전수: 모든 차지 무기×직업×haste×단계에서 '모아 쏘기' DPS > '탭 연타' DPS")
+
+	# ★검출력 — 위 전수는 현 데이터가 통과라 "루프가 실제로 도는가"를 못 보여준다.
+	#   초안 값(쿨다운 0.4 + 단계 0.35)을 합성으로 넣어 1~3단계가 **전부** 잡히는지 확인한다.
+	var caught_lv := 0
+	for lv8: int in range(1, CombatMath.MAX_CHARGE_LEVEL + 1):
+		if CombatMath.CHARGE_DAMAGE_MULT[lv8] / (0.4 + float(lv8) * 0.35) <= 1.0 / 0.4:
+			caught_lv += 1
+	failures += _check(caught_lv == CombatMath.MAX_CHARGE_LEVEL,
+		"★차지 가치 검출력: 쿨다운 0.4 + 단계 0.35면 1~3단계 전부 '연타만 못한 차지'로 잡힌다")
 
 	# 이동속도 — 로컬 이동과 원격 clamp가 같은 유도식을 쓰는 근거
 	failures += _check(is_equal_approx(CombatMath.effective_move_speed(100.0, 0.0), 100.0), "effective_move: 보너스 0 = 항등")

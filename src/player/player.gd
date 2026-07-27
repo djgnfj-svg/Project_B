@@ -172,8 +172,15 @@ var _afterimage_left: float = 0.0   # 다음 잔상까지 남은 시간(s) — �
 var _was_dashing: bool = false      # 직전 프레임 대쉬 여부 — 종료 순간(되튐 킥)을 잡는 엣지 감지
 var _stance_sway: float = 0.0       # 현재 적용 중인 무기 스탠스 각(rad) — 목표로 부드럽게 따라간다
 var _sway_phase: float = 0.0        # 흔들림 위상 — delta로 누적(Time 전역 대신, 일시정지·씬 전환에 안전)
-var _combo_index: int = 0           # 현재 콤보 타수(0..COMBO_MAX-1) — 표시 전용
-var _combo_left: float = 0.0        # 콤보가 이어지는 남은 시간(s)
+var _combo_index: int = 0           # 근접 스윙 콤보 타수(0..COMBO_MAX-1) — 표시 전용
+var _combo_left: float = 0.0        # 근접 콤보가 이어지는 남은 시간(s)
+# 원거리(shoot/charge) 평타 콤보 — 궁수 "평·평·쭉". 🔴 **근접 콤보와 상태를 공유하지 않는다**:
+#   근접은 궤적만 정하는 표시값이지만 이쪽은 사거리·데미지를 바꿔 신뢰 경계가 걸려 있고, 규칙도
+#   호스트와 미러여야 한다(CombatMath.advance_combo). 섞으면 근접 손맛 튜닝이 원거리 판정을 움직인다.
+# ⚠ 창 판정은 카운트다운 타이머가 아니라 **타임스탬프 간격**이다 — 호스트가 수신 시각으로 같은
+#   산술을 하므로(양쪽이 같은 함수를 지나려면) 클라도 같은 형태로 재야 한다.
+var _shot_combo_index: int = 0
+var _last_shot_msec: int = -1000000000
 var _swing_from: float = 0.0        # 이번 스윙의 시작 각 오프셋(rad) — 콤보 타수에 따라 방향이 뒤집힌다
 var _swing_to: float = 0.0          # 이번 스윙의 끝 각 오프셋(rad)
 var _swing_lunge_mult: float = 1.0  # 이번 스윙의 내지르기 배율(마무리 타만 크게)
@@ -395,6 +402,9 @@ func _apply_weapon_feel(equip: EquipDef) -> void:
 	var is_charge := equip != null and equip.motion_type == "charge"
 	_charge_step_time_base = equip.charge_step_time if is_charge else 0.0
 	_charge_sfx = equip.charge_sfx if (is_charge and not equip.charge_sfx.is_empty()) else "charge_step"
+	# 무기가 바뀌면 콤보도 처음부터 — 리듬은 무기가 정하므로 옛 무기의 타수를 이어받으면 새 무기의
+	# 배율 배열에 엉뚱한 칸이 걸린다(호스트는 자기 간격으로 세니 표시만 어긋난다).
+	_shot_combo_index = 0
 	_refresh_growth_derived()  # 무기 교체도 파생 입력 — 새 base에 현재 haste를 다시 곱한다
 	if is_node_ready():
 		# 차지 오브 = 그 무기의 투사체 텍스처(표시 전용) — 모으는 탄과 날아가는 탄이 같은 그림.
@@ -508,6 +518,9 @@ func _update_life_state(p_hp: int) -> void:
 		_was_dashing = false     # 사망으로 끊긴 대쉬가 되튐 킥을 남기지 않게(엣지 감지 리셋)
 		_combo_left = 0.0        # 부활 후 첫 스윙이 죽기 전 콤보를 이어받지 않게
 		_combo_index = 0
+		_shot_combo_index = 0    # 원거리 콤보도 같이 — 부활 첫 발이 죽기 전 마무리 타를 이어받지 않게
+		# ⚠ _last_shot_msec은 안 건드린다: 호스트도 자기 기록을 사망으로 지우지 않으므로(발사율 게이트가
+		#   그대로 살아 있다) 여기서 지우면 부활 직후 클라만 "간격 충분"으로 보고 타수가 어긋난다.
 		_attack_anim_left = 0.0  # 사망 직전 발동한 공격 스윙이 고스트에 남지 않게
 		_cancel_charge()         # 모으던 차지도 소멸 — 고스트가 기를 모으고 있지 않게
 		_remote_charge = -1      # 원격 아바타의 차지 오브도 즉시 정리(사망 시 마지막 c가 남아 떠 있지 않게)
@@ -800,12 +813,14 @@ func _local_combat(delta: float) -> void:
 		_tick_charge(delta, want)  # 누르고 있는 동안 모으고, 떼면 발사 (쿨다운 게이트는 안에서)
 		return
 	if want and _attack_cd_left <= 0.0 and _roll_time_left <= 0.0 and _is_armed():
-		_attack_cd_left = CombatMath.effective_cooldown(job, _haste())
 		var dir := _aim_dir()
 		# 모션 타입 분기 (§2 게이트): shoot = 원거리 발사(화살), charge = 위에서 처리, 그 외 = 근접 호 스윙.
 		if motion == "shoot":
+			# 🔴 쿨다운을 콤보가 정한다 — 다음 타에 뜸이 붙어 있으면 그만큼 길어진다("평·평·쭉").
+			_attack_cd_left = _advance_shot_combo()
 			_fire_projectile(dir, 0)
 		else:
+			_attack_cd_left = CombatMath.effective_cooldown(job, _haste())
 			_swing_attack(dir)
 
 
@@ -833,7 +848,10 @@ func _tick_charge(delta: float, want: bool) -> void:
 		return
 	var level := _charge_level
 	_cancel_charge()
-	_attack_cd_left = CombatMath.effective_cooldown(job, _haste())
+	# 차지도 shoot과 **같은 콤보 경로**를 지난다 — 지팡이는 combo_* 배열이 비어 있어 결과가
+	# effective_cooldown과 완전 항등이다(법사 동작 무변경). 갈래를 만들지 않으려는 것: 리듬 있는
+	# 차지 무기가 생기면 .tres 한 장으로 떨어진다(rules §4).
+	_attack_cd_left = _advance_shot_combo()
 	_fire_projectile(_aim_dir(), level)
 
 
@@ -841,6 +859,29 @@ func _cancel_charge() -> void:
 	_charging = false
 	_charge_held = 0.0
 	_charge_level = 0
+
+
+# 원거리 평타 콤보 전진 — 이번 발사의 타수(_shot_combo_index)를 굳히고, **다음 타의 뜸까지 포함한**
+# 쿨다운(s)을 돌려준다. 🔴 전진 규칙은 CombatMath.advance_combo 단일 소스이고 **호스트도 같은 함수**를
+# 자기 수신 간격으로 돌린다(§3) — 여기에 사본 조건문을 두면 "내 화면은 3타인데 판정은 평타"가 된다.
+# 🔴 뜸을 **다음 발사의 쿨다운에 미리 실어 두는 것**이 "3타 직전에 살짝 뜸"의 구현이다.
+#   ⚠ **활은 클릭 1회 = 1발이다** — 발사 입력은 `_unhandled_input`의 `is_action_pressed`(엣지 트리거,
+#   echo 없음)라 홀드 연사가 안 된다. 폴링(`Input.is_action_pressed`)은 `_tick_charge`(차지 전용)에만 있다.
+#   그래서 뜸은 "버튼을 눌러 두면 알아서 나오는 리듬"이 아니라 **다음 클릭을 그만큼 늦게 받는 것**이다.
+# 🔴 이 사실이 호스트 게이트 두 개에 서로 다르게 걸린다 (2026-07-27 netreview M3):
+#   **하한(너무 빠름)** — 안전하다. `_attack_cd_left`가 뜸만큼 입력을 막으므로 정직한 클릭은 구조적으로
+#     인정 하한보다 빠를 수 없다.
+#   🔴 **상한(너무 쉼)** — 그 보호를 **못 받는다.** 사람이 언제 다시 클릭할지는 아무것도 강제하지 않는다.
+#     조준하거나 굴렀다가 쏘면 창을 넘겨 콤보가 리셋된다 = "쭉"이 안 나온다. 그래서 창(COMBO_GRACE_S)은
+#     전사 근접 콤보와 같은 총 0.95s로 맞춰 두었다 — 좁히면 리듬 자체가 실기에서 사라진다.
+func _advance_shot_combo() -> float:
+	var now := Time.get_ticks_msec()
+	var haste := _haste()
+	_shot_combo_index = CombatMath.advance_combo(_shot_combo_index,
+		float(now - _last_shot_msec) / 1000.0, job, _weapon_override, haste)
+	_last_shot_msec = now
+	var nxt := (_shot_combo_index + 1) % CombatMath.combo_len(_weapon_override)
+	return CombatMath.combo_gap_s(job, _weapon_override, nxt, haste)
 
 
 # 이번 스윙의 궤적을 콤보 타수로 결정한다 — **연출 전용**이다(데미지·쿨다운·스윙 창은 안 바뀐다).
@@ -905,13 +946,20 @@ func _fire_projectile(dir: Vector2, charge: int) -> void:
 	_recoil_left = RECOIL_TIME  # 활 반동/지팡이 반동 연출
 	# 발사는 **쏜 반대쪽**으로 카메라를 민다(근접 타격과 반대 부호) — 밀려나는 반동이 읽히게.
 	# 차지 무기는 모은 단계만큼 더 세게(0단계도 최소 1배는 나가게 +1).
-	EventBus.camera_kick.emit(-dir, SHOOT_KICK * (1.0 + 0.45 * float(clampi(charge, 0, CombatMath.MAX_CHARGE_LEVEL))))
+	# 마무리 타는 더 묵직하게 — 배율을 새 상수로 만들지 않고 **그 타의 데미지 배율을 그대로** 반동에
+	# 쓴다(연출과 위력이 한 데이터에서 온다. 3타를 2.5배로 조이면 반동도 같이 따라온다).
+	var combo_kick := CombatMath.combo_damage_mult_at(_weapon_override, _shot_combo_index)
+	EventBus.camera_kick.emit(-dir, SHOOT_KICK * combo_kick
+		* (1.0 + 0.45 * float(clampi(charge, 0, CombatMath.MAX_CHARGE_LEVEL))))
 	# player_shoot: ArrowField가 표시 투사체 스폰 + (호스트 자신이면) CombatAuthority가 권한 투사체 등록
-	EventBus.player_shoot.emit(Net.my_id, origin, dir, aid, _arrow_range, _weapon_id, charge)
+	EventBus.player_shoot.emit(Net.my_id, origin, dir, aid, _arrow_range, _weapon_id, charge,
+		_shot_combo_index)
 	EventBus.player_swing.emit(global_position, _swing_sfx)  # 발사 SFX (swing_sfx 재활용 = 시위·발사음)
+	# "cb" = 콤보 타수. 🔴 G_ATK의 "cb"와 달리 **판정에 영향을 주는 값**이라 호스트가 그대로 믿지 않는다 —
+	#   자기 수신 간격으로 직접 세고 이 주장은 상한으로만 쓴다(CombatMath.authoritative_combo, §3).
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_SHOOT, "ox": origin.x, "oy": origin.y,
 		"dx": dir.x, "dy": dir.y, "aid": aid, "r": _arrow_range,
-		"w": _weapon_id, "c": charge})
+		"w": _weapon_id, "c": charge, "cb": _shot_combo_index})
 
 
 func _aim_dir() -> Vector2:

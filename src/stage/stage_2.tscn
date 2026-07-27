@@ -100,6 +100,7 @@ drop_authority_path = NodePath("../DropAuthority")
 
 [node name="ArrowField" type="Node" parent="."]
 script = ExtResource("13")
+peer_sync_path = NodePath("../PeerSync")
 
 [node name="MobSync" type="Node" parent="."]
 script = ExtResource("7")

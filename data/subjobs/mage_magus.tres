@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="SubJobDef" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://src/core/sub_job_def.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/subjobs/mage_magus.png" id="2"]
+
+[resource]
+script = ExtResource("1")
+id = "mage_magus"
+display_name = "마도사"
+description = "모으다 위험하면 크게 빠진다 — 물러설 자리를 만드는 것까지가 주문이다. 대신 한 방이 무겁다."
+icon = ExtResource("2")
+series_id = "mage"
+order = 2
+unlocks_next_at = 3
+max_level = 5
+crit_per_level = 0.025
+crit_dmg_per_level = 0.05
+haste_per_level = 0.035
+move_per_level = 0.005
+leech_per_level = 0.002
+main_trait_name = "도약 술식"
+main_trait_key = "roll_dist"
+main_trait_value = 0.2
+sub_trait_name = "추격의 감각"
+sub_trait_key = "kill_move"
+sub_trait_value = 0.1

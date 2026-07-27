@@ -24,6 +24,11 @@ var _stage_over: bool = false  # 클리어↔전멸 상호 배제 + 종료 후 �
 var _boss_strike_frame: Dictionary = {}  # peer_id -> 보스 STRIKE 피격 물리 프레임 — 물뿌리기 원 겹침 시 같은 프레임 중복 확정 방지(per-cast dedup, 보스는 한 프레임에 한 패턴만 발화)
 var _arrows: Array = []  # 호스트 권한 화살(궁수 활): [{aid, pos:Vector2, dir:Vector2, life:float, shooter:int}, …] — _physics_process가 전진·명중 판정
 var _last_shot_msec: Dictionary = {}  # peer_id -> 마지막 발사 msec (호스트 전용 — 발사율 스팸 게이트, _last_hit_msec 미러)
+# peer_id -> 호스트가 그 피어에게 **마지막으로 인정한** 평타 콤보 타수 (호스트 전용, 궁수 "평·평·쭉").
+# 🔴 클라 주장(G_SHOOT "cb")을 그대로 믿으면 매 발사가 마무리 타(사거리 2배·데미지 2.5배)가 된다 —
+#   근접 콤보(G_ATK "cb")가 궤적만 정해 "조작돼도 화면만 달라진다"였던 것과 성격이 다르다.
+#   그래서 호스트가 **자기 수신 간격으로 직접 세고**(CombatMath.authoritative_combo) 주장은 상한으로만 쓴다.
+var _shot_combo: Dictionary = {}
 var _rng := RandomNumberGenerator.new()  # 치명타 굴림 — 호스트만 (DropAuthority._rng 관용구). 게스트는 굴리지 않는다(§1)
 var _leech_frac: Dictionary = {}  # peer_id -> 피흡 소수 잔량(호스트 전용). 데미지가 4~34 정수라 매 타격 절삭하면 6% 흡혈이 0이 된다 → 1 이상 쌓이면 회복(§3)
 
@@ -49,6 +54,7 @@ func _ready() -> void:
 		_last_hit_msec.erase(peer_id)
 		_roll_grant_msec.erase(peer_id)
 		_last_shot_msec.erase(peer_id)  # 발사율 게이트 기록 정리 (_last_hit_msec 대칭)
+		_shot_combo.erase(peer_id)  # 콤보 타수 기록도 대칭 정리 — 남겨 두면 재접속 id가 남의 마무리 타를 물려받는다
 		_leech_frac.erase(peer_id)  # 피흡 잔량도 대칭 정리 (이탈 피어 잔류 방지)
 		_pending_php.erase(peer_id)
 		_boss_strike_frame.erase(peer_id)  # 보스 STRIKE dedup 기록도 대칭 정리 (유한하나 정리 일관성)
@@ -129,12 +135,15 @@ func _confirm_damage(health: HealthComponent, job: JobDef, attacker_id: int) -> 
 # 상황에서 데미지가 달라진다 — charge_damage가 이미 round를 하므로 치명을 밖에서 곱하면 이중 반올림).
 # 여기서 얹는 것은 ⑴ 공격자 보너스·레벨 스탯 조회 ⑵ 피흡 적립뿐이다.
 # 치명 굴림 단위 = 데미지 인스턴스 1회 — 폭발이 3마리를 때리면 이 함수가 3번 불려 각각 굴린다(사용자 확정).
-func _apply_confirmed(health: HealthComponent, job: JobDef, attacker_id: int, charge_level: int) -> void:
+# combo_mult = 평타 콤보 타별 데미지 배율(투사체 경로만 실어 준다. 근접은 1.0 = 항등 — 전사 콤보는
+# 여전히 **연출 전용**이고 데미지를 안 바꾼다). 곱셈은 confirm_damage 안에서 = 반올림 여전히 1회.
+func _apply_confirmed(health: HealthComponent, job: JobDef, attacker_id: int, charge_level: int,
+		combo_mult: float = 1.0) -> void:
 	var atk_p := _peer_sync.player(attacker_id)
 	# 착용 장비 공격 보너스·레벨 5스탯 = 공격자 아바타(G_STATS로 반영). 미착용/미상 = 0·빈 dict (항등 폴백).
 	var bonus := atk_p.equip_atk_bonus if atk_p != null else 0
 	var lv_stats: Dictionary = atk_p.level_stats if atk_p != null else {}
-	var res := CombatMath.confirm_damage(job, bonus, lv_stats, charge_level, _rng.randf())
+	var res := CombatMath.confirm_damage(job, bonus, lv_stats, charge_level, _rng.randf(), combo_mult)
 	var dmg := int(res["damage"])
 	if dmg <= 0:
 		return
@@ -166,17 +175,26 @@ func _accrue_leech(attacker_id: int, applied_damage: int, lv_stats: Dictionary) 
 
 # --- 투사체(궁수 활·법사 차지 지팡이) 호스트 권한 (2026-07-24) — 결정론 직선. 표시는 ArrowField(전 클라), 판정은 여기(호스트만) ---
 # 로컬 발사(호스트 자신) — 권한 투사체 등록. 자기 발사는 신뢰(로컬 쿨다운·차지가 발사율 제한). 게스트는 여기 안 옴(is_host 가드).
+# ⚠ 자기 발사의 콤보 타수는 **로컬 아바타가 이미 센 값**(player._advance_shot_combo)을 그대로 쓴다 —
+#   호스트 자신에게는 네트워크 지연도 사칭 동기도 없어 재계수가 의미가 없고, 재계수를 넣으면 자기 화면
+#   표시(같은 값을 쓰는 ArrowField)와 자기 판정이 갈라질 수 있다.
+# ⚠ **`_shot_combo[내 id]`는 읽는 곳이 없다 — 기록 대칭을 위한 것일 뿐이다** (2026-07-27 netreview m1 정정).
+#   `authoritative_combo`는 G_SHOOT 경로에서 `from_id`(원격)로만 불리고 `player_shoot`은 항상 `Net.my_id`를
+#   싣는데 Net엔 루프백이 없다 — 즉 **두 키는 구조적으로 겹칠 수 없다.** 여기 대입은 무해하지만,
+#   "로컬/원격이 같은 키를 공유한다"고 읽고 그 위에 무언가 얹지 마라(4인/재합류에서 그 전제가 필요해지면
+#   그때 `_peer_sync.player()`처럼 로컬을 포함하는 소스로 옮기는 것이 옳다).
 func _on_player_shoot(shooter_id: int, origin: Vector2, dir: Vector2, aid: String,
-		arrow_range: float, weapon_id: String, charge: int) -> void:
+		arrow_range: float, weapon_id: String, charge: int, combo: int) -> void:
 	if not Net.is_host() or _stage_over:
 		return
-	_register_arrow(aid, origin, dir, shooter_id, arrow_range, weapon_id, charge)
+	_shot_combo[shooter_id] = combo
+	_register_arrow(aid, origin, dir, shooter_id, arrow_range, weapon_id, charge, combo)
 
 
 # 속도·수명·폭발 반경은 GameState.projectile_params 단일 소스(§3) — 표시(ArrowField)와 같은 값이라
 # "맞는 곳=보이는 곳"이 유지된다. 게스트 주장(w·r·c)은 그 안에서 allowlist 리졸브·clamp된다.
 func _register_arrow(aid: String, origin: Vector2, dir: Vector2, shooter_id: int,
-		arrow_range: float, weapon_id: String, charge: int) -> void:
+		arrow_range: float, weapon_id: String, charge: int, combo: int) -> void:
 	# 유한성 가드 — 게스트 발 dx/dy가 INF(JSON 1e999)면 normalized()가 NaN이 되어 == ZERO를 통과한다.
 	# apply_remote_pos의 Inf/NaN 방어와 일관되게 차단 (NaN 화살은 무해하나 리스트를 오염시키지 않게).
 	if aid.is_empty() or not (is_finite(dir.x) and is_finite(dir.y)):
@@ -184,10 +202,21 @@ func _register_arrow(aid: String, origin: Vector2, dir: Vector2, shooter_id: int
 	var d := dir.normalized()
 	if d == Vector2.ZERO:
 		return
-	var p := GameState.projectile_params(weapon_id, arrow_range, charge)
+	# 🔴 「투사체 사거리」(proj_range)도 **발사자 아바타에서** 읽는다 — reach·roll_cd·campfire_heal과
+	#   같은 소스다(rules §3). peer_stats류를 읽으면 호스트 자신 항목이 영원히 없어(Net 루프백 없음)
+	#   "내 화살만 안 늘어난다"가 된다(2026-07-25 공속 Critical과 같은 함정).
+	#   표시(ArrowField)도 같은 아바타를 읽으므로 수명 = 날아가는 거리가 일치한다("맞는 곳=보이는 곳").
+	#   미스폰이면 0(항등) — G_SHOOT 경로는 이미 shooter null을 거부하므로 로컬 발사에만 남는 폴백이다.
+	# 🔴 콤보 타수(combo)는 **호출부가 이미 확정한 값**이다 — G_SHOOT 경로는 authoritative_combo로 센
+	#   값, 로컬 발사는 자기 아바타가 센 값. 여기서 다시 세지 않는다(근거가 둘이 되면 갈라진다).
+	#   사거리 배율은 projectile_params가, 데미지 배율은 그 결과("combo_dmg")가 실어 준다 — **같은
+	#   리졸브 한 번**을 지나므로 "더 멀리 가는 타 = 더 아픈 타"가 데이터 한 장에서 함께 온다.
+	var shooter := _peer_sync.player(shooter_id)
+	var p := GameState.projectile_params(weapon_id, arrow_range, charge,
+		shooter.trait_value("proj_range") if shooter != null else 0.0, combo)
 	_arrows.append({"aid": aid, "pos": origin, "dir": d, "life": float(p["life"]),
 		"speed": float(p["speed"]), "blast": float(p["blast"]), "level": int(p["level"]),
-		"shooter": shooter_id})
+		"shooter": shooter_id, "combo_dmg": float(p["combo_dmg"])})
 
 
 # 호스트 전용 — 권한 투사체 전진 + 명중 판정. 매 프레임 거리 질의(is_arrow_hit)라 물리 레이어 함정(§5) 회피 + 단위 테스트 가능.
@@ -245,8 +274,10 @@ func _confirm_arrow_hit(eid: String, a: Dictionary) -> void:
 	var shooter := _peer_sync.player(int(a["shooter"]))
 	if shooter == null or shooter.job == null:
 		return  # 발사자 이탈/무직업 = 무피해 (기존 동작 보존)
+	# 콤보 데미지 배율은 **발사 시점에 굳어 있다**(a["combo_dmg"]) — 명중 시점에 다시 리졸브하면
+	# 날아가는 동안 무기를 바꾼 발사자가 남의 배율을 얻는다(사거리는 이미 수명으로 굳어 있는 것과 대칭).
 	_apply_confirmed((entry_v as Dictionary)["health"] as HealthComponent,
-		shooter.job, int(a["shooter"]), int(a["level"]))
+		shooter.job, int(a["shooter"]), int(a["level"]), float(a.get("combo_dmg", 1.0)))
 
 
 # 호스트 전용 — 폭발 확정(차지 무기): 반경 안 살아있는 적 전원에게 같은 데미지 1회.
@@ -269,7 +300,8 @@ func _confirm_blast(a: Dictionary, center: Vector2) -> void:
 		var body_r := def.body_radius if def != null else 0.0
 		if CombatMath.is_blast_hit(root.global_position, center, radius, body_r):
 			# 대상별로 따로 확정 = 치명 굴림도 대상별 1회 (사용자 확정 2026-07-25)
-			_apply_confirmed(health, shooter.job, int(a["shooter"]), int(a["level"]))
+			_apply_confirmed(health, shooter.job, int(a["shooter"]), int(a["level"]),
+				float(a.get("combo_dmg", 1.0)))
 
 
 # 호스트 전용 — 화살 종료 통지: 게스트는 G_ARROW_HIT로, 호스트 자신은 arrow_gone_local로(릴레이 미에코). ArrowField가 despawn.
@@ -426,6 +458,23 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			# 신뢰 경계(rules §3): 공격자의 job 기준 사거리 검증 + _confirm_damage의 쿨다운 게이트.
 			# 좌표는 net_anchor() — 스푸핑 클램프는 유지하되 표시 보간 지연은 검증에서 제외.
 			# 적 몸 반경 반영 — 거대 보스(radius ~48)는 중심이 멀어 표면까지로 판정 (§3, 기존 잔몹 영향 미미).
+			# 🔴 **발사형 무기로는 근접 확정을 못 받는다 — G_SHOOT 가드의 대칭** (2026-07-27 netreview m1).
+			#   G_SHOOT엔 `is_projectile_weapon` 가드가 있는데 이쪽엔 없어서, 조작 클라가 지팡이를
+			#   공지한 채 G_HIT_REQ를 보내면 `attack_range` 56짜리 근접타가 그대로 확정됐다.
+			#   ⚠ 선재 결함이지만 **법사 쿨다운 0.8→0.5로 스팸 허용치가 720ms → 450ms(1.6배)** 로
+			#     넓어졌고, 한쪽에만 가드가 있어 **두 경로가 비대칭**이던 상태이기도 하다.
+			#   🔴 `weapon_id = ""`로 떨구면 **안 된다** — 폴백이 살아나 아무것도 안 고쳐진다(G_SHOOT와
+			#     같은 함정). 리졸브에 **성공한** 무기가 발사형이면 `return`이 유일한 답이다.
+			#   ⚠ `weapon_def == null`(G_STATS 미도착)은 **거부하지 않는다** — 정상 창이고, 여기서
+			#     막으면 접속 직후의 정당한 근접타가 조용히 사라진다. 판정 기준은 `is_projectile_weapon`
+			#     단일 소스(클라의 모션 분기와 같은 기준 — 사본 조건문을 두지 마라).
+			#   🔴🔴 **이 가드도 헤드리스가 겨눌 수 없다**(G_SHOOT 가드와 같은 이유 — `combat_authority.gd`는
+			#     씬 글루라 `-s`가 preload 못 한다). 지워도 스위트 8종이 초록이다. 자동 방어는
+			#     `test_combat_math_auto`의 `is_projectile_weapon` 전수 단정이 절반을 지키고, 나머지
+			#     절반(호출부가 살아 있는가)은 **실기 확인이 유일하다**(docs/TUNING.md §10 실기 목록).
+			var melee_weapon := GameState.equip_def(_peer_sync.peer_weapon_id(from_id))
+			if melee_weapon != null and CombatMath.is_projectile_weapon(melee_weapon):
+				return
 			var reach_def := entry["def"] as EnemyDef
 			var reach_radius := reach_def.body_radius if reach_def != null else 0.0
 			# 🔴 특성(검기 파형)의 사거리 보너스도 **공격자 아바타에서** 읽는다 — 공속·치명·피흡과
@@ -471,17 +520,54 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			#   폐기 방향은 안전하다: ""(기본 화살) = 차지 배율도 폭발도 없음.
 			#   판정 규칙은 클라의 착용 규칙과 **같은 함수**(can_job_equip)를 지난다 — 사본을 만들지 마라.
 			var weapon_id := _peer_sync.peer_weapon_id(from_id)
-			if not GameState.can_job_equip(
-					_peer_sync.peer_job_id(from_id), GameState.equip_def(weapon_id)):
+			var weapon_def := GameState.equip_def(weapon_id)
+			if not GameState.can_job_equip(_peer_sync.peer_job_id(from_id), weapon_def):
 				weapon_id = ""
+				weapon_def = null
+			# 🔴 **발사형 무기가 아니면 발사 자체를 거부한다** (2026-07-27 netreview M4).
+			#   위 대조는 "그 직업이 들 수 있는가"만 본다 — **그 무기가 쏠 수 있는 물건인가**는 안 봤다.
+			#   변조 클라가 대검을 공지한 채 G_SHOOT을 쏘면 호스트가 권한 화살을 등록하고 전사 공격력으로
+			#   확정한다(로컬 클라는 motion_type 분기 때문에 애초에 이 경로에 못 온다 — 호스트만 못 봤다).
+			#   🔴 `weapon_id = ""`로 떨구면 **안 된다** — 그러면 리졸브 실패 폴백으로 전송 사거리(r)가 그대로
+			#     살아나 아무것도 안 고쳐진다. 리졸브에 **성공한** 무기가 발사형이 아니면 return이 유일한 답이다.
+			#   ⚠ `weapon_def == null`(G_STATS 미도착)은 **거부하지 않는다** — 정상 창이고 폴백이 의도된 동작이다.
+			#     판정 기준은 `CombatMath.is_projectile_weapon` 단일 소스(로컬 모션 분기와 같은 기준).
+			#
+			# 🔴🔴 **이 가드는 헤드리스가 겨눌 수 없다 — "스위트가 그린이니 안전하다"고 읽지 마라**(verify §0).
+			#   `combat_authority.gd`는 씬 전용 글루라 `-s` 테스트가 preload할 수 없다(오토로드 전역 식별자,
+			#   rules §5). `boss.gd`를 못 겨눠 `test_boss_data_auto`가 **데이터만** 단정하는 것과 같은 한계다.
+			#   실제로 이 `if` 두 줄을 통째로 지워도 스위트 8종이 전부 초록이다(2026-07-27 뮤테이션으로 확인).
+			#   그래서 회귀 방어를 **독립된 두 층**이 나눠 진다:
+			#     ⑴ `EquipDef.arrow_range` **기본값 0** — 뚫려도 clamp가 40px로 떨어뜨려 위협이 아니다.
+			#     ⑵ `test_combat_math_auto` 전수 단정 — 발사형 무기가 사거리를 명시했는지 + 예측자 정확성.
+			#   ⑴은 이 가드와 무관하게 성립한다. 셋 중 하나를 지울 땐 나머지가 남는지 반드시 확인해라.
+			if weapon_def != null and not CombatMath.is_projectile_weapon(weapon_def):
+				return
 			var charge := CombatMath.clamp_charge_level(int(data.get("c", 0)))
+			# ⚠ 여기서 꺼내는 것은 `step_time`(차지 단계 시간)뿐이라 사거리와 무관하다 — proj_range·combo
+			#   인자는 기본값으로 둔다(넘겨도 결과가 같다). 사거리·데미지 배율은 아래 _register_arrow가
+			#   한 번에 리졸브한다(단일 소스 §3 — 여기서 또 읽으면 근거가 둘이 된다).
 			var step_time := float(GameState.projectile_params(weapon_id, 0.0, charge)["step_time"])
 			if not CombatMath.is_charge_time_ok(last_shot, now_shot, charge, step_time, shoot_haste):
 				return
+			# 🔴 평타 콤보 타수 — **호스트가 직접 센다** (궁수 "평·평·쭉", 2026-07-27).
+			#   G_ATK의 "cb"는 궤적만 정해 조작돼도 화면이 달라질 뿐이었지만, 이 타수는 **사거리·데미지
+			#   배율을 고른다** — 매 발사에 "나 마무리 타야"를 주장하면 항상 강화살이 된다.
+			#   그래서 자기 수신 간격(now-last)으로 세고, 주장(cb)은 **상한으로만** 쓴다(min).
+			#   그 결과 갈라짐은 항상 "그려졌는데 안 맞는다" 쪽으로만 떨어진다(표시는 주장값을 쓴다).
+			# 🔴 규칙은 클라 로컬(player._advance_shot_combo)과 **같은 함수**를 지난다 — 사본 조건문을
+			#   두면 다음 리듬 튜닝에서 "내 화면은 3타인데 판정은 평타"가 된다(§3).
+			# ⚠ 너무 빠른 발사는 **거부가 아니라 콤보 리셋**이다(advance_combo 주석) — 발사 자체를
+			#   떨구면 창 경계 지터로 정당한 화살이 조용히 사라진다. 리셋이면 최악이 "이번 타는 평타"다.
+			# ⚠ 배율·뜸 수치는 여기 안 온다 — weapon_id로 리졸브한 로컬 .tres에서만 나온다.
+			var combo := CombatMath.authoritative_combo(int(data.get("cb", 0)),
+				int(_shot_combo.get(from_id, 0)), float(now_shot - last_shot) / 1000.0,
+				shooter.job, GameState.equip_def(weapon_id), shoot_haste)
+			_shot_combo[from_id] = combo
 			_last_shot_msec[from_id] = now_shot
 			_register_arrow(aid_s, origin,
 				Vector2(float(data.get("dx", 1.0)), float(data.get("dy", 0.0))), from_id,
-				float(data.get("r", CombatMath.DEFAULT_ARROW_RANGE)), weapon_id, charge)
+				float(data.get("r", CombatMath.DEFAULT_ARROW_RANGE)), weapon_id, charge, combo)
 		NetSchema.G_ENEMY_HP:
 			if Net.is_host():
 				return  # 호스트 상태가 원본
