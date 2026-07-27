@@ -11,6 +11,10 @@ signal hp_confirmed(hp: int)               # 권한 경로만 — 브로드캐�
 var hp: int = 0
 var max_hp: int = 0
 
+# 테스트 랩 무적 — 켜지면 권한 경로 apply_damage가 항등(HP 안 깎임). 기본 false라 프로덕션 무영향.
+# 로컬 플레이어·랩 NPC에만 세운다(TestMode 게이트, 외부에서). 여긴 필드만 — 오토로드 전역 참조 금지(-s, rules §5).
+var invincible: bool = false
+
 var _respawns: bool = false
 var _respawn_delay: float = 0.0
 var _respawn_left: float = 0.0  # apply_damage(권한 경로)만 arm한다
@@ -51,6 +55,8 @@ func set_max_hp(p_max: int) -> void:
 # 호스트 권한 경로 전용 — 데미지 확정. 사망 + respawns면 부활 타이머 arm.
 # 음수 dmg 방어: 힐 경로가 아니다 — 회복은 confirm_hp로 (공용 컴포넌트 방어선)
 func apply_damage(dmg: int, crit: bool = false) -> void:
+	if invincible:
+		return  # 테스트 랩 무적 — 데미지 무시 (로컬 플레이어·NPC 더미)
 	if hp <= 0 or dmg <= 0:
 		return
 	last_crit = crit  # emit 직전 덮어쓰기 (평타가 이전 치명 강조를 물려받지 않게)

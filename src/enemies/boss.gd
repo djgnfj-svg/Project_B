@@ -55,6 +55,7 @@ var _state_left: float = 0.0
 var _phase: int = 1                    # 페이즈(1→2). hp ≤ max_hp*phase2_hp_ratio 최초 도달 시 호스트가 2로.
 var _prev_hp: int = 0                  # combat_impact 감소량 계산용
 var _cur_pattern: BossPatternDef = null  # WINDUP 중 선택된 패턴
+var debug_hold: bool = false  # 테스트 랩 — true면 자동 패턴 선택 안 함(버튼으로만 발동). TestMode 게이트, 외부 설정.
 var _strike_center: Vector2 = Vector2.ZERO
 var _strike_angle: float = 0.0
 var _pattern_last_msec: Dictionary = {}  # pattern.id -> 마지막 발동 msec (호스트 전용 쿨다운 게이트)
@@ -244,6 +245,8 @@ func _host_ai(delta: float) -> void:
 # (c) 쿨다운 경과, 를 만족하는 후보 중 **priority 높은 것** 우선(거리별 역할 분리 — 가까이=평타·중간=슬램·
 # 멀리=물뿌리기). 동률이면 range 작은 것. 결정적 선택 — 랜덤 없음.
 func _select_pattern(dist: float) -> BossPatternDef:
+	if debug_hold:
+		return null  # 테스트 랩 — 자동 발동 금지 (패턴 버튼으로만)
 	var now := Time.get_ticks_msec()
 	var best: BossPatternDef = null
 	for p: BossPatternDef in def.patterns:
@@ -258,6 +261,20 @@ func _select_pattern(dist: float) -> BossPatternDef:
 				or (p.priority == best.priority and p.range < best.range):
 			best = p
 	return best
+
+
+# 테스트 랩 전용 — 특정 패턴 id를 즉시 강제 발동(쿨다운·거리·debug_hold 무시). 호스트만.
+# 실제 실행 경로(_begin_windup)를 그대로 타므로 예고·타격·FX가 진짜와 동일하다.
+func debug_force_pattern(pid: String) -> void:
+	if not Net.is_host() or _health.is_dead():
+		return
+	var t := _nearest_alive_player()
+	var anchor := t.net_anchor() if t != null else global_position + Vector2(0, 80)
+	for p: BossPatternDef in def.patterns:
+		if p != null and p.id == pid:
+			_telegraph_left = 0.0
+			_begin_windup(p, anchor)
+			return
 
 
 # WINDUP 진입 — 판정 중심/각 확정 + 텔레그래프 표시 + 호스트 예고 브로드캐스트.

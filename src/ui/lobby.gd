@@ -86,6 +86,9 @@ func _try_autostart() -> void:
 				req["join"] = pair.get_slice("=", 1)
 			elif pair.begins_with("relay="):
 				_url_edit.text = pair.get_slice("=", 1).uri_decode()
+	# 테스트 모드(?test=1 / --test) = 솔로 자동 호스트 (직업 선택 후 보스 아레나 랩 직행은 main이 처리)
+	if TestMode.is_active():
+		req["host"] = true
 	if req.has("host") or req.has("join"):
 		_pending_autostart = req
 		_status.text = "직업을 선택하면 바로 시작합니다"

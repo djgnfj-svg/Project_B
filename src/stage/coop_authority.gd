@@ -63,6 +63,7 @@ var _mech_name: String = ""
 var _mech_desc: String = ""
 
 var _active: bool = false
+var debug_hold: bool = false  # 테스트 랩 — true면 자동 순환 안 함(버튼으로만 발동). TestMode 게이트, 외부 설정.
 var _window_left: float = 0.0
 var _window_max: float = 8.0
 var _next_left: float = FIRST_DELAY_S
@@ -122,6 +123,8 @@ func _process(delta: float) -> void:
 			if _window_left <= 0.0:
 				_expire()
 		return
+	if debug_hold:
+		return  # 테스트 랩 — 자동 순환 발동 안 함 (패턴 버튼으로만)
 	_log_left -= delta
 	if _log_left <= 0.0:
 		_log_left = 1.0
@@ -141,7 +144,7 @@ func _update_status() -> void:
 	var state := ("ACTIVE:%s" % _mech) if _active else ("host next %.0fs" % _next_left if Net.is_host() else "guest")
 	_status.text = "coop %s · boss:%s · 인원:%d · %s" % [BUILD_TAG, boss, alive, state]
 	# 3·2·1 카운트다운 + 다음 패턴 이름·설명 (호스트, 3초 이내)
-	var show_count := Net.is_host() and not _active and not _alive_peer_ids().is_empty() and _next_left <= 3.0 and _next_left > 0.0
+	var show_count := Net.is_host() and not _active and not debug_hold and not _alive_peer_ids().is_empty() and _next_left <= 3.0 and _next_left > 0.0
 	_count_label.visible = show_count
 	_name_label.visible = show_count
 	_desc_label.visible = show_count
@@ -169,6 +172,9 @@ func _trigger() -> void:
 	for _i in seq_len:
 		_seq.append(randi() % KEYS.size())
 	_victim = alive[randi() % alive.size()] if _mech == MECH_CAGE else -1
+	# 랩: 케이지 피해자를 NPC로 고정 → 님이 달려가 구출(패턴을 님이 푼다)
+	if TestMode.is_active() and _mech == MECH_CAGE and _player_by_id(TestMode.NPC_PEER_ID) != null:
+		_victim = TestMode.NPC_PEER_ID
 	# 위치 표식 결정 (생존 평균 위치 기준)
 	var avg := Vector2.ZERO
 	for pid: int in alive:
@@ -189,6 +195,17 @@ func _trigger() -> void:
 		"v": _victim, "s": _seq, "n": _mech_name, "d": _mech_desc,
 		"tx": _target.x, "ty": _target.y, "tx2": _target2.x, "ty2": _target2.y})
 	_begin(_window_max)
+
+
+# 테스트 랩 전용 — 특정 코옵 패턴을 즉시 강제 발동(순환 무시). 호스트만·비활성 중만.
+# _trigger를 그대로 타므로(2인 = 님+NPC 필요) 실제 발동·판정·FX가 진짜와 동일하다.
+func debug_force_mech(idx: int) -> void:
+	if not Net.is_host() or _active:
+		return
+	if idx < 0 or idx >= MECHS.size():
+		return
+	_mech_idx = idx
+	_trigger()
 
 
 func _begin(t: float) -> void:
@@ -305,6 +322,8 @@ func _inside_now(pid: int) -> bool:
 
 # 만료 시점, 이 피어가 안전한가 (안전지대 안 / 키패드 완료 / 구출됨)
 func _is_safe(pid: int) -> bool:
+	if TestMode.is_active() and pid == TestMode.NPC_PEER_ID:
+		return true  # 랩: NPC 더미는 자기 역할 자동 통과 (님만 풀면 성공)
 	match _mech:
 		MECH_CAGE:
 			return pid != _victim        # 만료까지 미구출 = 피해자만 위험(구조자 안전)
@@ -390,6 +409,8 @@ func _on_solved() -> void:
 
 func _check_all_solved() -> void:
 	for pid: int in _alive_peer_ids():
+		if TestMode.is_active() and pid == TestMode.NPC_PEER_ID:
+			continue  # 랩: NPC는 자동 완료 취급 (님만 풀면 성공)
 		if not _done_set.has(pid):
 			return
 	_finish(true, [])   # 전원 완료 → 성공(메테오 없음)

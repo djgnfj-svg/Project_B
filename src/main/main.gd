@@ -6,14 +6,15 @@ extends Node2D
 const NetSchema := preload("res://src/core/net_schema.gd")
 const LobbyScene := preload("res://src/ui/lobby.tscn")
 const VillageScene := preload("res://src/village/village.tscn")
+const TestLabScript := preload("res://src/stage/test_lab.gd")  # ?test=1 패턴 랩 (프로덕션 무접촉)
 
 var _current: Node = null
 
 
 func _ready() -> void:
 	print("Project_B boot OK")
-	EventBus.room_created.connect(func(_code: String) -> void: _to_village())
-	EventBus.room_joined.connect(func(_code: String, _peers: Array[int]) -> void: _to_village())
+	EventBus.room_created.connect(func(_code: String) -> void: _enter_after_room())
+	EventBus.room_joined.connect(func(_code: String, _peers: Array[int]) -> void: _enter_after_room())
 	EventBus.room_closed.connect(_to_lobby)
 	EventBus.net_disconnected.connect(_to_lobby)
 	EventBus.scene_change.connect(_on_scene_change)
@@ -32,6 +33,38 @@ func _to_village() -> void:
 	#   "법사로 지팡이를 낀 채 저장 → 전사로 재접속"의 무기 정리도 이 줄이 한다(2026-07-26 신고).
 	GameState.apply_job_loadout()
 	_swap(VillageScene.instantiate())
+
+
+# 방 생성/참가 후 진입 — 기본 마을. 테스트 모드(?test=1)면 마을·잔몹 스킵하고 보스 아레나 직행(패턴 랩).
+func _enter_after_room() -> void:
+	if TestMode.is_active():
+		_to_boss_test()
+	else:
+		_to_village()
+
+
+# 테스트 랩 — 첫 챕터 마지막 칸(보스)으로 직행 + 랩 컨트롤러 부착. 솔로 호스트 전제.
+func _to_boss_test() -> void:
+	GameState.leave_chapter()
+	GameState.apply_job_loadout()
+	var chapters := GameState.chapter_ids()
+	if chapters.is_empty():
+		_to_village()
+		return
+	var cid: String = chapters[0]
+	var boss_idx := GameState.chapter_def(cid).stage_count() - 1
+	GameState.begin_stage(cid, boss_idx)
+	var ps := load(GameState.stage_scene_path()) as PackedScene
+	if ps == null:
+		push_error("[main] 테스트 보스 씬 로드 실패 — 마을 폴백")
+		GameState.leave_chapter()
+		_to_village()
+		return
+	var stage := ps.instantiate()
+	_swap(stage)
+	var lab := TestLabScript.new()   # 스테이지 위에 랩 UI/NPC를 얹는다 (프로덕션 경로는 안 탐)
+	lab.name = "TestLab"
+	stage.add_child(lab)
 
 
 # 씬 id → 씬 매핑 — id는 net_schema SCENE_*가 단일 소스. 모르는 id는 무시(allowlist).
