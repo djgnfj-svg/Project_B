@@ -194,6 +194,10 @@ func _host_ai(delta: float) -> void:
 		if _p2_swamp_accum <= 0.0:
 			_p2_swamp_accum = _auto_swamp_interval()
 			_spawn_auto_swamp()
+	# 테스트 랩 — debug_hold면 제자리 정지(관찰용). 강제 발동 패턴(WINDUP/RECOVER)은 그대로 진행.
+	if debug_hold and _state != State.WINDUP and _state != State.RECOVER:
+		velocity = Vector2.ZERO
+		return
 	match _state:
 		State.IDLE:
 			var t := _nearest_alive_player()
