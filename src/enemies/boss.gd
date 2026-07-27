@@ -50,7 +50,7 @@ const MIN_ANIM_SPEED_SCALE := 0.01
 # scale은 HitStop, speed_scale은 _apply_anim_scale이 쥐고 있어 건드리지 않는다.
 const BOB_HZ := 0.7            # 부유 주기(Hz) — 아주 느긋하게
 const BOB_AMP := 0.8           # 부유 진폭(px) — 위아래는 거의 안 느껴질 만큼만
-const SWAY_HZ := 0.6          # 좌우 표류 주기(Hz) — 부유와 다른 주기라 정처 없이 떠도는 느낌
+const SWAY_HZ := 0.35         # 좌우 표류 주기(Hz) — 느리게 (부유와 다른 주기라 정처 없이 떠도는 느낌)
 const SWAY_AMP := 1.0         # 좌우 표류 진폭(px)
 # 노이즈 지터 — 손상된 데이터 프로세스가 지직거리는 흔들림(사인 드리프트에 얹음). 컨셉 = 데이터 망령.
 const NOISE_AMP := 1.6        # 노이즈 흔들림 진폭(px)
@@ -61,6 +61,13 @@ const AURA_HZ := 1.35          # 아우라 맥동 주기(Hz)
 const AURA_BASE_SCALE := 1.15  # 아우라 기본 스케일(128px 방사 텍스처 기준)
 const AURA_PULSE := 0.1        # 아우라 맥동 폭(스케일 배수)
 const AURA_COLOR := Color(0.32, 0.8, 0.66, 0.42)  # 가산 청록 발광
+# 망토 나부낌 — 스프라이트 skew(전단)를 이동 방향으로 기울인다(바람에 쓸리는 망토). 정지 땐 은은히 흔들림.
+# skew는 손맛 채널과 안 겹친다(scale=HitStop·position=Flinch·material=HitFlash·offset=부유).
+const CAPE_SKEW_MAX := 0.12     # 최대 기울기(rad, 약 7°) — 줄임
+const CAPE_VEL_K := 0.0014      # 이동속도(px/s) → 기울기 계수
+const CAPE_IDLE_AMP := 0.03     # 정지 시 흔들림 진폭(rad, 약 1.7°) — 줄임
+const CAPE_IDLE_HZ := 0.28      # 정지 흔들림 주기 — 느리게
+const CAPE_VEL_SMOOTH := 2.5    # 이동속도 저역통과 — 낮을수록 부드럽게(kiting 스터터 흡수)
 
 enum State { IDLE, CHASE, WINDUP, RECOVER }
 
@@ -95,6 +102,8 @@ var _telegraph_center: Vector2 = Vector2.ZERO
 var _telegraph_hold_s: float = 0.0
 var _anim_scale: float = 1.0           # 지금 애니에 걸려 있어야 할 speed_scale (공격 애니만 1.0이 아니다)
 var _life_t: float = 0.0               # 생명감 연출 시간 누적(부유·명멸·아우라 위상)
+var _prev_life_x: float = 0.0          # 망토 나부낌용 직전 x (이동량 = 위치 델타, 호스트/게스트 공통)
+var _cape_vel: float = 0.0             # 저역통과된 수평 이동속도 (kiting 스터터 흡수 — 망토가 홱 안 꺾임)
 var _aura: Sprite2D = null             # 보스 발밑 가산 발광(따라다님) — _ready에서 생성
 var _noise: FastNoiseLite = null       # 지터용 연속 노이즈(1D 표본) — _ready에서 생성
 
@@ -232,6 +241,7 @@ func _update_life_feel(delta: float) -> void:
 	if _health.is_dead():
 		_sprite.offset = Vector2.ZERO
 		_sprite.modulate.a = 1.0
+		_sprite.skew = 0.0
 		if _aura != null:
 			_aura.visible = false
 		return
@@ -241,6 +251,14 @@ func _update_life_feel(delta: float) -> void:
 	var ny := _noise.get_noise_1d(_life_t * NOISE_SPEED + 1000.0) if _noise != null else 0.0
 	_sprite.offset.x = sin(_life_t * TAU * SWAY_HZ) * SWAY_AMP + nx * NOISE_AMP
 	_sprite.offset.y = sin(_life_t * TAU * BOB_HZ) * BOB_AMP + ny * NOISE_AMP
+	# 망토 나부낌 — 이동 방향으로 기운다(위치 델타 = 호스트/게스트 공통) + 정지 시 은은한 흔들림.
+	# 🔴 순간속도를 그대로 쓰면 kiting(다가갔다 멈춤)에 망토가 툭툭 끊긴다 → 저역통과로 부드럽게.
+	var mv := (global_position.x - _prev_life_x) / maxf(delta, 0.0001)
+	_prev_life_x = global_position.x
+	_cape_vel = lerpf(_cape_vel, mv, minf(1.0, delta * CAPE_VEL_SMOOTH))
+	var target_skew := clampf(-_cape_vel * CAPE_VEL_K, -CAPE_SKEW_MAX, CAPE_SKEW_MAX)
+	target_skew += sin(_life_t * TAU * CAPE_IDLE_HZ) * CAPE_IDLE_AMP
+	_sprite.skew = lerpf(_sprite.skew, target_skew, minf(1.0, delta * 4.0))
 	_sprite.modulate.a = SHIMMER_MIN_A + (1.0 - SHIMMER_MIN_A) * (0.5 + 0.5 * sin(_life_t * TAU * SHIMMER_HZ))
 	if _aura != null:
 		_aura.visible = true
