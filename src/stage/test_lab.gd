@@ -36,6 +36,15 @@ var _cur_room: int = 0
 var _sealed: bool = false
 var _panel_layer: CanvasLayer = null   # 패턴 패널(토글) — 기본 숨김이라 맵이 깨끗하게 보임. P로 토글.
 
+# ② 살아있는 조명 — 환경 빛을 참조로 잡아 맥동+깜빡. ③ 노이즈 흔들림·깜빡 표본 공용.
+var _env_lights: Array = []
+var _env_t: float = 0.0
+var _env_noise: FastNoiseLite = null
+
+# ⑤ 페이즈2 환경 오염 — 실제 boss_phase_changed 구독 + 랩 토글. 0→1로 부드럽게 램프.
+var _corruption: float = 0.0
+var _corruption_target: float = 0.0
+
 
 func _ready() -> void:
 	if not TestMode.is_active():
@@ -61,11 +70,16 @@ func _setup() -> void:
 	_apply_boss_rim()         # 보스 밝은 림(뒤 실루엣) — 청록 배경에서 또렷하게
 	_setup_particles()        # 떠다니는 데이터 모트 (공간감)
 	_setup_floor_detail()     # 바닥 데이터 글리프 디테일 (가장자리 위주)
+	_setup_altar_feature()    # ④ 제단 발광 룬 서클(맥동+회전) — 보스 발밑
+	_setup_overlay()          # ① 풀스크린 포스트 오버레이 (비네트+틴트+스캔라인 = "시스템 안")
+	EventBus.boss_phase_changed.connect(_on_boss_phase)   # ⑤ 페이즈2 → 환경 오염
 	_build_panel()
 
 
-# ① 떠다니는 데이터 모트 — 어두운 성역에 청록 입자가 느리게 부유. 방 두 개를 아우르는 넓은 방출.
+# ③ 공기 채우기 — 3겹: ⑴ 부유 모트(공간감) ⑵ 표류 코드 조각(데이터 질감) ⑶ 데이터 레인(세로 흐름).
+const PARTICLE_RECT := Rect2(-620.0, 60.0, 1640.0, 520.0)   # 세 레이어 공용 가시 영역(두 방 아우름)
 func _setup_particles() -> void:
+	# ⑴ 부유 데이터 모트 — 청록 입자가 느리게 위로 부유.
 	var p := GPUParticles2D.new()
 	p.amount = 90
 	p.lifetime = 7.0
@@ -73,7 +87,7 @@ func _setup_particles() -> void:
 	p.texture = _light_tex()
 	p.z_index = 6
 	p.modulate = Color(0.45, 0.62, 0.8, 0.38)   # 청록 완화 → 배경 부유 입자가 보스와 안 겹침
-	p.visibility_rect = Rect2(-620.0, 60.0, 1640.0, 520.0)
+	p.visibility_rect = PARTICLE_RECT
 	var m := ParticleProcessMaterial.new()
 	m.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
 	m.emission_box_extents = Vector3(768.0, 224.0, 1.0)
@@ -87,6 +101,60 @@ func _setup_particles() -> void:
 	p.process_material = m
 	get_parent().add_child(p)
 	p.global_position = Vector2(192.0, 324.0)
+	_add_code_fragments()
+	_add_data_rain()
+
+
+# ⑵ 표류 코드 조각 — 작은 사각 비트가 천천히 옆으로 흐른다(데이터가 공간을 떠도는 질감).
+func _add_code_fragments() -> void:
+	var p := GPUParticles2D.new()
+	p.amount = 48
+	p.lifetime = 9.0
+	p.preprocess = 5.0
+	p.texture = _square_tex()
+	p.z_index = 5
+	p.modulate = Color(0.4, 0.85, 0.7, 0.5)
+	p.visibility_rect = PARTICLE_RECT
+	var m := ParticleProcessMaterial.new()
+	m.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	m.emission_box_extents = Vector3(768.0, 224.0, 1.0)
+	m.direction = Vector3(1.0, 0.0, 0.0)      # 옆으로 표류
+	m.spread = 30.0
+	m.gravity = Vector3(3.0, -1.0, 0.0)       # 살짝 오른쪽·아주 살짝 위
+	m.initial_velocity_min = 4.0
+	m.initial_velocity_max = 12.0
+	m.scale_min = 1.0
+	m.scale_max = 2.5
+	m.angle_min = 0.0
+	m.angle_max = 360.0
+	p.process_material = m
+	get_parent().add_child(p)
+	p.global_position = Vector2(192.0, 324.0)
+
+
+# ⑶ 데이터 레인 — 가는 세로 줄기가 위에서 아래로 빠르게 흐른다(간헐적, 손상 시스템의 데이터 낙하).
+func _add_data_rain() -> void:
+	var p := GPUParticles2D.new()
+	p.amount = 34
+	p.lifetime = 2.6
+	p.preprocess = 2.0
+	p.texture = _streak_tex()
+	p.z_index = 5
+	p.modulate = Color(0.5, 0.95, 0.8, 0.32)
+	p.visibility_rect = PARTICLE_RECT
+	var m := ParticleProcessMaterial.new()
+	m.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	m.emission_box_extents = Vector3(768.0, 20.0, 1.0)
+	m.direction = Vector3(0.0, 1.0, 0.0)      # 아래로
+	m.spread = 4.0
+	m.gravity = Vector3(0.0, 60.0, 0.0)
+	m.initial_velocity_min = 90.0
+	m.initial_velocity_max = 160.0
+	m.scale_min = 0.7
+	m.scale_max = 1.6
+	p.process_material = m
+	get_parent().add_child(p)
+	p.global_position = Vector2(192.0, 90.0)   # 위쪽에서 방출
 
 
 # ③ 바닥 데이터 글리프 — 작은 룬/코드 조각을 방 가장자리·중간 링에 산재(중앙 전장은 비움 = FX 안 묻힘).
@@ -136,6 +204,37 @@ func _scatter(sheet: Texture2D, region: Rect2, pos: Vector2, sc: float, rot: boo
 	sp.global_position = pos
 
 
+# ① 풀스크린 포스트 오버레이 — "손상된 시스템 안" 룩(비네트+옅은 틴트+움직이는 스캔라인).
+# ColorRect 한 장 + 셰이더. HUD(별도 CanvasLayer) 위로 살짝 덮이지만 텍스트는 외곽선이 있어 읽힌다.
+var _overlay_mat: ShaderMaterial = null   # ⑤ 페이즈2 오염에서 corruption uniform을 올릴 핸들
+func _setup_overlay() -> void:
+	if not ResourceLoader.exists("res://assets/shaders/system_overlay.gdshader"):
+		return
+	var layer := CanvasLayer.new()
+	layer.layer = 2   # 월드(0) 위, 패널(20)/힌트(19) 아래
+	add_child(layer)
+	var rect := ColorRect.new()
+	rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 입력 안 막음
+	rect.color = Color(1, 1, 1, 1)
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://assets/shaders/system_overlay.gdshader")
+	# 🔴 uniform 전부 명시 심기 (기본값 의존 금지 — 웹 Compatibility 검정 렌더 함정, boss/hit_flash 규율)
+	mat.set_shader_parameter(&"vignette_strength", 0.55)
+	mat.set_shader_parameter(&"vignette_start", 0.35)
+	mat.set_shader_parameter(&"vignette_end", 0.95)
+	mat.set_shader_parameter(&"vignette_color", Color(0.02, 0.03, 0.05))
+	mat.set_shader_parameter(&"tint_color", Color(0.10, 0.25, 0.28))
+	mat.set_shader_parameter(&"tint_amount", 0.06)
+	mat.set_shader_parameter(&"scan_amount", 0.05)
+	mat.set_shader_parameter(&"scan_count", 220.0)
+	mat.set_shader_parameter(&"scan_speed", 8.0)
+	mat.set_shader_parameter(&"corruption", 0.0)
+	rect.material = mat
+	layer.add_child(rect)
+	_overlay_mat = mat
+
+
 # 2D 라이팅 — CanvasModulate로 씬을 어둡게 하고, 룬·제단·대문·균열이 빛나게(PointLight2D 가산).
 # 배경(아레나 Sprite2D)이 조명을 받는다(2d-essentials §4·§10). Compatibility에서 작동.
 func _light_tex() -> GradientTexture2D:
@@ -152,7 +251,61 @@ func _light_tex() -> GradientTexture2D:
 	return t
 
 
-func _add_light(pos: Vector2, col: Color, energy: float, scale: float, parent: Node = null) -> void:
+# ④ 제단 발광 룬 서클 — 보스 발밑(852,324)에 발광 고리. 천천히 돌고 맥동한다(제단에 강림한 무게감).
+var _altar_ring: Sprite2D = null
+var _altar_ring2: Sprite2D = null   # 반대로 도는 안쪽 고리 (이중 링 = 마법진)
+func _setup_altar_feature() -> void:
+	_altar_ring = _make_ring(Vector2(852.0, 324.0), 260.0, Color(0.35, 0.85, 0.72, 0.5))
+	_altar_ring2 = _make_ring(Vector2(852.0, 324.0), 150.0, Color(0.5, 0.95, 0.8, 0.45))
+
+
+func _make_ring(pos: Vector2, diameter: float, col: Color) -> Sprite2D:
+	var sp := Sprite2D.new()
+	sp.texture = _ring_tex()
+	sp.z_index = -7                     # 바닥(-10) 위, 데칼(-8) 위, 몸(0) 아래
+	sp.modulate = col
+	var mat := CanvasItemMaterial.new()
+	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	sp.material = mat
+	sp.scale = Vector2.ONE * (diameter / 128.0)   # 링 텍스처 128px 기준
+	get_parent().add_child(sp)
+	sp.global_position = pos
+	return sp
+
+
+# 발광 고리(밴드) 텍스처 — 방사 그라디언트: 중심 투명 → 바깥쪽에서 밝은 밴드 → 가장자리 투명.
+func _ring_tex() -> GradientTexture2D:
+	var g := Gradient.new()
+	g.offsets = PackedFloat32Array([0.0, 0.62, 0.78, 0.92, 1.0])
+	g.colors = PackedColorArray([
+		Color(1, 1, 1, 0), Color(1, 1, 1, 0), Color(1, 1, 1, 1), Color(1, 1, 1, 0.15), Color(1, 1, 1, 0),
+	])
+	var t := GradientTexture2D.new()
+	t.gradient = g
+	t.fill = GradientTexture2D.FILL_RADIAL
+	t.fill_from = Vector2(0.5, 0.5)
+	t.fill_to = Vector2(1.0, 0.5)
+	t.width = 128
+	t.height = 128
+	return t
+
+
+# 코드 조각용 작은 사각 텍스처(4×4 흰색) — GPUParticles가 스케일로 키운다.
+func _square_tex() -> ImageTexture:
+	var img := Image.create(4, 4, false, Image.FORMAT_RGBA8)
+	img.fill(Color.WHITE)
+	return ImageTexture.create_from_image(img)
+
+
+# 데이터 레인용 가는 세로 줄기(1×10 흰색, 위 옅고 아래 진하게).
+func _streak_tex() -> ImageTexture:
+	var img := Image.create(1, 10, false, Image.FORMAT_RGBA8)
+	for y in 10:
+		img.set_pixel(0, y, Color(1, 1, 1, 0.2 + 0.8 * (float(y) / 9.0)))
+	return ImageTexture.create_from_image(img)
+
+
+func _add_light(pos: Vector2, col: Color, energy: float, scale: float, parent: Node = null) -> PointLight2D:
 	var l := PointLight2D.new()
 	l.texture = _light_tex()
 	l.color = col
@@ -165,16 +318,57 @@ func _add_light(pos: Vector2, col: Color, energy: float, scale: float, parent: N
 	else:
 		get_parent().add_child(l)
 		l.global_position = pos
+	return l
+
+
+# ④ 제단 룬 서클 — 두 고리가 반대로 천천히 돌고 알파가 맥동한다(마법진 강림).
+func _animate_altar(delta: float) -> void:
+	if _altar_ring != null and is_instance_valid(_altar_ring):
+		_altar_ring.rotation += delta * 0.25
+		_altar_ring.modulate.a = 0.5 + 0.14 * sin(_env_t * TAU * 0.4)
+	if _altar_ring2 != null and is_instance_valid(_altar_ring2):
+		_altar_ring2.rotation -= delta * 0.4
+		_altar_ring2.modulate.a = 0.45 + 0.16 * sin(_env_t * TAU * 0.55 + 1.5)
+
+
+# ② 환경 빛 맥동+깜빡 — base_energy에 느린 사인(숨쉬기) + 노이즈 깜빡(손상 전력). 라이트마다 위상 다름.
+func _animate_lights(delta: float) -> void:
+	if _env_lights.is_empty():
+		return
+	if _env_noise == null:
+		_env_noise = FastNoiseLite.new()
+		_env_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+		_env_noise.frequency = 1.0
+	for i in _env_lights.size():
+		var e: Dictionary = _env_lights[i]
+		var l := e["l"] as PointLight2D
+		if not is_instance_valid(l):
+			continue
+		var base: float = e["base"]
+		var breathe := 1.0 + float(e["amp"]) * sin(_env_t * TAU * float(e["hz"]) + float(e["phase"]))
+		# 깜빡 — 빠른 노이즈가 음수 문턱 아래로 떨어질 때만 살짝 꺼진다(손상 전력). 라이트별 표본 좌표 분리.
+		var n := _env_noise.get_noise_1d(_env_t * 9.0 + float(i) * 100.0)
+		var flick := 1.0 - maxf(0.0, -n - 0.35) * float(e["flick"]) * 3.0
+		# ⑤ 오염 시 색을 붉게 + 살짝 밝게 (손상 심화)
+		var corrupt_col := Color(0.75, 0.2, 0.16)
+		l.color = (e["col"] as Color).lerp(corrupt_col, _corruption)
+		l.energy = base * breathe * maxf(flick, 0.2) * (1.0 + 0.25 * _corruption)
 
 
 func _setup_lighting() -> void:
 	var cm := CanvasModulate.new()
 	cm.color = Color(0.10, 0.10, 0.15)   # 씬 더 어둡게 → 집중광이 튄다
 	get_parent().add_child(cm)
-	# 성역 발광 지점 — 청록이 아니라 차분한 남색으로(에너지↓) → 보스의 청록만 유일하게 밝은 청록이 됨
-	_add_light(Vector2(852.0, 324.0), Color(0.28, 0.46, 0.62), 1.1, 2.1)   # 제단/룬
-	_add_light(Vector2(150.0, 324.0), Color(0.3, 0.48, 0.66), 1.0, 1.7)    # 대문 빛
-	_add_light(Vector2(-500.0, 300.0), Color(0.32, 0.48, 0.6), 1.0, 1.3)   # 진입 균열
+	# 성역 발광 지점 — 청록이 아니라 차분한 남색으로(에너지↓) → 보스의 청록만 유일하게 밝은 청록이 됨.
+	# ② 각 빛을 참조로 잡아 숨쉬게(맥동)+깜빡이게(_animate_lights). base_energy·위상·주기를 달리해 제각각 뛴다.
+	var altar := _add_light(Vector2(852.0, 324.0), Color(0.28, 0.46, 0.62), 1.1, 2.1)   # 제단/룬
+	var gate := _add_light(Vector2(150.0, 324.0), Color(0.3, 0.48, 0.66), 1.0, 1.7)     # 대문 빛
+	var rift := _add_light(Vector2(-500.0, 300.0), Color(0.32, 0.48, 0.6), 1.0, 1.3)    # 진입 균열
+	_env_lights = [
+		{"l": altar, "base": 1.1, "hz": 0.45, "amp": 0.16, "phase": 0.0, "flick": 0.10, "col": Color(0.28, 0.46, 0.62)},
+		{"l": gate, "base": 1.0, "hz": 0.7, "amp": 0.12, "phase": 2.1, "flick": 0.22, "col": Color(0.3, 0.48, 0.66)},    # 대문은 더 불안정
+		{"l": rift, "base": 1.0, "hz": 0.55, "amp": 0.2, "phase": 4.0, "flick": 0.30, "col": Color(0.32, 0.48, 0.6)},    # 균열은 가장 손상
+	]
 	# 플레이어 따라다니는 빛 (시야 확보 — 은은하게, 캐릭터가 하얗게 뜨지 않게)
 	var lp := _local_player()
 	if lp != null:
@@ -407,6 +601,7 @@ func _build_panel() -> void:
 	_cb_boss = _add_check(g_chk, "보스정지", true, _on_boss_hold)
 	_cb_coop = _add_check(g_chk, "코옵정지", true, _on_coop_hold)
 	_cb_npc = _add_check(g_chk, "NPC", _npc_on, _on_npc_toggle)
+	_add_check(g_chk, "오염P2", false, _on_corrupt_toggle)   # ⑤ 페이즈2 환경 오염 미리보기
 	_add_btn(vb, "HP 회복", _heal_full)
 	_hp_label = Label.new()
 	_hp_label.add_theme_font_size_override("font_size", 11)
@@ -468,6 +663,10 @@ func _on_invin(on: bool) -> void:
 	_apply_invincible()
 
 
+func _on_corrupt_toggle(on: bool) -> void:
+	_corruption_target = 1.0 if on else 0.0
+
+
 func _on_boss_hold(on: bool) -> void:
 	if _boss != null:
 		_boss.debug_hold = on
@@ -486,7 +685,19 @@ func _on_npc_toggle(on: bool) -> void:
 		_despawn_npc()
 
 
+# ⑤ 보스 페이즈2 → 환경 오염 램프 목표를 1로 (실제 boss_phase_changed 경로 · 랩 토글 공용).
+func _on_boss_phase(phase: int) -> void:
+	_corruption_target = 1.0 if phase >= 2 else 0.0
+
+
 func _process(_delta: float) -> void:
+	_env_t += _delta          # 환경 연출 공용 시간 (② 조명 · ④ 제단이 같이 읽음)
+	# ⑤ 오염을 목표로 부드럽게 램프 → 오버레이 셰이더 corruption uniform에 반영
+	_corruption = move_toward(_corruption, _corruption_target, _delta * 0.6)
+	if _overlay_mat != null:
+		_overlay_mat.set_shader_parameter(&"corruption", _corruption)
+	_animate_lights(_delta)   # ② 환경 빛 맥동+깜빡
+	_animate_altar(_delta)    # ④ 제단 룬 서클 회전+맥동
 	# 보스 림 실루엣을 실제 스프라이트와 프레임/방향 동기화
 	if _boss_rim != null and is_instance_valid(_boss_rim) and _boss != null:
 		var bspr := _boss.get_node_or_null("Sprite") as AnimatedSprite2D
