@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="BossDef" load_steps=13 format=3]
+[gd_resource type="Resource" script_class="BossDef" load_steps=16 format=3]
 
 [ext_resource type="Script" path="res://src/core/boss_def.gd" id="1"]
 [ext_resource type="Script" path="res://src/core/boss_pattern_def.gd" id="2"]
@@ -71,9 +71,27 @@ chance = 1.0
 qty_min = 1
 qty_max = 2
 
+[sub_resource type="Resource" id="d_bp_sword"]
+script = ExtResource("5")
+kind = "blueprint"
+ref_id = "iron_greatsword"
+chance = 1.0
+
+[sub_resource type="Resource" id="d_bp_bow"]
+script = ExtResource("5")
+kind = "blueprint"
+ref_id = "iron_bow"
+chance = 1.0
+
+[sub_resource type="Resource" id="d_bp_staff"]
+script = ExtResource("5")
+kind = "blueprint"
+ref_id = "iron_staff"
+chance = 1.0
+
 [sub_resource type="Resource" id="d_table"]
 script = ExtResource("4")
-entries = Array[DropEntry]([SubResource("d_gold"), SubResource("d_core")])
+entries = Array[DropEntry]([SubResource("d_gold"), SubResource("d_core"), SubResource("d_bp_sword"), SubResource("d_bp_bow"), SubResource("d_bp_staff")])
 
 [resource]
 script = ExtResource("1")
@@ -86,6 +104,7 @@ body_radius = 42.0
 move_speed = 62.0
 aggro_range = 600.0
 keep_distance = 150.0
+exp = 30
 drop_table = SubResource("d_table")
 patterns = Array[BossPatternDef]([SubResource("p_sweep_l"), SubResource("p_slam"), SubResource("p_nova")])
 phase2_hp_ratio = 0.5

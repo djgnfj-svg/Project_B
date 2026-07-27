@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="EquipDef" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://src/core/equip_def.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/weapons/bow.png" id="2"]
+
+[resource]
+script = ExtResource("1")
+id = "iron_bow"
+display_name = "철 활"
+description = "철심을 먹인 활대. 낡은 활보다 멀리, 더 세게 쏜다."
+icon = ExtResource("2")
+slot_name = "weapon"
+job_id = "archer"
+base_attack = 5
+base_hp = 0
+atk_per_level = 2
+hp_per_level = 0
+max_level = 5
+upgrade_gold_base = 15
+weapon_texture = ExtResource("2")
+weapon_grip = Vector2(13, 17)
+weapon_hold_dist = 20.0
+motion_type = "shoot"
+arrow_range = 240.0
+swing_sfx = "bow_fire"
