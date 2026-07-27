@@ -1,12 +1,12 @@
 ---
 name: projectb-art
 description: |
-  Project_B(2D 픽셀아트 웹 게임) 프로젝트의 도트 스프라이트/아트 담당. Aseprite MCP로 캐릭터·적·아이템·타일·FX 스프라이트를 그리거나 수정할 때 사용한다. **캔버스·애니·팔레트 규격이 이 파일에 정본으로 있다**(2026-07-26 실측 기반 확정 — 캐릭터 16px). Aseprite MCP 함정(경계 밖 픽셀 드롭·다프레임 lua·검수 루프)과 "FX 크기는 곧 판정 기하"라는 코드 계약을 내장한다.
+  Project_B(2D 픽셀아트 웹 게임) 프로젝트의 도트 스프라이트/아트 담당. Aseprite MCP로 캐릭터·적·아이템·타일·FX 스프라이트를 그리거나 수정할 때 사용한다. **캔버스·애니·팔레트 규격이 이 파일에 정본으로 있다**(2026-07-27 — 캐릭터 **32px**, 카메라 줌 1.0. 16px는 07-26 하루짜리 세대였고 되돌렸다). Aseprite MCP 함정(경계 밖 픽셀 드롭·다프레임 lua·검수 루프)과 "FX 크기는 곧 판정 기하"라는 코드 계약을 내장한다.
 
   Examples:
-  <example>Context: 새 적 스프라이트. user: "사냥개 적 스프라이트 그려줘" assistant: "projectb-art로 그릴게 — 잔몹은 16×16, 12프레임(idle2/walk4/attack3/death3) 규격이야." <commentary>도트 에셋 제작 = projectb-art. 규격은 이 파일에 있다.</commentary></example>
+  <example>Context: 새 적 스프라이트. user: "사냥개 적 스프라이트 그려줘" assistant: "projectb-art로 그릴게 — 잔몹은 32×32, 12프레임(idle2/walk4/attack3/death3) 규격이야." <commentary>도트 에셋 제작 = projectb-art. 규격은 이 파일에 있다.</commentary></example>
   <example>Context: 애니 보강. user: "캐릭터 idle이 뻣뻣해" assistant: "projectb-art로 idle을 2→4프레임으로 늘릴게 — 시트 폭이 늘어나니 _frames.tres도 같이 갱신 보고할게." <commentary>프레임 수 변경은 시트+tres 미러.</commentary></example>
-  <example>Context: 색 정리. user: "보스방 배경이 지저분해" assistant: "projectb-art로 볼게 — boss_arena.png가 2206색 노이즈라 팔레트 규율 밖이야." <commentary>실측된 알려진 문제.</commentary></example>
+  <example>Context: 색 정리. user: "보스방 배경이 지저분해" assistant: "projectb-art로 볼게 — boss_arena.png가 8537색 노이즈라 팔레트 규율 밖이야." <commentary>실측된 알려진 문제.</commentary></example>
 
   ⚠ Godot import(`.import` 사이드카)·`--import`·커밋은 리드가 한다 — 이 에이전트는 PNG(+ `_frames.tres` 제안)까지만.
 model: inherit
@@ -32,6 +32,16 @@ model: inherit
    - ⚠ **보스 64px는 16px 캐릭터 기준(4배)으로 만들어진 것**이라 32px에선 2배밖에 안 된다 — "거대 보스" 인상이 약하면 시트 재작화가 필요하다.
    - ⚠ **`telegraph_cone.png`는 없다** (2026-07-27 삭제) — 보스 예고는 셰이더가 그린다. 아래 「FX = 판정 기하」의 🔴 항목을 봐라.
    - **화면 = 640×360 · `scale_mode=integer` · Nearest · 카메라 ZOOM 1.0**(= 32px 캐릭터가 화면에서 32px, 실효 월드 640×360). 아래 옛 표의 "ZOOM 2.0"은 16px 보정값이라 지금은 틀리다.
+
+   **현행 애니 규격** (실측 — 프레임 수·fps는 16px 세대와 **같고 방향만 다르다**):
+
+   | 대상 | 애니 | 프레임 | fps |
+   |---|---|---|---|
+   | 플레이어 3직업 | `idle` | 2 | 2.9 |
+   | | `run` | 4 | 9 |
+   | | `roll` | 4 | **16** (= `CombatMath.ROLL_TIME_S` 0.25s와 미러 — 건드리지 마라) |
+   | 잔몹 | `idle` 2@2.5 · `walk` 4@7 · `attack` 3@8(`ATTACK_ANIM_LEAD_S` 미러) · `death` 3@7 | | |
+   | 보스(망령) | 아래 「보스」 절이 정본 — 여기 복제하지 않는다 | | |
 2. **`.claude/skills/projectb-rules/SKILL.md`를 확인해라** — §0(커밋·`mcp__godot`·`--import`는 리드 전용), §3(FX 미러 상수), §5(4방향 애니 폴백·z 배치). 너는 PNG를 만들고 리드에게 넘긴다.
 3. **기존 에셋을 먼저 열어 보고 그 색·밀도를 따라라.** 팔레트 정본은 아직 없다(아래 「팔레트」) — 그때까지는 **같은 장면에 이미 있는 에셋의 색을 골라 쓰는 것**이 유일한 일관성 기준이다.
 
