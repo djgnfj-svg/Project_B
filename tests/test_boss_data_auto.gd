@@ -93,6 +93,12 @@ func _check_boss(file: String, def: BossDef) -> void:
 		_check(p.telegraph_s > 0.0,
 			"%s: telegraph_s > 0 (%.2f) — 0이면 호스트/게스트 예고 지속이 갈라진다"
 			% [label, p.telegraph_s])
+		# range = 판정 반경(원)/사거리(콘)이자 셰이더가 그리는 반지름. 0이면 판정은 사실상 안 맞는데
+		# 예고는 픽셀 격자+여유 때문에 작은 블롭으로 **보인다** — 이 계약에서 유일하게 "보이는데 안
+		# 맞는" 방향의 이탈이라(나머지는 전부 과예고 = 안전) 데이터로 못 들어오게 막는다.
+		_check(p.range > 0.0,
+			"%s: range > 0 (%.1f) — 0이면 예고만 보이고 판정이 없다"
+			% [label, p.range])
 		var anim := StringName(p.id)
 		var has := sf.has_animation(anim)
 		_check(has, "%s: 패턴 id와 같은 이름의 애니 존재 (없으면 공격 모션이 조용히 안 나온다)" % label)

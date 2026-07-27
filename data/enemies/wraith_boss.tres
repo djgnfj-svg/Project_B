@@ -1,12 +1,10 @@
-[gd_resource type="Resource" script_class="BossDef" load_steps=15 format=3]
+[gd_resource type="Resource" script_class="BossDef" load_steps=13 format=3]
 
 [ext_resource type="Script" path="res://src/core/boss_def.gd" id="1"]
 [ext_resource type="Script" path="res://src/core/boss_pattern_def.gd" id="2"]
 [ext_resource type="Texture2D" path="res://assets/sprites/enemies/boss_wraith.png" id="3"]
 [ext_resource type="Script" path="res://src/core/drop_table.gd" id="4"]
 [ext_resource type="Script" path="res://src/core/drop_entry.gd" id="5"]
-[ext_resource type="Texture2D" path="res://assets/sprites/fx/telegraph_cone.png" id="6"]
-[ext_resource type="Texture2D" path="res://assets/sprites/fx/telegraph.png" id="7"]
 [ext_resource type="SpriteFrames" path="res://assets/sprites/enemies/boss_wraith_frames.tres" id="8"]
 
 [sub_resource type="Resource" id="p_sweep_l"]
@@ -25,7 +23,6 @@ use_max_dist = 150.0
 min_phase = 1
 creates_swamp = false
 burst_count = 1
-telegraph_tex = ExtResource("6")
 
 [sub_resource type="Resource" id="p_slam"]
 script = ExtResource("2")
@@ -42,7 +39,6 @@ use_max_dist = 300.0
 min_phase = 1
 creates_swamp = true
 burst_count = 1
-telegraph_tex = ExtResource("7")
 
 [sub_resource type="Resource" id="p_nova"]
 script = ExtResource("2")
@@ -60,7 +56,6 @@ min_phase = 1
 creates_swamp = false
 burst_count = 6
 burst_spread = 120.0
-telegraph_tex = ExtResource("7")
 
 [sub_resource type="Resource" id="d_gold"]
 script = ExtResource("5")

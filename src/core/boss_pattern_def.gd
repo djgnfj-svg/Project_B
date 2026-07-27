@@ -4,7 +4,7 @@ extends Resource
 # 판정 형태(shape)는 combat_math의 판정 함수와 짝: "circle"=is_strike_hit, "cone"=is_hit_in_cone.
 # 텔레그래프 표시 반경/각 = 이 값(range·half_angle) — "맞는 곳=보이는 곳" (§3).
 
-@export var id: String = ""              # "swing"/"slam"/"spray" — G_BOSS_ATK "p"·텔레그래프 텍스처 선택 키
+@export var id: String = ""              # "swing"/"slam"/"spray" — G_BOSS_ATK "p"·동명 공격 애니 선택 키
 @export var shape: String = "circle"     # "circle"(원) | "cone"(전방 부채꼴) — 판정 형태
 @export var telegraph_s: float = 1.0     # 예고 길이 — 구르기(0.25s)보다 충분히 길게 (기믹 원칙 §5)
 @export var damage: int = 10
@@ -23,4 +23,8 @@ extends Resource
 @export var burst_count: int = 1
 @export var burst_spread: float = 80.0
 
-@export var telegraph_tex: Texture2D     # 형태별 예고 텍스처 (원/부채꼴 — 판정 기하와 정합되게 그림)
+# 🔴 예고 텍스처 필드는 없다 (2026-07-27 제거). 표시 기하는 위의 shape·range·half_angle에서
+# `boss.gd`의 `_apply_telegraph_geometry()` + `boss_telegraph.gdshader`가 **직접 그린다** — 텍스처에
+# 각이 박혀 데이터와 갈라지던 결함(68.6° 텍스처 vs 85.9° 판정 = range 130에서 19px 무예고 피격)의
+# 근본 원인이 필드 자체였다. 예고 무늬를 얹고 싶으면 형태를 그린 텍스처가 아니라 **정사각 풀블리드**
+# 패턴을 새 필드로 추가해라(형태를 그린 알파는 셰이더 형태를 다시 잘라 정합을 깬다).

@@ -12,10 +12,29 @@ const PlayerActor := preload("res://src/player/player.gd")
 const HitStop := preload("res://src/feel/hit_stop.gd")
 const HitFlash := preload("res://src/feel/hit_flash.gd")
 const Flinch := preload("res://src/feel/flinch.gd")
+const TELEGRAPH_SHADER := preload("res://assets/shaders/boss_telegraph.gdshader")
 
 # 연출값 (rules §0 예외)
 const REMOTE_LERP_SPEED := 12.0
 const REMOTE_MOVE_EPS := 1.0      # 게스트 표시: 목표점과 이만큼 이상 벌어져 있으면 walk
+
+# 텔레그래프 연출값 (rules §0 예외 — 사용자가 조인다, docs/TUNING.md 대상).
+# 🔴 기하값(각·반지름)은 여기 없다 — 전부 BossPatternDef에서 파생한다. 여기 숫자를 늘려
+# 예고를 "조금 더 크게" 만들지 마라: 그 순간 보이는 곳과 맞는 곳이 갈라진다(§3).
+const TELEGRAPH_PIXEL_PX := 2.0        # 픽셀 양자화 격자(월드 px) — 16px 도트와 어울리는 계단
+const TELEGRAPH_BORDER_PX := 3.0       # 테두리 두께(경계 안쪽)
+# 🔴 격자 스냅 여유 = **셀 반대각선**. 표본점이 셀 중심으로 옮겨지는 최대 거리가 이 값이므로,
+# 이만큼 바깥으로 관대하게 칠하면 "판정 안인데 안 칠해지는 픽셀"이 격자 모델 안에서 0이 된다.
+# 격자에서 유도한다 — 독립 상수로 두면 pixel_px를 조일 때 이 보장이 조용히 깨진다.
+# ⚠ **완전한 0은 아니다**: 화면 픽셀 양자화까지 넣으면 최악 위상에서 0.34px(≈0.7 화면픽셀)가
+# 남는다(리뷰 실측 430만 표본). 고친 결함이 19px이라 실질 무의미하지만, "0"으로 읽고 그 위에
+# 다른 보장을 쌓지 마라. 확실한 것은 **틀리는 방향이 항상 과예고**라는 쪽이다.
+const TELEGRAPH_EDGE_BIAS_PX := TELEGRAPH_PIXEL_PX * 0.7071068
+const TELEGRAPH_FILL := Color(0.910, 0.275, 0.110, 0.306)    # 옛 telegraph_cone.png 채움색 실측 미러
+const TELEGRAPH_BORDER := Color(1.000, 0.604, 0.235, 0.729)  # 옛 telegraph_cone.png 테두리색 실측 미러
+const TELEGRAPH_FILL_FADE := 0.25      # 바깥으로 갈수록 옅어지는 정도
+const TELEGRAPH_PULSE_AMP := 0.10
+const TELEGRAPH_PULSE_HZ := 2.2
 
 # 추격 이탈 = aggro_range × 이 배수. 씬 스왑 프레임 유령 어그로 방지 (mob_melee와 동일 규약, rules §5).
 const LEASH_MULT := 1.5
@@ -46,6 +65,13 @@ var _p2_swamp_accum: float = 0.0       # 페이즈2 자동 늪 생성 카운트�
 var _remote_target: Vector2 = Vector2.ZERO
 var _remote_flip: bool = false
 var _telegraph_left: float = 0.0       # 표시용 자동 숨김 타이머(각 클라 로컬 리졸브)
+# 🔴 이번 예고의 월드 중심 — **매 물리 프레임 재주장한다**(`_reassert_telegraph_pos`). `$Telegraph`가
+# Boss의 자식이라 `global_position`을 한 번만 심으면 **부모가 움직인 만큼 예고가 따라 끌려간다.**
+# 호스트는 WINDUP에서 정지(velocity = ZERO)라 안 드러나지만, **게스트는 매 프레임 원격 위치로 lerp**해
+# 예고가 t=0에 정확한 자리에 찍혔다가 남은 1초 내내 9~14px 어긋난 채 있다(netreview 실측: 배포 13.8px ·
+# P2P 9.1px · dev_local 8.7px). 셰이더가 세운 "틀리면 과예고 방향으로만"(예산 2.83px) 보장이 **노드
+# 좌표계 바깥에서** 깨지는 자리다 — 밀리는 방향이 보스 진행 방향이라 **무예고 쪽으로도** 떨어진다.
+var _telegraph_center: Vector2 = Vector2.ZERO
 # 이번 예고를 띄워둘 시간(초) — 호스트는 지연 보상분이 더해진 값, 게스트는 pat.telegraph_s 그대로.
 # WINDUP 진입/예고 수신 때 한 번 확정해 표시·타격이 같은 값을 쓰게 한다(중간에 RTT가 흔들려도 안 갈라지게).
 var _telegraph_hold_s: float = 0.0
@@ -61,6 +87,12 @@ func _ready() -> void:
 	add_to_group("enemy")
 	add_to_group("mob")  # MobSync mpos 배치·G_BOSS_ATK 라우팅이 이 그룹으로 문다
 	_remote_target = global_position
+	# 🔴 예고가 끝나도 머티리얼을 떼지 않는다 — hit_flash의 "끝나면 material=null" 규율(§5)과 다른 판단이다.
+	# 그 규율의 근거는 "평상시에도 그려지는 스프라이트에 셰이더가 남으면 웹 Compatibility에서 항등이
+	# 아닐 수 있다"인데, 이 노드는 예고 밖에서 visible=false라 **아예 그려지지 않는다**(항등을 물을 상태가
+	# 없다). 반대로 떼면 남는 것이 1×1 흰 쿼드라 혹시 visible이 살아 있는 순간엔 거대한 흰 사각이 뜬다 —
+	# 붙여 두는 쪽이 안전한 방향이다. 대신 표시할 때마다 셰이더·uniform을 전부 다시 심어
+	# (_apply_telegraph_geometry) 낡은 값이 남을 경로를 없앤다. N개 원은 노드째 free되므로 무관.
 	_telegraph.visible = false
 	if def != null:
 		if def.frames != null:
@@ -135,6 +167,7 @@ func _physics_process(delta: float) -> void:
 			_telegraph.visible = false
 	_apply_anim_scale()
 	if _health.is_dead() or def == null:
+		_reassert_telegraph_pos()
 		return
 	if Net.is_host():
 		_host_ai(delta)
@@ -144,6 +177,12 @@ func _physics_process(delta: float) -> void:
 		global_position = global_position.lerp(_remote_target, minf(1.0, REMOTE_LERP_SPEED * delta))
 		_sprite.flip_h = _remote_flip
 		_update_move_anim(moving)
+	# 🔴 **몸이 움직인 뒤에** 예고를 제자리에 다시 못 박는다 — 순서가 계약이다. 위쪽(타이머 감산 자리)에서
+	# 부르면 그 프레임의 이동(_host_ai의 move_and_slide · 게스트 lerp)이 뒤따라와 한 프레임씩 밀린다.
+	# `_apply_anim_scale()`이 speed_scale을 매 프레임 재주장하는 것과 같은 관용구다(rules §2 손맛 계층 —
+	# "소유자가 자기 의도를 재주장한다"). 대안이던 `top_level = true`는 드로우 순서까지 바꿔 z 층
+	# (바닥 -10 < 예고 -1 < 몸 0)을 눈으로 재확인해야 하므로 고르지 않았다.
+	_reassert_telegraph_pos()
 
 
 func _host_ai(delta: float) -> void:
@@ -358,22 +397,16 @@ func _on_boss_spray(spray_eid: String, pattern_id: String, centers: Array, _angl
 	if pat == null:
 		return  # 모르는 패턴 id
 	_play_attack_anim(pat)  # 물뿌리기 애니
-	if pat.telegraph_tex == null:
-		return  # 아트 대기 — 애니만, 원 표시 생략 (판정 타이밍은 정상 진행)
 	for c: Variant in centers:
 		_spawn_spray_circle(pat, c as Vector2)
 
 
 # 착탄점 하나에 원형 텔레그래프 스프라이트 스폰 후 telegraph_s 뒤 자동 free. 단일 Telegraph 노드로는
-# N개를 못 그리므로 착탄점마다 별도 스프라이트 (판정 반경 = range → 스케일, "맞는 곳=보이는 곳" §3).
+# N개를 못 그리므로 착탄점마다 별도 스프라이트 (기하는 _apply_telegraph_geometry 공용 — 단일 원과 같은 식).
 func _spawn_spray_circle(pat: BossPatternDef, center: Vector2) -> void:
 	var spr := Sprite2D.new()
-	spr.texture = pat.telegraph_tex
-	spr.centered = true
 	spr.z_index = -1  # 바닥(-10) 위, 몸/무기(0+) 아래 — 가려지지 않게 (rules §5)
-	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	var tex_w := maxf(float(pat.telegraph_tex.get_width()), 1.0)
-	spr.scale = Vector2.ONE * (pat.range * 2.0 / tex_w)  # 원: 지름 = range*2 (텔레그래프 반경=판정 반경)
+	_apply_telegraph_geometry(spr, pat, 0.0)
 	get_parent().add_child(spr)  # 스테이지 Node2D 자식 (런타임 add_child — _ready 함정 무관, rules §5)
 	spr.global_position = center
 	# 표시 지속 = 호스트는 지연 보상분 포함(_begin_windup 확정), 게스트는 자기 telegraph_s (단일 원과 같은 규약)
@@ -400,29 +433,83 @@ func _telegraph_duration(pat: BossPatternDef) -> float:
 	return _telegraph_hold_s if _telegraph_hold_s > 0.0 else pat.telegraph_s
 
 
-# 텔레그래프 표시 — 형태별 텍스처를 판정 기하(range·angle)에 맞춰 스케일/회전. "맞는 곳=보이는 곳" (§3).
-# telegraph_tex가 null(아트 대기)이면 표시만 건너뛴다 — 판정 타이밍은 정상 진행(placeholder).
+# 예고를 월드에 못 박는다 — "예고는 뜬 자리에 그대로 있다"가 회피의 전제다(§3 "맞는 곳=보이는 곳"이
+# 시간축으로 확장된 것). 🔴 **`_physics_process`의 맨 끝에서만 불러라** (호출부 주석 참조).
+# ⚠ 물뿌리기 N개 원은 이 함수와 무관하다 — 스테이지 자식으로 스폰돼 애초에 보스를 안 따라간다.
+func _reassert_telegraph_pos() -> void:
+	if _telegraph_left > 0.0:
+		_telegraph.global_position = _telegraph_center
+
+
+# 예고 스프라이트의 쿼드 소스 — 1×1 흰 텍스처 한 장을 모든 예고가 공유한다(단일 콘/원 + N개 원).
+# 🔴 기하를 셰이더가 그리므로 텍스처는 "크기"만 준다. 1×1이면 **scale이 곧 월드 한 변**이라
+# 텍스처 해상도·종횡비가 판정 정합에 끼어들 여지가 아예 없다 — 옛 결함(텍스처에 각이 박혀 데이터와
+# 갈라짐)의 근본 원인 제거다. 셰이더가 이 텍스처를 곱하므로 흰색 = 정확한 항등이다.
+# ⚠ **무늬를 얹으려면 코드 변경이 선행된다** — 갈아끼울 데이터 자리는 없다(`telegraph_tex` 필드는
+# 2026-07-27에 제거됐다). 아트가 **정사각 풀블리드(알파 1)** 패턴을 주면 이 함수를 그 텍스처
+# preload로 바꾸거나 새 필드를 판다. 🔴 **형태를 그린 텍스처는 안 된다** — 알파가 셰이더 형태를
+# 다시 잘라 정합이 깨진다(그게 방금 없앤 결함이다). 형태는 언제나 코드가 정한다.
+static var _quad_tex: ImageTexture = null
+
+
+static func _telegraph_quad_tex() -> ImageTexture:
+	if _quad_tex == null:
+		var img := Image.create_empty(1, 1, false, Image.FORMAT_RGBA8)
+		img.fill(Color.WHITE)
+		_quad_tex = ImageTexture.create_from_image(img)
+	return _quad_tex
+
+
+# 🔴 판정 기하를 화면으로 넘기는 **유일한 지점** — "맞는 곳 = 보이는 곳" (§3).
+#   원(circle)   = 중심 기준 반지름 pat.range           ≡ CombatMath.is_strike_hit
+#   부채꼴(cone) = apex 기준 반지름 pat.range ∩ 전체각 2*pat.half_angle ≡ CombatMath.is_hit_in_cone
+# 규약: 노드 원점 = 원 중심 / apex, 노드 회전 = facing, **균일** scale = 2*range(1×1 쿼드 → 월드 한 변).
+#   셰이더는 로컬 프레임(facing = +x = 각 0)에서 판정식을 그대로 계산한다. 회전+균일스케일은
+#   닮음변환이라 각·거리비가 보존된다 — 세로만 늘리는 비균일 스케일은 정원을 타원으로 만들어
+#   다시 어긋나므로 절대 넣지 마라(rules §3 콘 계약이 두 번 기각한 우회로).
+# ⚠ 모든 uniform을 매번 심는다(기본값 의존 금지) — Telegraph 노드는 재사용돼 콘/원을 오가므로
+#   한 번이라도 안 심으면 이전 패턴의 각·반지름이 남는다.
+func _apply_telegraph_geometry(spr: Sprite2D, pat: BossPatternDef, angle: float) -> void:
+	var is_cone := pat.shape == "cone"
+	var radius := maxf(pat.range, 0.0)
+	spr.texture = _telegraph_quad_tex()
+	spr.centered = true
+	spr.offset = Vector2.ZERO
+	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	spr.rotation = angle if is_cone else 0.0  # 원은 회전 불변 — 격자를 월드 축에 맞춰 둔다
+	# 쿼드 한 변 = 지름 + 여유(격자 1칸 + 스냅 여유)의 2배. 🔴 딱 지름으로 두면 원호의 상하좌우 끝에서
+	# 셀 중심이 쿼드 밖으로 나가 그 픽셀이 아예 안 그려진다(= 판정 안인데 무예고). 여유는 표시용일 뿐
+	# 판정 기하가 아니다 — 셰이더는 radius_px로만 안팎을 가른다.
+	var quad := 2.0 * (radius + TELEGRAPH_PIXEL_PX + TELEGRAPH_EDGE_BIAS_PX)
+	spr.scale = Vector2.ONE * quad
+	var mat := spr.material as ShaderMaterial
+	if mat == null or mat.shader != TELEGRAPH_SHADER:
+		mat = ShaderMaterial.new()
+		mat.shader = TELEGRAPH_SHADER
+		spr.material = mat
+	mat.set_shader_parameter(&"quad_px", quad)
+	mat.set_shader_parameter(&"radius_px", radius)
+	# 원 = 각 제한 없음. PI를 넘기면 셰이더가 각 검사를 통째로 건너뛴다(is_strike_hit와 항등).
+	mat.set_shader_parameter(&"half_angle", pat.half_angle if is_cone else PI)
+	mat.set_shader_parameter(&"pixel_px", TELEGRAPH_PIXEL_PX)
+	mat.set_shader_parameter(&"edge_bias_px", TELEGRAPH_EDGE_BIAS_PX)
+	mat.set_shader_parameter(&"border_px", TELEGRAPH_BORDER_PX)
+	mat.set_shader_parameter(&"fill_color", TELEGRAPH_FILL)
+	mat.set_shader_parameter(&"border_color", TELEGRAPH_BORDER)
+	mat.set_shader_parameter(&"fill_fade", TELEGRAPH_FILL_FADE)
+	mat.set_shader_parameter(&"pulse_amp", TELEGRAPH_PULSE_AMP)
+	mat.set_shader_parameter(&"pulse_hz", TELEGRAPH_PULSE_HZ)
+
+
+# 텔레그래프 표시 — 판정 기하(range·half_angle·angle)를 셰이더에 그대로 넘긴다. "맞는 곳=보이는 곳" (§3).
+# 🔴 **표시를 건너뛰는 분기는 없다.** 옛 `telegraph_tex == null` 게이트("아트 대기 = 표시 생략, 판정은
+# 정상 진행")는 2026-07-27에 필드째 제거했다 — 셰이더가 텍스처 없이 그리게 된 뒤로 그 게이트는
+# "데이터 한 칸을 비우면 예고가 통째로 안 보이는데 판정은 난다"(= 무예고 피격 100%)로만 남았다.
+# 이 전환이 없애려던 결함 클래스 그 자체라 게이트를 두는 것이 곧 위험이었다.
 func _show_telegraph_visual(pat: BossPatternDef, center: Vector2, angle: float) -> void:
-	if pat.telegraph_tex == null:
-		_telegraph.visible = false
-		_telegraph_left = 0.0
-		return
-	_telegraph.texture = pat.telegraph_tex
+	_apply_telegraph_geometry(_telegraph, pat, angle)
+	_telegraph_center = center     # 매 프레임 재주장할 목표 (부모에 끌려가지 않게 — 선언부 주석)
 	_telegraph.global_position = center
-	var tex_w := maxf(float(pat.telegraph_tex.get_width()), 1.0)
-	var tex_h := float(pat.telegraph_tex.get_height())
-	if pat.shape == "cone":
-		# 부채꼴 텍스처 = 우향(+x) 수평·apex가 좌측 중앙. 원점을 apex에 맞추고 회전.
-		_telegraph.centered = false
-		_telegraph.offset = Vector2(0.0, -tex_h * 0.5)
-		_telegraph.rotation = angle
-		_telegraph.scale = Vector2.ONE * (pat.range / tex_w)  # 텍스처 길이 → 사거리
-	else:
-		# 원 텍스처 = 지름 tex_w. 중심 정렬, 지름 = range*2.
-		_telegraph.centered = true
-		_telegraph.offset = Vector2.ZERO
-		_telegraph.rotation = 0.0
-		_telegraph.scale = Vector2.ONE * (pat.range * 2.0 / tex_w)
 	_telegraph.visible = true
 	# 호스트는 지연 보상분이 더해진 시간(_begin_windup에서 확정), 게스트는 자기 telegraph_s.
 	# 게스트가 편도 지연만큼 늦게 시작하고 호스트가 그만큼 늦게 때리므로 양쪽 예고가 같은 순간에 끝난다.
