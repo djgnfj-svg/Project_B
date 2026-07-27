@@ -873,13 +873,11 @@ func _charge_hit(lp: PlayerActor) -> void:
 	var ph := lp.get_node_or_null("Health") as HealthComponent
 	if ph != null:
 		ph.apply_damage(9, false, true)
-	# 넉백 — 보스 반대로 밀림 (맵 클램프)
-	var away: Vector2 = lp.global_position - _boss.global_position
-	away = away.normalized() if away.length() > 0.5 else Vector2.RIGHT
-	lp.velocity = Vector2.ZERO
-	var kb: Vector2 = _clamp_arena(lp.global_position + away * 42.0)
-	var tw := create_tween()
-	tw.tween_property(lp, "global_position", kb, 0.18).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	# 🔴 플레이어 넉백 제거 — 위치 고정(사용자 요청). 대신 실패 후 보스를 플레이어 근처(±1m)로 텔포한다
+	#    (뒤로 스쳐 지나간 보스가 다음 사이클을 위해 다시 근접 위치로).
+	var ang: float = randf() * TAU
+	var dist: float = 40.0 + randf() * 18.0   # ~1m 내외
+	_boss.global_position = _clamp_arena(lp.global_position + Vector2(cos(ang), sin(ang)) * dist)
 
 
 # 클래시 스파크 — 밝은 흰 확산 링 + 방사 스파크 선.
