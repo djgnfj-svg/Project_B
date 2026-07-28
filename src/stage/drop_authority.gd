@@ -100,7 +100,11 @@ func _rarity_of(kind: String, item_id: String) -> int:
 		"gold":
 			return 0
 		"blueprint":
-			return 2
+			# 🔴 전에는 여기가 **2 하드코딩**이라 모든 설계도가 같은 금색이었다 — 등급 배관(G_DROP "r" →
+			#   item_dropped/item_picked 연출)은 이미 있었고 도면만 데이터 자리가 없었다(2026-07-28).
+			#   폴백 1(희귀) = 모르는 id일 때 — 도면은 종류를 불문하고 일반 재료보다는 귀하다.
+			var r := GameState.recipe_def(item_id)
+			return r.rarity if r != null else 1
 		"material":
 			var m := GameState.material_def(item_id)
 			return m.rarity if m != null else 0
