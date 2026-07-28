@@ -43,9 +43,30 @@ const SWING_FX_PIXEL_PX := 2.0        # 픽셀 양자화 격자(월드 px) — �
 # 🔴 격자에서 **유도한다**(셀 반대각선 = 스냅 최대 이동거리) — 독립 상수로 박으면 격자를 조일 때
 #   "판정 안은 반드시 칠한다" 보장이 조용히 깨진다(rules §3 보스 `TELEGRAPH_EDGE_BIAS_PX`와 같은 유도).
 const SWING_FX_EDGE_BIAS_PX := SWING_FX_PIXEL_PX * 0.7071
-const SWING_FX_INNER_RATIO := 0.55    # 호 밴드 안쪽 시작 = 도달 × 이 값 (연출 — 판정 아님)
+# 호 밴드 안쪽 시작 = 도달 × 이 값 (연출 — 판정 아님).
+# ⚠ 0.55에서 내렸다 (2026-07-28 "칼과 빛이 따로 논다" 원인 3): 궤적이 도넛이라 **칼자루~칼몸이
+#   있는 안쪽 구간에 빛이 아예 없었다.** 칼은 `hold_dist`(8px)부터 있는데 궤적은 도달×0.55부터라
+#   그 사이가 통째로 비어 두 물체로 보였다. 낮출수록 띠가 두꺼워지고 칼을 감싼다.
+const SWING_FX_INNER_RATIO := 0.38
 const SWING_FX_EDGE_SOFT_PX := 3.0    # 밴드 가장자리 페이드 폭(px)
 const SWING_FX_TIP_BOOST := 0.35      # 칼끝이 밝아지는 정도
+# 🔴 **궤적 반경의 추가 배율 — 기본 1.0이고, 진짜 크기는 아래 `_swing_draw_reach()`가 정한다.**
+#   전역 배율(한때 2.0)로 궤적을 키웠더니 **칼과 빛이 따로 놀았다**(사용자 신고 2026-07-28): 궤적은
+#   84px인데 칼끝은 56px이라 띠의 74%가 칼이 안 닿는 허공이었다. 근본 원인은 배율이 아니라
+#   **궤적 반경(판정 사거리)과 칼 길이(텍스처 픽셀)를 잇는 코드가 한 줄도 없다**는 것이다 —
+#   실측 비율이 무기마다 1.33(낡은 대검) / 1.61(도끼) / 0.98(창)로 제각각이라 **전역 배율 하나로는
+#   원리적으로 못 맞춘다.** 그래서 유도로 바꿨다(`_swing_draw_reach`). 이 상수는 그 위에 얹는
+#   순수 취향 배율이고 F2 튜너의 「궤적크기」 슬라이더가 민다.
+const SWING_FX_REACH_MULT := 1.0
+# 🔴 **어깨에 걸치기 — 선딜에 칼을 젖히는 각의 배율** (2026-07-28 사용자 요구: *"검과 도끼는 어깨에
+#   걸치듯이 진행이 되어야 함"*). `_begin_swing`이 **시작각에만** 곱한다.
+# 왜 시작각만인가: 끝각(`_swing_to`)은 궤적 선단이 판정 부채꼴을 덮는다는 불변식(§3)이 걸려 있어
+#   건드리면 안 된다. 시작각을 뒤로 더 젖히는 것은 **칼이 더 뒤에서 출발한다**는 뜻이라 판정과
+#   무관하고, 궤적도 그만큼 뒤로 넓어질 뿐이다(표시 > 판정 = 안전한 방향).
+# ⚠ **무한정 젖힐 수 없다** — 셰이더의 궤적 진행 게이트가 `span < 2π-0.02`에서만 돌고, 넘으면 진행이
+#   통째로 꺼져 부채꼴이 한 번에 번쩍인다(= 이 개편 전 그림). 그래서 `_begin_swing`이 무기 각에서
+#   최대치를 유도해 자른다: 넓은 무기(도끼 160°)일수록 남은 여유가 작아 자동으로 덜 젖혀진다.
+const SWING_WINDUP_ARC_MULT := 1.5
 # 검기 파형 (검성 메인 특성, GDD v1.9) — **표시 전용**. 평타 스윙과 같은 프레임에 태어나 앞으로 뻗는다.
 # 🔴 파형은 판정을 만들지 않는다 — 판정은 확장된 사거리를 쓴 원형 질의 하나뿐이고, 파형은 그 사거리가
 #   왜 늘었는지를 눈에 보여주는 것이다(GDD §6: 파형 자체 데미지 없음). 그래서 도달 거리를 연출값으로
@@ -189,6 +210,11 @@ var _swing_ease: String = "smooth"              # 타격 구간 이징 (smooth/a
 var _swing_pull: float = 0.0                    # 예비에 뒤로 당기는 거리(px) — 찌르기의 주 모션, 0 = 항등
 var _fx_inner: float = SWING_FX_INNER_RATIO     # 궤적 밴드 안쪽 시작 비율 (연출 — 판정 아님)
 var _fx_tip: float = SWING_FX_TIP_BOOST         # 칼끝 밝기
+# 궤적 표시 배율 — 위 const 주석이 정본. **표시 전용**이라 무기 데이터(EquipDef)가 아니라 여기 있다
+# (rules §0: 손맛 전역 크기는 const, 무기별로 갈리는 것만 데이터). F2 튜너가 실기에서 이 값을 민다.
+var _fx_reach_mult: float = SWING_FX_REACH_MULT
+# 선딜 젖힘 배율 — 위 const 주석이 정본. 표시 전용(각 시작점만 움직인다)이라 여기 있다.
+var _windup_arc_mult: float = SWING_WINDUP_ARC_MULT
 var _hold_dist: float = HOLD_DIST      # 몸 중심 → 무기 그립 거리 (무기별 = EquipDef.weapon_hold_dist, 대검 8·활 20)
 var _arrow_range: float = 360.0         # shoot/charge 무기 투사체 사거리 (무기별 = EquipDef.arrow_range) — 발사 시 G_SHOOT로 전송
 var _weapon_id: String = ""             # 착용 무기 id — G_SHOOT "w"(수신 측이 탄 겉모습/속도/폭발 반경을 allowlist 리졸브)
@@ -1222,6 +1248,17 @@ func _begin_swing(combo: int) -> void:
 		# 찌르기는 좌우로 훑지 않는다 — 예비에 창끝을 젖혔다가 **겨눈 선(0)으로 모아** 내지른다.
 		# (타수마다 젖히는 쪽만 바뀌므로 손이 순간이동해 보이지 않는다 — 위 _swing_from 그대로 쓴다.)
 		_swing_to = 0.0
+	else:
+		# 🔴 **어깨에 걸치기 — 시작각만 더 젖힌다**(위 const 주석이 정본). 끝각은 안 건드린다:
+		#   거긴 "궤적 선단이 판정 부채꼴을 덮는다"는 §3 불변식이 걸려 있다.
+		# 🔴 **상한을 무기 각에서 유도한다.** 셰이더의 궤적 진행 게이트는 `hi - lo < 2π-0.02`에서만
+		#   돌고, 넘으면 진행이 꺼져 부채꼴이 한 번에 번쩍인다(= 개편 전 그림, 사용자가 신고한 그것).
+		#   span = arc × (1 + 배율)이므로 배율 상한 = (2π-0.02)/arc − 1이다. 넓은 무기일수록 여유가
+		#   작아 자동으로 덜 젖혀진다(도끼 160° → 약 1.24배 · 낡은 대검 109° → 약 2.3배).
+		# ⚠ 마무리 타는 `COMBO_FINISH_ARC`로 arc가 이미 커서 상한이 1.0 밑으로 떨어질 수 있다 —
+		#   그때는 `maxf`가 1.0(젖힘 없음)으로 떨어뜨린다. 마무리는 원래 크게 휘두르므로 맞는 결과다.
+		var cap := (TAU - 0.02) / maxf(arc, 0.0001) - 1.0
+		_swing_from *= clampf(maxf(1.0, _windup_arc_mult), 1.0, maxf(1.0, cap))
 	# 🔴 스윙 창은 콤보와 무관하게 _swing_time 그대로 — §3 미러(swing_time < attack_cooldown) 보존.
 	_attack_anim_left = _swing_time
 	# 🔴 **시간 축을 여기서 굳힌다**(netreview M-1 — 멤버 주석이 근거). 이후 무기 교체·레벨업이
@@ -1482,9 +1519,31 @@ func _draw_swing_trail(u: float) -> void:
 #     · `tail_floor`도 완료 시 1.0으로 수렴 → **그 순간의 그림은 도입 전과 완전히 같은 균일 부채꼴**
 #   그래서 "표시 < 판정"(= 안 보이는데 맞는다, rules §3 금지)이 **시간 축에서도 원천 불가**다.
 #   ⚠ 스윕 도중에는 일부만 그려지지만 **그때는 아직 판정이 없다**(`_swing_hit_left > 0`).
+# 🔴 **궤적 반경 = max(판정 도달, 칼끝이 실제로 닿는 거리) × 취향 배율** (2026-07-28 "칼과 빛이 따로
+#   논다" 신고의 처방). 두 축을 `max`로 잇는 것이 핵심이고, 이유는 축마다 틀리는 방향이 다르기 때문이다:
+#   · **칼끝 > 판정**(낡은 대검 56 vs 42 · 도끼 61 vs 38): 판정으로 그리면 **칼이 궤적을 뚫고 나간다.**
+#     칼날 끝이 빛 밖에 있는 그림이라 "빛이 칼을 못 따라온다"로 읽힌다.
+#   · **판정 > 칼끝**(창 80 vs 78): 칼끝으로 그리면 **표시 < 판정**이 되어 rules §3 금지에 걸린다
+#     (안 보이는데 맞는다). 그래서 이쪽은 판정이 이겨야 한다.
+#   `max`는 두 경우 모두에서 **큰 쪽**을 고르므로 "칼을 덮으면서 판정도 덮는" 최소 반경이 된다.
+# 🔴 **칼끝은 무기 표시 배치와 같은 식에서 유도한다** — `_update_weapon`의
+#   `position = -grip + (hold_dist + lunge, 0)`이 정본이고, 텍스처 오른쪽 끝이 곧 칼끝이다.
+#   식을 복제하지 말고 여기 한 곳에서만 계산해라(둘이 되면 그립을 조정했을 때 다시 갈라진다).
+# ⚠ `lunge`는 프레임마다 변하지만 여기서는 **이 스윙의 최대치**를 쓴다 — 매 프레임 반경이 출렁이면
+#   궤적이 숨을 쉬는 것처럼 보이고, 셰이더의 `reach_ratio`(진행)와 역할이 겹친다.
+# ⚠ 무장 해제(텍스처 없음)면 칼끝이 0이라 판정 도달이 그대로 이긴다 = 도입 전과 항등.
+func _swing_draw_reach(reach: float) -> float:
+	var tip := 0.0
+	if _weapon.texture != null:
+		tip = _weapon.texture.get_width() - _weapon_grip.x + _hold_dist \
+			+ _swing_lunge * _swing_lunge_mult
+	return maxf(reach, tip) * maxf(1.0, _fx_reach_mult)
+
+
 func _apply_swing_fx_geometry(reach: float, sweep_from: float, sweep_head: float,
 		reach_ratio: float, tail_floor: float) -> void:
-	var quad := 2.0 * (reach + SWING_FX_PIXEL_PX + SWING_FX_EDGE_BIAS_PX)
+	var draw_reach := _swing_draw_reach(reach)
+	var quad := 2.0 * (draw_reach + SWING_FX_PIXEL_PX + SWING_FX_EDGE_BIAS_PX)
 	_attack_fx.rotation = _swing_dir.angle()
 	_attack_fx.position = Vector2.ZERO
 	_attack_fx.scale = Vector2.ONE * quad
@@ -1496,7 +1555,7 @@ func _apply_swing_fx_geometry(reach: float, sweep_from: float, sweep_head: float
 	# ⚠ 매번 전량 심는다(기본값 의존 금지) — 노드가 재사용돼 무기를 오가므로 한 번이라도 안 심으면
 	#   이전 무기의 각·도달이 남는다(보스 텔레그래프와 같은 함정).
 	mat.set_shader_parameter(&"quad_px", quad)
-	mat.set_shader_parameter(&"radius_px", reach)
+	mat.set_shader_parameter(&"radius_px", draw_reach)
 	mat.set_shader_parameter(&"half_angle", CombatMath.melee_half_angle(_weapon_override))
 	# ⚠ 무기별로 갈리는 것은 **밴드 안쪽 시작·칼끝 밝기**뿐이다(둘 다 연출). 바깥 반지름과 각은
 	#   위에서 판정 데이터로 심었다 — 무기 데이터로 그 둘을 넓히는 자리는 **일부러 두지 않았다**.
