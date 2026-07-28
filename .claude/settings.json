@@ -3,6 +3,10 @@
     "harness@harness-marketplace": true
   },
   "permissions": {
+    "allow": [
+      "Bash(bash scripts/run_tests.sh)",
+      "Bash(bash scripts/run_tests.sh *)"
+    ],
     "ask": [
       "Edit(docs/GDD.md)",
       "Write(docs/GDD.md)",
