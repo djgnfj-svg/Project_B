@@ -996,6 +996,7 @@ func _initialize() -> void:
 	var degenerate_ok := true
 	var lead_ok := true
 	var auto_fire_ok := true
+	var melee_gap_ok := true
 	var auto_fire_margin_ok := true
 	for jf: String in DirAccess.get_files_at("res://data/jobs"):
 		var jbase := jf.trim_suffix(".remap")
@@ -1025,6 +1026,44 @@ func _initialize() -> void:
 		#    안 지나(`combat_authority._on_player_shoot`) **게스트만** 손해 봐서 신고조차 엇갈린다.
 		# ⚠ 검사가 둘인 이유: ⑴만으로는 "지터 0에서 간신히 통과"도 초록이다. 실기에서 문제가 되는 것은
 		#    여유의 **크기**이므로 ⑵가 호스트 프레임 1주기를 흡수하는지 따로 본다.
+		# 🔴 **근접 자기 스로틀 전수** (netreview I-3, 2026-07-28) — 「홀드 연사 전수」와 같은 형태다.
+		#    클라는 판정 도착 간격이 호스트 게이트 아래로 내려가지 않게 스스로 물러서는데, 그 간격을
+		#    호스트 임계에 **딱 붙이면 여유가 0**이라 게스트에선 편도 지터 한 번에 거부된다
+		#    (증상 = 스윙·궤적·소리·반동 다 나오는데 **적 HP만 안 깎임**, 에러 0, **배포본·게스트 한정**).
+		# ⚠ 표본에 **경계 양쪽**을 넣는다 (netreview m-8) — `minf(..., cd)` clamp의 발동점은 전사에서
+		#    `h = 0.20`(cd = 1/3)인데 `[0, 0.25, 0.5]` 3점은 그 경계를 **한 번도 안 밟는다.**
+		for h4: float in [0.0, 0.19, 0.21, 0.25, float(CombatMath.LEVEL_STAT_MAX["haste"])]:
+			var cd4 := CombatMath.effective_cooldown(j, h4)
+			var gap4 := CombatMath.melee_throttle_gap_s(j, h4)
+			# ⑴ 호스트 근접 쿨다운 게이트를 통과하는가 — **같은 함수**로 묻는다(임계식 복제 금지).
+			if not CombatMath.is_hit_cooldown_ok(0, int(gap4 * 1000.0), j, h4):
+				melee_gap_ok = false
+			# ⑵ 🔴 **발산 금지 — `gate ≤ cd`.** 점화식이 `x[n+1] = max(t_hit, x[n] − cd + gate)`라
+			#    `gate > cd`면 매 스윙 `(gate − cd)`씩 **영구 누적**된다(최대 haste에서 실제로 그렇다:
+			#    `cd×0.9 + 1/30`이 `cd`를 1.3ms 넘긴다). 이 부등식이 **"같은 무기 항등"의 근거**다.
+			if gap4 > cd4 + 0.000001:
+				melee_gap_ok = false
+			# ⑸ 🔴 **래칫 상한** (netreview Gap A). ⑵의 `gate ≤ cd`는 **등호를 허용**하는데
+			#    등호가 곧 감쇠 0 = 단조 비감소(래칫)다. 그리고 등호는 에지가 아니라 haste ≥ 0.2에서
+			#    **상시**다. 그래서 "감쇠가 있는가"가 아니라 **"한 스윙이 미뤄질 수 있는 양"**을 막는다
+			#    (`player._swing_attack`의 `clampf(..., _swing_hit_at + MELEE_THROTTLE_MAX_S)`).
+			if CombatMath.MELEE_THROTTLE_MAX_S <= 0.0:
+				melee_gap_ok = false
+			# ⑹ 🔴 **상한도 haste로 줄어들어야 한다.** 덮는 대상(`t_hit` 결손)이 haste로 줄어드는데
+			#    상한만 절대값이면 haste ≥ 0.25에서 `t_hit + 상한 > swing_time`이 되어 판정이 **스윙 창
+			#    밖**으로 샌다(Gap C가 haste 0에서만 초록인 채로 깨진다). 실측으로 걸린 축이다.
+			if not is_equal_approx(CombatMath.melee_throttle_max_s(h4),
+					CombatMath.MELEE_THROTTLE_MAX_S * CombatMath.haste_scale(h4)):
+				melee_gap_ok = false
+			# ⑶ 여유가 실제로 붙어 있는가 — 취할 수 있는 최대(프레임 1주기 ∩ 슬랙 잔여)를 다 쓰는가.
+			#    `+ AUTO_FIRE_HOST_FRAME_S` 항을 지우면 여기가 빨개진다.
+			var want4 := minf(CombatMath.AUTO_FIRE_HOST_FRAME_S, cd4 * (1.0 - CombatMath.FIRE_RATE_SLACK))
+			if gap4 - cd4 * CombatMath.FIRE_RATE_SLACK < want4 - 0.000001:
+				melee_gap_ok = false
+			# ⑷ 원격 연출 게이트는 **반대 부호**여야 한다 — 호스트가 받아 주는 타격은 반드시 보여야
+			#    하므로 임계보다 관대해야 한다. 같은 부호로 통일하면 연출이 조용히 삼켜진다.
+			if CombatMath.melee_fx_gate_s(j, h4) > cd4 * CombatMath.FIRE_RATE_SLACK - want4 + 0.000001:
+				melee_gap_ok = false
 		for h2: float in [0.0, 0.25, float(CombatMath.LEVEL_STAT_MAX["haste"])]:
 			var af_gap_ms := CombatMath.auto_fire_gap_s(j, h2) * 1000.0
 			# ⑴ 지터 0에서 통과하는가 (호스트 게이트와 **같은 함수**로 묻는다 — 임계식을 복제하지 않는다)
@@ -1039,7 +1078,12 @@ func _initialize() -> void:
 			if ebase.get_extension() != "tres":
 				continue
 			var e := load("res://data/equipment/%s" % ebase) as EquipDef
-			if e == null or e.motion_type != "swing":
+			# 🔴 **근접 무기 전체**를 본다 — `motion_type == "swing"`으로 좁히면 찌르기(창)가
+			#   **말없이 빠진다**(무기 모션 개편 2026-07-28). 아래 두 계약(스윙 창·폴백 창)은
+			#   "근접 확정을 받는 무기"의 계약이고, 그 기준의 단일 소스는 `is_projectile_weapon`이다
+			#   (호스트 `combat_authority`의 근접 거부 게이트와 **같은 함수**). 하필 창이 폴백 창
+			#   부등식의 가장 빡빡한 사례(80 vs 84)라, 놓치면 트립와이어가 초록인 채로 죽는다.
+			if e == null or CombatMath.is_projectile_weapon(e):
 				continue
 			# 직업 귀속(GameState.can_equip_job 규칙) — 실제로 착용 가능한 조합만 본다.
 			# 계약은 "**착용** 직업의 attack_cooldown"이다(rules §3): 전사 대검(0.34)을 궁수 쿨다운(0.15)과
@@ -1066,12 +1110,22 @@ func _initialize() -> void:
 	# 🔴 근접 기하 데이터 전수 (무기 모션 축 2026-07-28) — 둘 다 **에러 없이 조용히 깨지는** 부류다.
 	var melee_arc_ok := true
 	var melee_clamp_ok := true
+	var melee_phase_ok := true
+	var melee_motion_ok := true
+	var melee_weight_ok := true
+	var melee_throttle_ok := true
+	var t_hit_min := 1.0e9
+	var t_hit_max := 0.0
 	for mf: String in DirAccess.get_files_at("res://data/equipment"):
 		var mbase := mf.trim_suffix(".remap")
 		if mbase.get_extension() != "tres":
 			continue
 		var mw := load("res://data/equipment/%s" % mbase) as EquipDef
-		if mw == null or mw.motion_type != "swing":
+		# 🔴 위와 같은 이유 — 근접 기하 계약은 **찌르기에도 그대로 걸린다**(창은 반각 0.3으로
+		#   `swing_arc > 0` 단정의 실질적 최소 사례이고, `melee_range` 80으로 clamp 단정의 최대 사례다).
+		# ⚠ 슬롯도 본다 — `is_projectile_weapon`은 `motion_type`만 보므로 **방어구까지 "근접 무기"로
+		#   순회**한다(오늘은 무해하나 단정 문구와 실제 대상이 다르다, code-rv m-C).
+		if mw == null or mw.slot() != EquipDef.SLOT_WEAPON or CombatMath.is_projectile_weapon(mw):
 			continue
 		# ⑴ 반각 0 = 정면 **한 점**만 판정 = 사실상 공격 불가. 휘두름은 그대로 보이고 데미지만 안 난다.
 		if mw.swing_arc <= 0.0:
@@ -1081,12 +1135,97 @@ func _initialize() -> void:
 		if mw.melee_range > 0.0 \
 				and mw.melee_range * (1.0 + CombatMath.MAX_REACH_BONUS) > CombatMath.MAX_MELEE_RANGE:
 			melee_clamp_ok = false
+		# ⑶ 🔴 **모션 곡선 구간이 셋 다 양수 폭인가** (무기 모션 개편 2026-07-28). 표시 전용이지만
+		#    깨지면 **에러 없이 화면만** 망가진다: 합이 1 이상이면 복귀 구간이 사라져 무기가 휘두른
+		#    자세로 얼어붙고, 0이면 그 구간이 통째로 건너뛰어진다. `player._apply_motion_shape`가
+		#    코드로 clamp해 사고는 막지만, **clamp는 조용하다** — 작성자가 적은 값이 안 쓰인 것을
+		#    아무도 모른다. 여기서 빨개져야 "왜 내 도끼 예비가 안 길어지지"를 안 겪는다.
+		#    ⚠ 구조적 부등식만 본다(clamp 여유 상수를 복제하지 않는다 — 그러면 진실원이 둘이 된다).
+		if mw.swing_windup_ratio <= 0.0 or mw.swing_strike_ratio <= 0.0 \
+				or mw.swing_windup_ratio + mw.swing_strike_ratio >= 1.0:
+			melee_phase_ok = false
+		# ⑹ 🔴 **후딜 창이 물리 프레임 하나보다 길어야 한다** (netreview I-2, 2026-07-28).
+		#    판정은 `p >= 1.0`인 프레임에서 확정되므로 그 프레임이 **최소 한 번은 관측**돼야 한다.
+		#    ⑸의 `< 1.0`만으로는 부족하다 — `windup .5 / strike .45 / swing_time .24`짜리 `.tres`
+		#    한 장이면 후딜 창이 12ms < 16.7ms라 **그 무기는 데미지가 0인데 스위트는 초록**이다.
+		#    ⚠ 코드에도 캐치올 래치(`player._finalize_swing_sweep`)를 넣어 **이중으로** 막았다.
+		#      그래도 이 단정을 남기는 이유: 래치는 판정을 살리지만 그 무기의 **스윕 궤적이 한
+		#      프레임도 안 그려지는** 것(= 표시 소실)은 못 고친다. 데이터로도 막아야 한다.
+		#    ⚠ 기준은 물리 틱 1주기를 **엔진 설정에서 유도**한다 — 60을 여기 박으면 두 번째 진실원이 된다.
+		#    ⚠ haste는 양변에 같이 곱해지지 않는다 — 창만 짧아지므로 **최대 haste 기준**으로 본다.
+		var recover_s := (1.0 - mw.swing_windup_ratio - mw.swing_strike_ratio) \
+			* mw.swing_time * CombatMath.haste_scale(float(CombatMath.LEVEL_STAT_MAX["haste"]))
+		if recover_s <= 1.0 / float(maxi(Engine.physics_ticks_per_second, 1)):
+			melee_phase_ok = false
+		# ⑺ 🔴 **clamp가 발동했는가 — 적은 값이 그대로 쓰이는가** (code-rv J-1, 2026-07-28).
+		#    ⑸의 `w>0 ∧ s>0 ∧ w+s<1`은 **코드 clamp보다 느슨해서** 파국(합 ≥ 1, 0/음수)만 잡았다.
+		#    `0.02`(→0.05로 clamp)·합 `0.97`(→0.95)은 **둘 다 초록으로 샜다** — 하필 이 단정이 막으려던
+		#    "왜 내 도끼 예비가 안 길어지지"가 나는 바로 그 밴드다.
+		#    🔴 **상한 값을 여기 복제하지 않는다** — `CombatMath.motion_phases()`(= 코드가 실제로 쓰는
+		#      clamp)를 그대로 불러 **입력과 출력이 같은지**만 본다. 상한을 조여도 이 단정은 따라온다.
+		var ph := CombatMath.motion_phases(mw)
+		if not is_equal_approx(ph.x, mw.swing_windup_ratio) 				or not is_equal_approx(ph.y, mw.swing_strike_ratio):
+			melee_phase_ok = false
+		# ⑻ 🔴 **무게 배율 saturation** (code-rv J-2). `hit_shake / HIT_SHAKE_REF`가 상한에 걸리면
+		#    그 위로는 **킥·박힘이 안 따라오고 셰이크만 커진다** — "무게 단일 소스"가 조용히 반쪽이
+		#    된다. 현행 최대가 파쇄 도끼 4.4/1.5 = 2.93이라 **한 칸(4.5)만 올려도** 걸렸다.
+		if mw.hit_shake / CombatMath.HIT_SHAKE_REF > CombatMath.HIT_WEIGHT_MAX:
+			melee_weight_ok = false
+		# ⑼ 🔴 **Gap C — 미뤄진 판정이 스윙 창 안에서 나는가.** 넘으면 모션이 끝난 뒤 데미지만 뜬다
+		#    (무기는 평상 자세로 돌아가 있는데 숫자가 튄다). 상한까지 미뤄진 최악을 본다.
+		var ph2 := CombatMath.motion_phases(mw)
+		var t_hit := mw.swing_time * (ph2.x + ph2.y)
+		if t_hit + CombatMath.MELEE_THROTTLE_MAX_S > mw.swing_time + 0.000001:
+			melee_throttle_ok = false
+		# ⑽ 🔴 **상한 유도 — `max(t_hit) − min(t_hit)`을 실제로 덮는가.** 스로틀이 메워야 하는 결손이
+		#    정확히 그만큼이라, 상한이 그보다 작으면 정당한 보정이 **잘려** M-1이 부분 재발한다.
+		#    ⚠ haste는 양쪽 t_hit에 같은 배율이라 차이도 함께 줄어든다 → haste 0이 최악이다.
+		t_hit_min = minf(t_hit_min, t_hit)
+		t_hit_max = maxf(t_hit_max, t_hit)
+		# ⑷ 🔴 **근접 모션 타입은 아는 값이어야 한다.** 오타("thrusts")는 거부되지 않고 근접 분기의
+		#    **베기 쪽으로 조용히 떨어진다** — 창이 검처럼 휘둘리는데 에러가 없다(이 개편이 없애려는
+		#    상태 그 자체다). `is_projectile_weapon`이 이미 걸러낸 뒤라 남는 값은 이 둘뿐이어야 한다.
+		if mw.motion_type != "swing" and mw.motion_type != "thrust":
+			melee_motion_ok = false
+		# ⑸ 🔴 **찌르기는 당김이 있어야 한다.** 둘을 한 번에 잡는 단정이다:
+		#    ⓐ 설계 — `swing_pull` 0이면 예비 동작이 사라져 "앞으로 미는 베기"가 되고 창이 다시
+		#      검처럼 보인다(이 개편의 출발점 그 자체다).
+		#    ⓑ 🔴 **프로퍼티 이름이 어긋난 경우** — Godot은 `.tres`의 **모르는 프로퍼티를 경고 없이
+		#      버린다**(이번 작업에서 실측 확인). 즉 스키마 필드명과 데이터 키가 한 글자만 달라도
+		#      값이 조용히 사라지고 모션만 밋밋해진다. 이 단정이 그 창을 닫는다.
+		if mw.motion_type == "thrust" and mw.swing_pull <= 0.0:
+			melee_motion_ok = false
 	failures += _check(melee_arc_ok,
-		"근접 기하 전수: 모든 스윙 무기의 swing_arc > 0 (0이면 휘둘러도 안 맞는다)")
+		"근접 기하 전수: 모든 근접 무기의 swing_arc > 0 (0이면 휘둘러도 안 맞는다)")
 	failures += _check(melee_clamp_ok,
 		"근접 기하 전수: melee_range × 특성 상한 ≤ MAX_MELEE_RANGE (조용한 절삭 방지)")
+	failures += _check(melee_phase_ok,
+		"★모션 곡선 전수: 선딜·스윕·후딜 세 구간이 양수 폭 + 후딜 창 > 물리 프레임 1주기(최대 haste)")
+	failures += _check(melee_motion_ok,
+		"★근접 모션 전수: motion_type이 swing/thrust 중 하나 + 찌르기는 swing_pull > 0")
+	# 🔴 **미러 단정** — `CombatMath.DEFAULT_SWING_*`는 `EquipDef`의 기본값을 복제한 값이다(무장 해제
+	#    폴백). 사람이 지키는 미러는 조용히 깨진다(콘 텔레그래프 각·스워시 반각·보스 애니 길이가
+	#    전부 그랬다). 여기서 깨지면 증상이 **무장 해제 상태에서만** 모션 구간이 달라지는 것이라
+	#    더 안 보인다. ⚠ `is_equal_approx` — 그냥 `==`는 float 표현 차이로 흔들린다.
+	var probe := EquipDef.new()
+	failures += _check(is_equal_approx(probe.swing_windup_ratio, CombatMath.DEFAULT_SWING_WINDUP),
+		"★미러: EquipDef.swing_windup_ratio 기본값 == CombatMath.DEFAULT_SWING_WINDUP")
+	failures += _check(is_equal_approx(probe.swing_strike_ratio, CombatMath.DEFAULT_SWING_STRIKE),
+		"★미러: EquipDef.swing_strike_ratio 기본값 == CombatMath.DEFAULT_SWING_STRIKE")
+	if t_hit_max > t_hit_min and t_hit_max - t_hit_min > CombatMath.MELEE_THROTTLE_MAX_S + 0.000001:
+		melee_throttle_ok = false
+	# 🔴 **Gap B — 미뤄진 판정이 궤적이 아직 보일 때 나는가.** 궤적이 흩어진 **뒤에** 판정이 나면
+	#    「표시 ⊇ 판정」이 시간 축에서 무너진다(이 작업 전체가 세운 불변식이 마지막 구간에서 깨진다).
+	failures += _check(CombatMath.MELEE_THROTTLE_MAX_S < CombatMath.MELEE_TRAIL_FADE_S,
+		"★Gap B: 스로틀 최대 지연 < 궤적 페이드 시간 (궤적이 사라진 뒤 판정 금지)")
+	failures += _check(melee_throttle_ok,
+		"★스로틀 상한 전수: t_hit + 상한 ≤ swing_time(창 안 판정) + 상한 ≥ max(t_hit)−min(t_hit)(결손 커버)")
+	failures += _check(melee_weight_ok,
+		"★무게 배율 전수: hit_shake / HIT_SHAKE_REF ≤ HIT_WEIGHT_MAX (조용한 saturation 방지)")
 	failures += _check(degenerate_ok, "퇴화 트립와이어: MAX_HASTE에서도 유효 쿨다운 게이트 > SAME_SWING_MS")
 	failures += _check(lead_ok, "외삽 상한 불변식: LAG_MAX_LEAD_DIST ≥ 최고 이속×구르기×최대 lead (전 직업)")
+	failures += _check(melee_gap_ok,
+		"★근접 스로틀 전수: 호스트 게이트 통과 + gate ≤ cd(발산 금지) + 여유 1프레임 + 연출 게이트 반대 부호")
 	failures += _check(auto_fire_ok, "홀드 연사 전수: auto_fire_gap_s가 호스트 is_fire_rate_ok를 통과(직업×haste)")
 	failures += _check(auto_fire_margin_ok, "홀드 연사 전수: 게이트 여유 ≥ 호스트 프레임 1주기 (산발 유실 방어)")
 

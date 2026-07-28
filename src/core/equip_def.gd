@@ -30,7 +30,12 @@ const SLOT_ARMOR := 1
 # 공격 모션 타입 (§2 리팩터 게이트, 2026-07-24) — player.gd _do_attack/_update_weapon이 이 값으로 분기한다.
 #   "swing" = 근접 호 스윙(대검·기본, 로컬 원형 질의 판정) · "shoot" = 원거리 발사(궁수 활, 화살 스폰·호스트 화살 판정)
 #   "charge" = 기 모아 발사(법사 지팡이) — shoot 경로 재사용 + 차지 단계·착탄 폭발(범위). 아래 "차지" 그룹이 수치.
-#   "thrust"(찌르기)는 예약 — 추가 시 여기 enum 확장 + _do_attack 분기. 스윙 손맛 필드(아래)는 swing 한정.
+#   "thrust" = 찌르기(장창, 2026-07-28 구현) — **판정은 "swing"과 완전히 같은 경로다**
+#     (`CombatMath.is_projectile_weapon`이 false → 호스트 근접 확정). 갈리는 것은 무기 스프라이트의
+#     모션 곡선뿐이다(`player._motion_at`: 각이 아니라 **거리**가 주 모션 + 겨눈 선으로 모인다).
+#   🔴 `player._local_combat`의 모션 분기는 **shoot/charge만 명시로 걸러내고 나머지를 근접으로 떨군다** —
+#     거기에 `elif motion == "swing"`을 넣으면 찌르기가 **에러 없이 공격 자체를 못 하게** 된다.
+#   아래 스윙 손맛·모션 필드는 swing·thrust 공용이다(shoot/charge는 swing_sfx만 재활용).
 @export_enum("swing", "shoot", "charge", "thrust") var motion_type: String = "swing"
 # (shoot/charge 무기) 투사체 최대 사거리(px) — 이 거리 넘으면 소멸(charge는 그 자리에서 폭발). 호스트가 MAX로 clamp(§3).
 # 🔴 **기본값이 0인 것은 안전장치다 — 올리지 마라** (2026-07-27 netreview M4 후속).
@@ -101,6 +106,11 @@ const SLOT_ARMOR := 1
 @export var swing_color: Color = Color(1, 1, 1, 1) # 궤적 틴트(그레이스케일 도트 재활용용, 페이드 알파와 곱)
 @export var swing_sfx: String = "swing"            # 스윙(휘두름) 효과음 id (Audio.SFX 키)
 @export var hit_sfx: String = ""                   # 적중 시 무기 고유 타격음 id (비면 무음 — 범용 피격음은 combat_impact가 별도 재생)
+# 🔴 **이 무기의 "무게" 단일 소스다** (무기 모션 개편 2026-07-28). 스크린셰이크뿐 아니라 **카메라 킥
+#   (`player.HIT_KICK`·`COMBO_FINISH_KICK`)과 적중 시 스윙 박힘(`SWING_BITE_S`)이 전부 여기서 파생한다**
+#   — `player._weapon_weight()` = `hit_shake / HIT_SHAKE_REF`. 무게 필드를 따로 만들지 마라: 같은 것을
+#   뜻하는 숫자가 둘이 되면 도끼를 무겁게 조였는데 셰이크만 커지고 킥은 그대로인 갈라짐이 생긴다.
+# ⚠ 배율 상한 `player.HIT_WEIGHT_MAX`(3.0)에 걸리면 그 위로는 킥·박힘이 안 따라온다(셰이크만 커진다).
 @export var hit_shake: float = 1.5                 # 적중 시 스크린셰이크 강도 (무기 무게감)
 
 # 스윙 모션(휘두르는 동작) — 무기별로 호 넓이·속도·내지르기를 갈라 무게감을 동작으로 표현. 스윙형 한정.
@@ -128,6 +138,36 @@ const SLOT_ARMOR := 1
 @export var swing_arc: float = 1.9                 # 스윙 호 반각(rad) — 조준각 기준 ±이만큼 쓸고 지나감 (클수록 넓게). **판정 부채꼴의 반각이기도 하다**
 @export var swing_time: float = 0.25              # 스윙 창 길이(s) — 클수록 느리고 묵직 (반드시 < attack_cooldown)
 @export var swing_lunge: float = 5.0             # 스윕 중 앞으로 내지르는 거리(px)
+# 공격 타이밍 = 선딜 / 스윕 / 후딜 (무기 모션 개편 2026-07-28) — 🔴 **표시 전용이 아니다.**
+#   `swing_time`을 세 구간으로 나눈 비율이고, 🔴 **판정이 나가는 순간이 「선딜 + 스윕」이 끝나는
+#   시점**이다(`player._tick_swing_motion` → `_resolve_swing_hit`). 전에는 클릭한 그 프레임에
+#   판정이 끝나고 모션은 뒤에 재생될 뿐이라, 판정·궤적·칼이 각을 훑는 구간이 **셋 다 어긋나**
+#   있었다. "칼이 지나갈 때 맞는다"로 정렬한 것이다.
+#   · 선딜(windup) = 칼을 젖힌다 · 궤적 없음 · 판정 없음 (구르기로 취소 가능)
+#   · 스윕(strike) = 칼이 각을 훑고 궤적이 그 뒤를 따라 자란다 → **끝나는 순간 판정 확정**
+#   · 후딜(recover) = 1 − 선딜 − 스윕 (파생이라 필드가 없다). 칼을 회수 — **이동은 안 막는다**
+#     (막으면 GDD §6 🔒 화력 예산에 닿는다). 재공격 금지는 `attack_cooldown`이 이미 한다.
+# 🔴 도달 지연(클릭 → 판정) = `swing_time × (windup + strike)`. 키우면 손맛이 무거워지고
+#   **선딜 중 적이 빠져나가 헛치는 일이 늘어난다** — 무게의 대가다(사용자가 조이는 값).
+# 🔴 **여기서 도달·각을 늘리려 하지 마라** — 그 순간 "보이는 곳 ≠ 맞는 곳"이 된다(rules §3).
+# 🔴 기본값이 개편 전 하드코딩 값 그대로다 — 무기가 값을 안 주면 **완전 항등**이다.
+# ⚠ 세 구간이 전부 양수 폭이어야 한다(합 < 1). 어기면 `player._apply_motion_shape`가 코드로 clamp해
+#   사고는 막지만 **clamp는 조용하다** — `test_combat_math_auto`의 「★모션 곡선 전수」가 빨개진다.
+@export var swing_windup_ratio: float = 0.28   # 선딜이 스윙 창에서 차지하는 비율
+@export var swing_strike_ratio: float = 0.47   # 스윕 구간 비율
+# 스윕 이징 — 무기 성격이 여기서 갈린다. 모르는 값은 smooth로 떨어진다(항등 폴백).
+#   smooth = 균등한 큰 호(대검) · accel = 천천히 들었다 확 내리꽂는다(도끼) · decel = 튀어나가 멎는다(찌르기)
+@export_enum("smooth", "accel", "decel") var swing_ease: String = "smooth"
+# 선딜에 무기를 **뒤로 당기는** 거리(px) — `motion_type = "thrust"`의 주 모션이다.
+# 0 = 개편 전과 항등(베기 무기는 0). ⚠ 찌르기인데 0이면 "앞으로 미는 베기"가 되어 창이 다시 검처럼
+# 보인다 — `test_combat_math_auto`의 「★근접 모션 전수」가 막는다.
+@export var swing_pull: float = 0.0
+# 궤적 룩 — 🔴 **배율만 둔다.** 절대값을 데이터에 두면 `player.gd`의 전역 크기 const(SWING_FX_*)와
+# 진실원이 둘이 되어, 사용자가 const를 조여도 무기들이 안 따라온다(rules §0 "손맛 전역 크기는 const").
+# ⚠ 여기 둘은 **밴드 안쪽 시작·칼끝 밝기**뿐이다 — 바깥 반지름과 각(= 판정)을 무기 데이터로 넓히는
+# 자리는 **일부러 없다**.
+@export var swing_fx_inner_mult: float = 1.0   # 작을수록 길게 뻗은 자국(찌르기), 클수록 얇은 띠
+@export var swing_fx_tip_mult: float = 1.0     # 클수록 칼끝이 도드라진다
 
 
 func slot() -> int:

@@ -25,3 +25,6 @@ hit_shake = 2.6
 swing_arc = 2.4
 swing_time = 0.34
 swing_lunge = 9.0
+swing_windup_ratio = 0.25
+swing_strike_ratio = 0.35
+swing_ease = "smooth"

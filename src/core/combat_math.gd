@@ -442,6 +442,50 @@ static func is_projectile_weapon(equip: EquipDef) -> bool:
 	return equip != null and (equip.motion_type == "shoot" or equip.motion_type == "charge")
 
 
+# --- 무기 모션 데이터 계약 (무기 모션 개편 2026-07-28) — 🔴 **여기 있는 것 자체가 계약이다.**
+#   `player.gd`는 씬 글루라 `-s` 헤드리스가 preload를 못 한다(rules §5). 그래서 **데이터가 만족해야
+#   하는 상수를 거기 두면 `data/equipment` 전수 트립와이어를 만들 수 없다** — 테스트는 코드보다
+#   느슨한 근사만 쓸 수 있고, 그 틈으로 "조용히 clamp된 값"이 초록으로 샌다(2026-07-28 리뷰 J-1·J-2:
+#   `swing_windup_ratio = 0.02`와 구간 합 0.97이 **둘 다 초록으로 통과**했다).
+#   ⚠ 아래 둘은 **판정을 만들지 않는다**(표시 타이밍·손맛 배율). 그래도 여기 있는 이유는 오직
+#     "테스트가 닿아야 하는 데이터 계약"이기 때문이다 — 판정 함수와 헷갈리지 마라.
+
+# 공격 모션 구간 (선딜, 스윕) — 후딜은 `1 - windup - strike` 파생이라 필드가 없다.
+# 🔴 세 구간이 전부 양수 폭이어야 한다: 0이면 정규화가 0으로 나누고, 합이 1 이상이면 후딜이 사라져
+#   무기가 휘두른 자세로 **얼어붙는다**(에러 없이 화면만 어긋난다). 데이터를 믿지 않고 여기서 clamp한다.
+# ⚠ clamp가 발동하면 작성자가 적은 값이 **조용히** 안 쓰인다("왜 내 도끼 예비가 안 길어지지").
+#   `test_combat_math_auto`가 `motion_phases(e)`의 출력이 입력과 같은지를 전수로 단정해 그걸 잡는다 —
+#   **상한 값을 테스트에 복제하지 않고도** 상한을 조이면 단정이 따라온다.
+const MOTION_PHASE_MIN := 0.05
+# ⚠ `EquipDef.swing_windup_ratio`/`swing_strike_ratio`의 기본값과 **미러**다(무장 해제 폴백).
+const DEFAULT_SWING_WINDUP := 0.28
+const DEFAULT_SWING_STRIKE := 0.47
+
+
+static func motion_phases(equip: EquipDef) -> Vector2:
+	var w: float = equip.swing_windup_ratio if equip != null else DEFAULT_SWING_WINDUP
+	var s: float = equip.swing_strike_ratio if equip != null else DEFAULT_SWING_STRIKE
+	w = clampf(w, MOTION_PHASE_MIN, 1.0 - 2.0 * MOTION_PHASE_MIN)
+	return Vector2(w, clampf(s, MOTION_PHASE_MIN, 1.0 - MOTION_PHASE_MIN - w))
+
+
+# 무기 타격 무게 배율 — 🔴 **`EquipDef.hit_shake` 하나에서 파생한다.** 스크린셰이크뿐 아니라 카메라
+#   킥(`player.HIT_KICK`·`COMBO_FINISH_KICK`)과 적중 시 스윙 박힘(`SWING_BITE_S`)이 전부 이걸 지난다.
+#   무게 필드를 따로 만들지 마라 — 같은 것을 뜻하는 숫자가 둘이 되면 도끼를 무겁게 조였는데
+#   셰이크만 커지고 킥은 그대로인 갈라짐이 생긴다(rules §3의 반복된 실패 형태).
+# 🔴 **상한에 걸리면 그 위로는 킥·박힘이 안 따라오고 셰이크만 커진다** = 무게 단일 소스가 조용히
+#   반쪽이 된다. 현행 최대가 파쇄 도끼 4.4/1.5 = 2.93이라 **한 칸(4.5)만 올려도** 걸렸다 —
+#   `test_combat_math_auto`의 「★무게 배율 전수」가 그걸 잡는다.
+const HIT_SHAKE_REF := 1.5    # 배율 1.0의 기준점 = EquipDef.hit_shake 기본값
+const HIT_WEIGHT_MIN := 0.4
+const HIT_WEIGHT_MAX := 3.0
+
+
+static func weapon_weight(equip: EquipDef) -> float:
+	var hs: float = equip.hit_shake if equip != null else HIT_SHAKE_REF
+	return clampf(hs / HIT_SHAKE_REF, HIT_WEIGHT_MIN, HIT_WEIGHT_MAX)
+
+
 # 유효 투사체 사거리 — proj_range 특성 + 콤보 타별 배율만큼 길어진다. 둘 다 기본값(0 / 1.0)이면
 # **도입 전과 완전 항등**이다.
 # 🔴 근접의 effective_attack_range와 같은 자리다: 표시(ArrowField)와 판정(CombatAuthority)이 **같은
@@ -719,6 +763,81 @@ const AUTO_FIRE_HOST_FRAME_S := 1.0 / 30.0  # 호스트 수신 처리의 최악 
 static func auto_fire_gap_s(job: JobDef, haste: float = 0.0) -> float:
 	var cd := effective_cooldown(job, haste)
 	return maxf(cd / FIRE_RATE_SLACK, cd * FIRE_RATE_SLACK + AUTO_FIRE_HOST_FRAME_S)
+
+
+# --- 근접 스윙의 두 게이트 (선딜/후딜 축 2026-07-28, netreview I-3) ---
+# 🔴 **둘 다 호스트 임계에서 한 프레임만큼 물러나되 부호가 반대다 — 그게 계약이다.**
+#   호스트가 재는 것은 클라의 입력 간격이 아니라 **도착 간격**이고, 게스트에선
+#   `도착 = 클라 간격 + (편도₂ − 편도₁)`이라 임계에 딱 붙이면 음의 지터 한 번에 갈린다.
+#   · 스로틀(+): "호스트가 받아 줄 만큼 **늦게**" — 판정을 미룬다. 늦는 쪽이 안전.
+#   · 연출 게이트(−): "호스트가 받아 주는 타격은 **반드시 보여야**" — 관대한 쪽이 안전.
+#   🔴 같은 부호로 통일하려는 변경은 둘 중 하나를 반드시 망가뜨린다
+#     (§3 「방어자 우대」와 「대상 좌표 각 슬랙」이 의도적으로 반대 부호인 것과 같은 형태).
+
+# 클라 자기 스로틀 — 근접 판정(G_HIT_REQ)을 이 간격보다 촘촘히 내보내지 않는다.
+# 🔴 **`cd`로 clamp하는 것이 안정성 조건이다.** 점화식이 `x[n+1] = max(t_hit, x[n] − cd + gate)`라
+#   `gate > cd`면 매 스윙 `(gate − cd)`씩 **영구 누적**된다. clamp가 있으면 `gate ≤ cd`라 수렴하고,
+#   덤으로 **"같은 무기 연타는 완전 항등"이 데이터가 아니라 구조로** 보장된다(항등 조건 = `gate ≤ cd`).
+# 🔴 **clamp는 에지 케이스가 아니라 상시 동작이다** (2026-07-28 netreview 3차 정정).
+#   `LEVEL_STAT_MAX["haste"]`가 **0.5**이므로 전사 실측:
+#     haste 0.0 → cd 0.4000 · gate 0.3933 (−6.7ms, 안정)
+#     haste 0.2 → cd 0.3333 · gate 0.3333 (**0 = clamp 발동점**)
+#     haste 0.5 → cd 0.2667 · gate 0.2733 (**+6.7ms 발산**)
+#   즉 발동 조건이 `cd ≤ 1/3` ⇔ 전사 `haste ≥ 0.2`라 **haste 범위의 상위 60%에서 상시 걸린다.**
+#   ⚠ 이 수치를 "최대 haste에서 1.3ms"로 적었던 초판은 상한을 0.25로 잘못 잡은 것이었다 —
+#     5배 작은 값이라 "무시해도 되겠네"로 읽히던 자리다. 테스트는 `LEVEL_STAT_MAX`를 읽으므로 옳았다.
+# 🔴 **clamp가 걸리면 감쇠율(`cd − gate`)이 0이 되어 점화식이 `x[n+1] = max(t_hit, x[n])` = 래칫이다.**
+#   느린 무기의 부풀린 지연을 빠른 무기가 영구히 물고 간다(헛치기 한 번이 유일한 해제).
+#   그래서 이 clamp만으로는 부족하고 **한 스윙의 추가 지연 자체에 상한**이 필요하다 — 아래 참조.
+static func melee_throttle_gap_s(job: JobDef, haste: float = 0.0) -> float:
+	var cd := effective_cooldown(job, haste)
+	return minf(cd * FIRE_RATE_SLACK + AUTO_FIRE_HOST_FRAME_S, cd)
+
+
+# 원격 스윙 연출 스팸 게이트 — 이 간격 안에 다시 온 G_ATK는 연출을 재시작하지 않는다.
+# 🔴 호스트 임계보다 **관대**해야 한다: 삼켜지면 상대 화면에서 그 타격이 **없었던 일**이 되는데
+#   (궤적·소리·무기 모션이 전부 사라진다) HP는 깎인다 — 화면에 이유가 안 드러나는 부류다.
+static func melee_fx_gate_s(job: JobDef, haste: float = 0.0) -> float:
+	var cd := effective_cooldown(job, haste)
+	return maxf(cd * FIRE_RATE_SLACK - AUTO_FIRE_HOST_FRAME_S, 0.0)
+
+
+# 🔴 **한 스윙이 자기 스로틀로 미뤄질 수 있는 최대 추가 지연** (netreview 3차 ②, 2026-07-28).
+#   위 `minf(..., cd)` clamp는 `cd ≤ 1/3` ⇔ **전사 haste ≥ 0.2에서 상시** 발동한다(상한 0.5의 상위 60%).
+#   그 구간에선 `gate == cd`라 점화식의 감쇠가 **0**이 되어 `x[n+1] = max(t_hit, x[n])` = **단조
+#   비감소(래칫)** 가 된다 — 도끼(t_hit .216) → 낡은 대검(.132)으로 바꾸면 빠른 무기가 느린 무기의
+#   부풀린 지연을 계속 물고 간다(에러 0 · 데미지 손실 0 · 양쪽 화면 동일 · 풀리는 조건이 **헛치기
+#   한 번**이라 보스전에서 오래 간다). 상한을 두면 `x[n+1] ≤ t_hit + 이 값`으로 **위에서 막혀**
+#   발산도 무한 래칫도 원리적으로 불가능하다.
+# 🔴 **유도 = `data/equipment` 근접 무기 전수의 `max(t_hit) − min(t_hit)`.** 스로틀이 메워야 하는
+#   결손이 정확히 그만큼이고 그 이상은 필요 없다. 실측 0.084s(도끼 0.216 − 낡은 대검 0.132, haste 0이
+#   최악 — haste는 양쪽에 같은 배율이라 차이도 함께 줄어든다). 여유를 두고 0.09.
+#   ⚠ `test_combat_math_auto`가 전수로 지킨다: 이 값 ≥ 실제 차이 · `t_hit + 이 값 ≤ swing_time`(창 안
+#     판정) · 이 값 < `MELEE_TRAIL_FADE_S`(궤적이 사라진 뒤 판정 금지).
+# ⚠ **상한 안에서는 여전히 지속된다**(감쇠 0이므로) — 84ms에서 멈출 뿐이고 헛치기 한 번에 해제된다.
+#   감쇠를 되살리려면 `gate < cd`가 필요한데 그건 `+프레임` 여유를 포기하는 것이라 I-3 회귀다.
+#   천장(`cd × (1 − FIRE_RATE_SLACK)`, 상한 haste에서 26.7ms < 프레임 33.3ms)이 그 트레이드오프를
+#   **구조적으로** 강제한다 — 여기서 고를 수 있는 것이 아니다.
+# 🔴 **haste로 함께 줄어들어야 한다 — 덮는 대상이 그렇기 때문이다** (2026-07-28 자체 점검 정정).
+#   절대값으로 두면 `t_hit·k + CAP > swing_time·k`가 되어(haste ≥ 0.25에서 `worn`) 판정이
+#   **스윙 창 밖**으로 샌다 = 무기가 평상 자세로 돌아간 뒤 데미지 숫자만 뜬다. 곱해 두면 그
+#   부등식이 `t_hit + CAP ≤ swing_time`으로 **haste 불변**이 된다(worn 여유 18ms, 전 구간 동일).
+#   ⚠ **바로 위 "haste는 양쪽에 같은 배율이라 차이도 함께 줄어든다"가 그 근거인데, 초판은 그것을
+#     적어 두고도 상한만 절대값으로 뒀다** — 주석이 사실을 알고 있는데 코드가 안 따른 형태다.
+#     그래서 `melee_throttle_max_s()`가 유일한 소비 경로이고, 트립와이어가 haste 전수로 곱을 단정한다.
+const MELEE_THROTTLE_MAX_S := 0.09
+
+
+static func melee_throttle_max_s(haste: float = 0.0) -> float:
+	return MELEE_THROTTLE_MAX_S * haste_scale(haste)
+
+# 스윕 완료 뒤 근접 궤적이 흩어지기까지(s). 🔴 **`player.gd`가 아니라 여기 있는 이유**: 위 상한과의
+#   부등식(`MELEE_THROTTLE_MAX_S < MELEE_TRAIL_FADE_S`)을 트립와이어가 걸려면 양변이 같은 곳에 있어야
+#   한다(J-1·J-2와 같은 규율 — `player.gd`는 씬 글루라 `-s`가 preload를 못 한다). 깨지면 **궤적이
+#   사라진 뒤 판정이 나** 「표시 ⊇ 판정」이 시간 축에서 무너진다 — 이 작업 전체가 세운 불변식이
+#   마지막 구간에서만 조용히 깨지는 형태다.
+# ⚠ 연출값이라 사용자가 조인다(rules §0 예외). 조일 때 위 부등식을 트립와이어가 지킨다.
+const MELEE_TRAIL_FADE_S := 0.18
 
 
 # 호스트의 발사 원점 검증 — 원점이 발사자 net_anchor 근처인가 (순간이동 원점 스푸핑 완화, §3 신뢰 경계).
