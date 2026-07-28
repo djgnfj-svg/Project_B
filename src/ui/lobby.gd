@@ -36,11 +36,12 @@ func _ready() -> void:
 	for job_id: String in _job_btns:
 		var btn := _job_btns[job_id]
 		btn.button_pressed = job_id == GameState.selected_job_id  # 로비 재진입 시 이전 선택 복원
-		# 아이콘 = JobDef.sprite 데이터 바인딩 (rules §4) — 로비 미리보기와 인게임 그림이 갈라지지 않게
+		# 아이콘 = 인게임 시트에서 유도 (아래 _job_icon) — 로비 미리보기와 인게임 그림이 갈라지지 않게
 		var icon := btn.get_parent().get_node_or_null("Icon") as TextureRect
 		var jd := GameState.job_def(job_id)
-		if icon != null and jd != null and jd.sprite != null:
-			icon.texture = jd.sprite
+		var tex := _job_icon(jd)
+		if icon != null and tex != null:
+			icon.texture = tex
 		# button_down: 이미 눌린 토글(기본 전사)을 다시 클릭해도 반드시 발화 — pressed는 그룹 토글
 		# 재클릭에서 안 올 수 있어, 자동 시작 트리거가 기본 직업 선택에서 데드락 나는 것을 막는다
 		btn.button_down.connect(_on_job_pressed.bind(job_id))
@@ -70,6 +71,25 @@ func _ready() -> void:
 	EventBus.room_created.connect(
 		func(code: String) -> void: _status.text = "방 생성됨 — 코드: %s" % code)
 	_try_autostart()
+
+
+# 로비 아이콘 = 그 직업의 **인게임 idle 첫 프레임**에서 유도한다 (2026-07-29).
+# 🔴 `JobDef.sprite`(별도 단일 컷 PNG)를 직접 쓰면 시트를 다시 그렸을 때 **조용히 갈라진다** —
+#   실제로 `warrior_anim.png`를 새로 그린 뒤 로비만 7월 22일자 옛 캐릭터를 계속 보여줬다(에러 없음,
+#   화면만 어긋나는 부류). 두 파일이 같은 캐릭터를 뜻하는데 갱신 책임이 사람에게 있으면 반드시 어긋난다.
+#   frames에서 유도하면 아트가 시트를 갈아도 로비가 자동으로 따라온다.
+# ⚠ `sprite`는 폴백으로만 남긴다 — 시트가 없거나 idle이 빠진 직업(`_frames.tres` 작업 전)에서 빈 칸이
+#   되는 것보다 옛 그림이라도 뜨는 편이 낫다. 필드 자체를 지우려면 참조처를 전수로 봐야 한다.
+const ICON_ANIM := &"idle"
+
+
+func _job_icon(jd: JobDef) -> Texture2D:
+	if jd == null:
+		return null
+	var f := jd.frames
+	if f != null and f.has_animation(ICON_ANIM) and f.get_frame_count(ICON_ANIM) > 0:
+		return f.get_frame_texture(ICON_ANIM, 0)
+	return jd.sprite
 
 
 func _on_job_pressed(job_id: String) -> void:
