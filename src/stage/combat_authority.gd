@@ -96,8 +96,10 @@ func _register_enemy(node: Node) -> void:
 	_enemies[str(eid_v)] = {"root": root, "health": health, "def": root.get("def") as EnemyDef}
 
 
-# 로컬 플레이어의 공격이 적에 닿음 (player가 자기 job을 실어 emit) — 확정은 권한 경로로
-func _on_attack_hit(enemy: Node, job: JobDef) -> void:
+# 로컬 플레이어의 공격이 적에 닿음 (player가 자기 job + 조준 방향을 실어 emit) — 확정은 권한 경로로
+# ⚠ dir은 **게스트 경로에서만** 쓴다 — 호스트 자신의 타격은 로컬 부채꼴 질의가 이미 통과시킨 것이라
+#   여기서 각을 다시 보지 않는다(도입 전에도 사거리를 재검증하지 않았다. 자기 질의 = 자기 권한).
+func _on_attack_hit(enemy: Node, job: JobDef, dir: Vector2) -> void:
 	var eid_v: Variant = enemy.get("eid")
 	if not (eid_v is String):
 		return
@@ -107,7 +109,8 @@ func _on_attack_hit(enemy: Node, job: JobDef) -> void:
 	if Net.is_host():
 		_confirm_damage((entry_v as Dictionary)["health"] as HealthComponent, job, Net.my_id)
 	else:
-		Net.send_game({NetSchema.KEY_KIND: NetSchema.G_HIT_REQ, "eid": str(eid_v)})
+		Net.send_game({NetSchema.KEY_KIND: NetSchema.G_HIT_REQ, "eid": str(eid_v),
+			"dx": dir.x, "dy": dir.y})
 
 
 # 호스트 전용 — 데미지 확정 (rules §3 하드 계약: 계산·검증은 CombatMath만 쓴다)
@@ -473,17 +476,61 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			#     `test_combat_math_auto`의 `is_projectile_weapon` 전수 단정이 절반을 지키고, 나머지
 			#     절반(호출부가 살아 있는가)은 **실기 확인이 유일하다**(docs/TUNING.md §10 실기 목록).
 			var melee_weapon := GameState.equip_def(_peer_sync.peer_weapon_id(from_id))
+			# 🔴🔴 **이 두 블록의 순서가 계약이다 — 거부 게이트가 먼저, 관대한 폴백이 나중.**
+			#   (2026-07-28 netreview M-1: I-1을 넣으면서 순서를 반대로 했다가 2026-07-27 M4가 닫은
+			#    구멍을 다시 열었다.) 일반형: `x = null` **뒤에** `if x != null and <거부조건>`이 오면
+			#   그 거부는 **항상 꺼진다**. 폐기가 관대한 쪽이라 에러도 로그도 없다.
+			#   구체적으로: 궁수가 `worn_staff`(남의 **발사형**)를 공지하면 `can_job_equip`이 false →
+			#   null → 아래 발사형 거부가 통째로 건너뛰어져 **전방위 96px·초당 7.4회 근접타**가 확정됐다.
+			#   ⚠ G_SHOOT `:542`는 폴백을 먼저 하고도 안 깨진다(거기 거부 게이트는 `weapon_def`가 아닌
+			#     별도 조건을 본다) — **그 자리를 그대로 미러하면 여기서는 깨진다.**
 			if melee_weapon != null and CombatMath.is_projectile_weapon(melee_weapon):
 				return
+			# 🔴 **공지 무기가 그 피어의 공지 직업이 들 수 있는 것인지 본다 — G_SHOOT `:542`와 대칭**
+			#   (2026-07-28 netreview I-1). 저쪽에만 있고 이쪽엔 없던 비대칭이 이번 변경으로 **대가가
+			#   커졌다**: 전에는 이 id가 "발사형 거부 여부 + 겉모습"만 정했는데, 이제 **판정 사거리
+			#   (`melee_range`)와 판정 반각(`swing_arc`)까지** 정한다. `peer_sync`는 `wid`를 무필터로
+			#   기록하므로, 대조가 없으면 궁수가 대검을 공지해 **궁수 쿨다운(0.15s = 초당 6.7회)으로
+			#   대검 기하의 근접타**를 확정받는다.
+			# ⚠ 이건 **거부가 아니라 기하 폴백이다** — null = 직업 기본 사거리 + 전방위 = 부채꼴 도입 전과
+			#   항등. 그래서 위 거부 게이트 **뒤**에 있어야 맞다(거부는 이미 끝났다).
+			#   ⚠ 판정 규칙은 클라의 착용 규칙과 **같은 함수**(can_job_equip)를 지난다 — 사본 금지.
+			if not GameState.can_job_equip(_peer_sync.peer_job_id(from_id), melee_weapon):
+				melee_weapon = null
 			var reach_def := entry["def"] as EnemyDef
 			var reach_radius := reach_def.body_radius if reach_def != null else 0.0
 			# 🔴 특성(검기 파형)의 사거리 보너스도 **공격자 아바타에서** 읽는다 — 공속·치명·피흡과
 			#   같은 소스다(위 _confirm_damage 주석: peer_level_stats류는 호스트 자신 항목이 없어
 			#   검성 호스트가 자기 파형 사거리를 못 받고 "내 파형은 헛치는데 게스트는 맞는다"가 된다).
 			#   아바타 값은 로컬=GameState 리졸브·원격=공지 id 리졸브라 신뢰 경계는 그대로다(수치 무전송).
-			if CombatMath.is_hit_in_reach(
-					attacker.net_anchor(), (entry["root"] as Node2D).global_position, attacker.job,
-					reach_radius, attacker.trait_value("reach")):
+			# 🔴 **무기 부채꼴 검증** (무기 모션 축 2026-07-28) — 사거리도 각도 이제 무기가 정한다.
+			#   무기는 위에서 이미 **호스트가 자기 데이터로 리졸브한** `melee_weapon`이다(공지 id →
+			#   `GameState.equip_def`). 즉 창의 긴 사거리·좁은 각은 클라 주장이 아니라 호스트 판단이고,
+			#   `peer_weapon_id`가 이미 공지 직업과 대조된다(§3 직업 귀속). 신뢰 경계는 안 넓어졌다.
+			# 🔴 **방향만은 클라 주장이다** — 그래도 판정이 넓어지지 않는다: 부채꼴은 같은 반경 원의
+			#   부분집합이라 어떤 방향을 주장해도 **도입 전보다 좁고**, 얻는 것은 "자기 화면과 다른
+			#   쪽을 때리기"뿐인데 그건 자기 화면에 헛스윙으로 보인다(협동 2인이라 남에게 피해 없음).
+			#   ⚠ 방향이 없거나(구버전) 유한하지 않으면 **각 검사를 생략**한다 = 도입 전과 항등.
+			#   막는 방향으로 폴백하면 접속 창·구버전에서 정당한 근접타가 조용히 사라진다(위
+			#   `weapon_def == null`을 거부하지 않는 것과 같은 판단).
+			var hit_dir := Vector2(float(data.get("dx", 0.0)), float(data.get("dy", 0.0)))
+			var has_dir := hit_dir.is_finite() and hit_dir.length_squared() > 0.000001
+			var hit_half := CombatMath.melee_half_angle(melee_weapon) if has_dir \
+				else CombatMath.MELEE_FULL_ARC
+			# 🔴 **각 축의 지연 보상**(netreview C-1) — apex가 `net_anchor()`(낡은 좌표)라 이동 중인
+			#   게스트는 각이 통째로 틀어진다. 거리는 anchor 하나로 묶어 두고(신뢰 경계 불변) **각만**
+			#   외삽 좌표와 둘 중 하나가 맞으면 통과시킨다. §3 방어자 우대와 반대 부호인 이유는
+			#   `is_hit_in_reach_lagged` 주석에 있다 — 여기선 게스트가 **공격자**다.
+			# 🔴 **대상(적) 좌표의 지연분도 각 슬랙에 넣는다** (2026-07-28 netreview 2차 C-1).
+			#   위 `or`는 공격자 apex만 훑는다 — 적 좌표는 두 apex가 똑같이 쓰므로 **원리적으로 못
+			#   덮는다**. 호스트는 몹 실시간 좌표를 아는데 게스트 화면은 10Hz·외삽 없는 `G_MOB_POS`라
+			#   낡아서, 게스트가 정당하게 맞힌 것이 거부됐다(창에서만 상시 — 각 예산이 좁다).
+			var mob_lag := CombatMath.mob_lag_slack_px(Net.one_way_ms(from_id))
+			if CombatMath.is_hit_in_reach_lagged(
+					attacker.net_anchor(), attacker.net_anchor_lead(Net.one_way_ms(from_id)),
+					(entry["root"] as Node2D).global_position, attacker.job,
+					reach_radius, attacker.trait_value("reach"), melee_weapon,
+					hit_dir.angle(), hit_half, mob_lag):
 				_confirm_damage(entry["health"] as HealthComponent, attacker.job, from_id)
 		NetSchema.G_SHOOT:
 			if not Net.is_host() or _stage_over:

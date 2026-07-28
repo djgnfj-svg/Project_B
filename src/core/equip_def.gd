@@ -91,8 +91,13 @@ const SLOT_ARMOR := 1
 # ⚠ 손맛 "전역 크기"(셰이크 상한·페이드 시간 등)는 스크립트 const가 정본(rules §0) — 여기 값은
 #   "이 무기가 어느 연출을 쓰는가"(콘텐츠·rules §4)와 무게 배율뿐이다. 전부 표시 전용(네트워크 0).
 @export_group("무기 손맛")
-@export var swing_texture: Texture2D               # 스윙 궤적 FX 트레일 (null → 기본 swoosh_arc 폴백)
-@export var swing_tex_radius: float = 46.0         # swing_texture 호 바깥 반지름(px) — 스케일=도달/반지름 정합 (rules §3)
+# 🔴 **`swing_texture` / `swing_tex_radius`는 2026-07-28에 삭제했다 — 궤적은 이제 셰이더가 그린다**
+#   (`assets/shaders/swing_arc.gdshader`). 각·도달을 PNG 픽셀에 박아 두니 `swing_arc`를 튜닝할 때마다
+#   갈라졌다 — 실측 격차가 worn +45° / iron +61°였고(양옆 각각 "안 보이는데 맞는" 구역), 창(±17°)처럼
+#   좁은 무기는 텍스처 방식으로 아예 성립하지 않는다. 보스 콘 텔레그래프를 텍스처에서 셰이더로
+#   옮긴 것과 **같은 판단·같은 이유**다(rules §3). 무늬를 얹고 싶으면 정사각 풀블리드(알파 1)
+#   패턴이어야 하고 그건 `player.gd` 변경이다 — **형태를 그린 텍스처는 셰이더 형태를 다시 잘라
+#   정합이 깨지므로 데이터 자리를 아예 없앴다.**
 @export var swing_color: Color = Color(1, 1, 1, 1) # 궤적 틴트(그레이스케일 도트 재활용용, 페이드 알파와 곱)
 @export var swing_sfx: String = "swing"            # 스윙(휘두름) 효과음 id (Audio.SFX 키)
 @export var hit_sfx: String = ""                   # 적중 시 무기 고유 타격음 id (비면 무음 — 범용 피격음은 combat_impact가 별도 재생)
@@ -101,7 +106,26 @@ const SLOT_ARMOR := 1
 # 스윙 모션(휘두르는 동작) — 무기별로 호 넓이·속도·내지르기를 갈라 무게감을 동작으로 표현. 스윙형 한정.
 # ⚠ swing_time 계약(rules §3): 반드시 착용 직업의 attack_cooldown보다 짧아야 한다 — 원격 스윙 창-잠금
 #   가드(play_attack_fx)가 정당한 연속 공격의 연출을 무시하지 않게. (전사 쿨다운 0.4s)
-@export var swing_arc: float = 1.9                 # 스윙 호 반각(rad) — 조준각 기준 ±이만큼 쓸고 지나감 (클수록 넓게)
+#
+# 근접 사거리(px) — 0이면 **직업 기본**(`JobDef.attack_range`)을 쓴다 = 도입 전과 완전 항등.
+# 🔴 이 값은 `CombatMath.effective_attack_range(job, reach, equip)` **한 곳에서만** 소비된다 —
+#   사거리 3함수가 전부 그 함수를 지나므로 판정·FX·파형이 자동으로 같이 움직인다. 호출부에서
+#   `job.attack_range`를 직접 읽으면 창의 긴 사거리가 판정과 표시 중 한쪽에만 걸린다(rules §3).
+# ⚠ **`swing_arc`와 짝이다** — 좁은 각을 줬으면 사거리를 늘리고(창), 넓은 각이면 짧게(도끼).
+#   한쪽만 키우면 "전방위로 멀리 닿는" 무기가 되어 모션 차별화가 사라진다.
+@export var melee_range: float = 0.0
+# 🔴 **이 각은 표시이자 판정이다** (무기 모션 축, 2026-07-28). 호스트의 적중 확정과 로컬 질의가
+#   `CombatMath.melee_half_angle(equip)`으로 이 값을 읽는다 — **판정용 각 필드를 따로 만들지 마라.**
+#   같은 것을 뜻하는 숫자가 둘이 되면 도끼를 넓게 튜닝했을 때 궤적만 넓어지고 판정은 그대로가 된다
+#   (보스 콘 텔레그래프가 "각이 픽셀에 박혀 데이터와 갈라진" 그 실패 형태 — rules §3).
+#   PI 이상(정확히는 `MELEE_FULL_ARC - MELEE_FULL_ARC_EPS` = 3.13 이상) = 전방위 = 각 검사 없음
+#   = **부채꼴 도입 전과 완전 항등**.
+# 🔴 **현행 대검 2장은 그 자리에 없다 — 부채꼴이 이미 켜져 있다** (2026-07-28 netreview I-3 정정).
+#   실측: `worn_greatsword` = 1.9(필드 없음 → 기본값) · `iron_greatsword` = 2.4. 즉 전사 근접 판정은
+#   이 변경으로 **360° → ±109°/±137.5°** 로 좁아졌다(등 뒤 적이 더는 안 맞는다). "항등으로 깔아 두고
+#   창이 올 때 켠다"가 아니라 **지금 라이브**이니, 롤아웃 위험을 0으로 읽지 마라.
+#   되돌리려면 두 `.tres`에 `swing_arc = 3.2`를 넣으면 된다(그게 진짜 항등이다).
+@export var swing_arc: float = 1.9                 # 스윙 호 반각(rad) — 조준각 기준 ±이만큼 쓸고 지나감 (클수록 넓게). **판정 부채꼴의 반각이기도 하다**
 @export var swing_time: float = 0.25              # 스윙 창 길이(s) — 클수록 느리고 묵직 (반드시 < attack_cooldown)
 @export var swing_lunge: float = 5.0             # 스윕 중 앞으로 내지르는 거리(px)
 

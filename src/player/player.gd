@@ -9,7 +9,7 @@ const HitStop := preload("res://src/feel/hit_stop.gd")
 const HitFlash := preload("res://src/feel/hit_flash.gd")
 const Flinch := preload("res://src/feel/flinch.gd")
 const AfterImage := preload("res://src/feel/afterimage.gd")
-const DEFAULT_SWOOSH := preload("res://assets/sprites/fx/swoosh_arc.png")  # 무기가 궤적을 안 지정할 때 폴백
+const SWING_SHADER := preload("res://assets/shaders/swing_arc.gdshader")  # 궤적을 데이터에서 직접 그린다(§3)
 
 # 연출값 (rules §0 예외 — 사용자가 플레이하며 조인다)
 # ⚠ 구르기 시간·쿨다운은 여기 없다 — CombatMath.ROLL_TIME_S/ROLL_COOLDOWN_S(§3 단일 소스,
@@ -23,7 +23,17 @@ const REMOTE_TINT := Color(1.0, 0.75, 0.75)
 const GHOST_ALPHA := 0.4
 const ATTACK_FX_DELAY := 0.07        # 예비동작이 끝나고 스윕이 시작될 때 궤적을 표시
 const ATTACK_FX_TIME := 0.18         # 궤적 잔상 페이드 시간
-const SWOOSH_TEX_RADIUS := 46.0      # swoosh_arc.png의 호 바깥 반지름(px) — FX 스케일 기준 (텍스처와 미러)
+# 스윙 궤적 셰이더 (무기 모션 축 2026-07-28) — 연출값(§0 예외, 사용자 튜닝).
+# 🔴 **각·도달은 여기 없다 — 그건 판정 데이터다**(`EquipDef.swing_arc` / `effective_attack_range`).
+#   보스 텔레그래프의 `TELEGRAPH_*`에 각·반지름이 아예 없는 것과 같은 규율이다: 연출 const로
+#   궤적을 키우면 그 순간 "보이는 곳 ≠ 맞는 곳"이 된다. 범위를 바꾸려면 `.tres`를 고쳐라 = 밸런스.
+const SWING_FX_PIXEL_PX := 2.0        # 픽셀 양자화 격자(월드 px) — 전 게임 도트와 같은 계단
+# 🔴 격자에서 **유도한다**(셀 반대각선 = 스냅 최대 이동거리) — 독립 상수로 박으면 격자를 조일 때
+#   "판정 안은 반드시 칠한다" 보장이 조용히 깨진다(rules §3 보스 `TELEGRAPH_EDGE_BIAS_PX`와 같은 유도).
+const SWING_FX_EDGE_BIAS_PX := SWING_FX_PIXEL_PX * 0.7071
+const SWING_FX_INNER_RATIO := 0.55    # 호 밴드 안쪽 시작 = 도달 × 이 값 (연출 — 판정 아님)
+const SWING_FX_EDGE_SOFT_PX := 3.0    # 밴드 가장자리 페이드 폭(px)
+const SWING_FX_TIP_BOOST := 0.35      # 칼끝이 밝아지는 정도
 # 검기 파형 (검성 메인 특성, GDD v1.9) — **표시 전용**. 평타 스윙과 같은 프레임에 태어나 앞으로 뻗는다.
 # 🔴 파형은 판정을 만들지 않는다 — 판정은 확장된 사거리를 쓴 원형 질의 하나뿐이고, 파형은 그 사거리가
 #   왜 늘었는지를 눈에 보여주는 것이다(GDD §6: 파형 자체 데미지 없음). 그래서 도달 거리를 연출값으로
@@ -113,7 +123,7 @@ var _weapon_grip: Vector2 = Vector2(4.0, 8.0)
 var _weapon_override: EquipDef = null       # 마지막 착용 무기 — set_job 재호출(재공지/재합류) 시 겉모습 유지용 보관. null = 무장 해제
 
 # 무기 손맛 — set_weapon_visual이 착용 무기(EquipDef)에서 세팅, 미착용/미지정이면 기본값 폴백. 전부 표시 전용(네트워크 0).
-var _swoosh_radius: float = SWOOSH_TEX_RADIUS  # 현재 궤적 텍스처의 바깥 반지름 — FX 스케일 정합(§3)
+static var _quad_tex: ImageTexture = null  # 궤적 셰이더용 1×1 흰 쿼드 (전 인스턴스 공유 — `_swing_quad_tex`)
 var _swing_color: Color = Color(1, 1, 1, 1)    # 궤적 틴트(페이드 알파와 곱해 적용)
 var _swing_sfx: String = "swing"               # 스윙(휘두름) 효과음 id
 var _hit_sfx: String = ""                       # 적중 시 무기 고유 타격음 id (비면 무음)
@@ -394,17 +404,19 @@ func set_weapon_visual(equip: EquipDef) -> void:
 	_apply_weapon_feel(equip)
 
 
-# 무기 손맛(궤적 텍스처·반지름·색·SFX·타격 셰이크) 반영 — 착용 무기가 지정하면 그 값, 아니면 기본 swoosh.
+# 무기 손맛(궤적 색·SFX·타격 셰이크·스윙 모션) 반영 — 착용 무기가 지정하면 그 값, 아니면 대검 기본.
+# ⚠ 궤적의 **형태**(각·도달)는 여기서 안 정한다 — 셰이더가 판정 데이터에서 직접 그린다(§3).
 # set_weapon_visual이 로컬·원격 모두 부르므로 무기 교체 시 손맛도 자동으로 갈린다 (표시 전용, 판정 무관).
 func _apply_weapon_feel(equip: EquipDef) -> void:
-	if equip != null and equip.swing_texture != null:
-		_attack_fx.texture = equip.swing_texture
-		_swoosh_radius = maxf(1.0, equip.swing_tex_radius)
-		_swing_color = equip.swing_color
-	else:
-		_attack_fx.texture = DEFAULT_SWOOSH
-		_swoosh_radius = SWOOSH_TEX_RADIUS
-		_swing_color = Color(1, 1, 1, 1)
+	# 🔴 궤적은 셰이더가 데이터(도달·`swing_arc`)에서 직접 그린다 — 텍스처는 **1×1 흰 쿼드**뿐이다
+	#   (`_swing_quad_tex`). 형태를 그린 PNG를 물리면 알파가 셰이더 형태를 다시 잘라 정합이 깨진다.
+	#   기하 세팅은 표시 시점(`_fx_delay_left` 만료)에 `_apply_swing_fx_geometry`가 한다 — 도달이
+	#   그 프레임의 reach 특성·무기에 따라 달라지므로 여기서 미리 못 정한다.
+	_attack_fx.texture = _swing_quad_tex()
+	_attack_fx.centered = true
+	_attack_fx.offset = Vector2.ZERO
+	_attack_fx.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_swing_color = equip.swing_color if equip != null else Color(1, 1, 1, 1)
 	_swing_sfx = equip.swing_sfx if equip != null and not equip.swing_sfx.is_empty() else "swing"
 	_hit_sfx = equip.hit_sfx if equip != null else ""
 	_hit_shake = equip.hit_shake if equip != null else 1.5
@@ -621,11 +633,11 @@ func _tick_timers(delta: float) -> void:
 			# 궤적 표시 — 플레이어 중심 회전, 크기는 판정 기하(§3 단일 소스)에서 파생해 "맞는 곳=보이는 곳" 유지
 			# 🔴 reach 특성을 여기에도 넘긴다 — 판정만 넓히면 늘어난 사거리가 화면에 안 보인다.
 			var rb := trait_value("reach")
-			var reach := CombatMath.attack_center_offset(_fx_dir, job, rb).length() \
-				+ CombatMath.attack_radius(job, rb)
-			_attack_fx.rotation = _fx_dir.angle()
-			_attack_fx.position = Vector2.ZERO
-			_attack_fx.scale = Vector2.ONE * (reach / _swoosh_radius)  # 무기별 궤적 반지름 정합(§3)
+			# 🔴 도달 = 부채꼴 반경 그 자체(무기 모션 축 2026-07-28) — 판정이 쓰는 값과 **같은 함수**다.
+			#   전에는 "오프셋 원"의 앞끝(range×1.1)이었고 그때는 그게 곧 판정이었다. 여기서 다시
+			#   유도하면 창의 긴 사거리가 화면에만/판정에만 걸린다.
+			var reach := CombatMath.effective_attack_range(job, rb, _weapon_override)
+			_apply_swing_fx_geometry(reach)
 			_attack_fx.modulate = _fx_color(1.0)
 			_attack_fx.visible = true
 			_fx_left = ATTACK_FX_TIME
@@ -978,24 +990,44 @@ func _swing_attack(dir: Vector2) -> void:
 		EventBus.camera_kick.emit(dir, COMBO_FINISH_KICK)  # 마무리 타는 헛쳐도 묵직하게
 	# "cb" = 콤보 타수(표시 전용). 수신 측이 clamp하므로 조작해도 궤적만 달라진다 — 판정·데미지 무관.
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ATK, "dx": dir.x, "dy": dir.y, "cb": _combo_index})
-	# 판정: 조준 방향 원형 질의 (Area 노드 대신 즉시 질의 — 프레임 지연 없음)
+	# 판정: 조준 방향 **부채꼴** 질의 (Area 노드 대신 즉시 질의 — 프레임 지연 없음)
 	# 기하는 CombatMath 단일 소스 — FX 위치(_show_attack_fx)와 같은 함수라 어긋나지 않는다
 	# reach 특성(검기 파형) — 판정도 FX도 같은 값을 받는다(§3 사거리 계약)
-	var center := global_position + CombatMath.attack_center_offset(dir, job, trait_value("reach"))
+	# 🔴 **부채꼴 반경 = 도달 거리 그 자체다**(무기 모션 축 2026-07-28). 전에는 "전방 오프셋 원"이
+	#   곧 판정이라 등 뒤 적도 원에 걸리면 맞았다 — 창(좁은 각·긴 사거리)이 원리적으로 불가능했던 이유.
+	#   물리 질의는 **apex 중심 원으로 넓게 훑고**(적 몸 shape 교차라 반경 여유가 자동), 각은
+	#   `is_melee_in_cone`이 거른다 — 호스트 확정과 **같은 함수**다(여유 배율만 다르다).
+	var reach_dist := CombatMath.effective_attack_range(job, trait_value("reach"), _weapon_override)
+	var half_arc := CombatMath.melee_half_angle(_weapon_override)
+	var facing := dir.angle()
+	var center := global_position + CombatMath.attack_center_offset(dir, job, trait_value("reach"),
+		_weapon_override)
 	var shape := CircleShape2D.new()
-	shape.radius = CombatMath.attack_radius(job, trait_value("reach"))
+	shape.radius = reach_dist
 	var params := PhysicsShapeQueryParameters2D.new()
 	params.shape = shape
-	params.transform = Transform2D(0.0, center)
+	params.transform = Transform2D(0.0, global_position)
 	params.collision_mask = ENEMY_BODY_MASK
 	params.collide_with_bodies = true
-	var hits := get_world_2d().direct_space_state.intersect_shape(params, 8)
+	# 🔴 상한 32 — 질의 원이 "전방 오프셋 원"(반경 range×0.5)에서 "apex 중심 원"(반경 range)으로
+	#   **면적 4배 이상**(창이 오면 최대 34배) 커졌는데 상한이 8이면, `intersect_shape`가 순서를
+	#   보장하지 않으므로 **각으로 걸러질 적**이 8칸을 먹고 정면의 적이 결과에서 밀려난다.
+	#   그러면 `attack_hit`이 emit되지 않아 **G_HIT_REQ 자체가 안 나간다**(호스트 검증 이전에 소멸).
+	#   좁은 부채꼴일수록 심하다. 순회 비용은 각 필터가 싸서 무시 가능 (netreview I-2, 2026-07-28).
+	var hits := get_world_2d().direct_space_state.intersect_shape(params, 32)
 	var connected := false
 	for hit: Dictionary in hits:
 		var body := hit.get("collider") as Node
-		if body != null and body.is_in_group("enemy"):
-			EventBus.attack_hit.emit(body, job)
-			connected = true
+		if body == null or not body.is_in_group("enemy"):
+			continue
+		# 적 몸 반경 — 호스트 확정이 쓰는 것과 같은 소스(EnemyDef.body_radius). 없으면 0(중심 판정).
+		var body_def := body.get("def") as EnemyDef
+		var body_radius := body_def.body_radius if body_def != null else 0.0
+		if not CombatMath.is_melee_in_cone(global_position, (body as Node2D).global_position,
+				facing, half_arc, reach_dist, body_radius):
+			continue
+		EventBus.attack_hit.emit(body, job, dir)
+		connected = true
 	if connected:
 		# 공격자 로컬 예측 타격 손맛 — 무기별 셰이크/타격음(호스트 확정 전 즉발, 표시 전용). 스윙당 1회.
 		EventBus.weapon_impact.emit(center, _hit_sfx, _hit_shake)
@@ -1039,6 +1071,46 @@ func _show_attack_fx(dir: Vector2) -> void:
 	_fx_delay_left = ATTACK_FX_DELAY
 
 
+# 궤적 표시 기하 — 🔴 **판정 기하를 화면으로 넘기는 유일한 지점**("맞는 곳 = 보이는 곳", §3).
+#   부채꼴 = apex(플레이어) 기준 반지름 `reach` ∩ 전체각 2×`swing_arc` ≡ `CombatMath.is_melee_in_cone`
+# 규약은 보스 텔레그래프와 **같다**: 노드 원점 = apex · 회전 = facing · **균일** scale = quad_px.
+#   🔴 비균일 스케일 금지(정원이 타원이 되어 축 방향 말고는 어긋난다).
+#   🔴 quad는 지름과 **분리된** 값이다 — 딱 지름이면 호 상하좌우 끝에서 셀 중심이 쿼드 밖으로 나가
+#     프래그먼트가 아예 안 돌아 "판정 안인데 안 그려지는" 픽셀이 생긴다.
+# 🔴 반각은 `_swing_arc`가 아니라 **판정이 쓰는 함수**(`melee_half_angle`)에서 받는다 — 사본을 만들면
+#   그 clamp(0~PI)가 한쪽에만 걸려 다시 갈라진다.
+func _apply_swing_fx_geometry(reach: float) -> void:
+	var quad := 2.0 * (reach + SWING_FX_PIXEL_PX + SWING_FX_EDGE_BIAS_PX)
+	_attack_fx.rotation = _fx_dir.angle()
+	_attack_fx.position = Vector2.ZERO
+	_attack_fx.scale = Vector2.ONE * quad
+	var mat := _attack_fx.material as ShaderMaterial
+	if mat == null or mat.shader != SWING_SHADER:
+		mat = ShaderMaterial.new()
+		mat.shader = SWING_SHADER
+		_attack_fx.material = mat
+	# ⚠ 매번 전량 심는다(기본값 의존 금지) — 노드가 재사용돼 무기를 오가므로 한 번이라도 안 심으면
+	#   이전 무기의 각·도달이 남는다(보스 텔레그래프와 같은 함정).
+	mat.set_shader_parameter(&"quad_px", quad)
+	mat.set_shader_parameter(&"radius_px", reach)
+	mat.set_shader_parameter(&"half_angle", CombatMath.melee_half_angle(_weapon_override))
+	mat.set_shader_parameter(&"inner_ratio", SWING_FX_INNER_RATIO)
+	mat.set_shader_parameter(&"pixel_px", SWING_FX_PIXEL_PX)
+	mat.set_shader_parameter(&"edge_bias_px", SWING_FX_EDGE_BIAS_PX)
+	mat.set_shader_parameter(&"edge_soft_px", SWING_FX_EDGE_SOFT_PX)
+	mat.set_shader_parameter(&"tip_boost", SWING_FX_TIP_BOOST)
+
+
+# 궤적 셰이더가 쓰는 1×1 흰 쿼드 — 형태는 전부 셰이더가 그린다(보스 `_telegraph_quad_tex` 미러).
+# ⚠ **형태를 그린 텍스처를 물리지 마라** — 알파가 셰이더 형태를 다시 잘라 정합이 깨진다.
+static func _swing_quad_tex() -> ImageTexture:
+	if _quad_tex == null:
+		var img := Image.create_empty(1, 1, false, Image.FORMAT_RGBA8)
+		img.fill(Color.WHITE)
+		_quad_tex = ImageTexture.create_from_image(img)
+	return _quad_tex
+
+
 # 검기 파형 발진 (메인 특성 보유자만) — 스윙 궤적 안에서 태어나 확장 사거리 끝(tip)까지 나아간다.
 # tip은 호출부가 그 프레임 스워시에 쓴 것과 **같은 기하 계산 결과**다 — 그래서 파형이 멈추는 곳이
 # 곧 판정이 닿는 곳이다(§3). 로컬·원격 모두 이 경로를 지난다(원격은 그 피어가 공지한 특성으로).
@@ -1046,14 +1118,16 @@ func _start_wave(tip: float) -> void:
 	if job == null:
 		return
 	# 출발점은 **특성 없는 기본 사거리** 기준 — 파형이 "기본 도달점 밖으로 더 나아가는" 것으로 읽히게.
-	var base_tip := CombatMath.attack_center_offset(_fx_dir, job).length() + CombatMath.attack_radius(job)
+	# ⚠ 무기(_weapon_override)는 넘긴다 — 창을 든 검성의 파형이 검 기준으로 출발하면 뒤에서 튀어나온다.
+	var base_tip := CombatMath.effective_attack_range(job, 0.0, _weapon_override)
 	_wave_dir = _fx_dir
 	_wave_from = base_tip * WAVE_START_RATIO
 	_wave_to = tip
 	_wave_left = WAVE_FX_TIME
 	_wave_fx.rotation = _fx_dir.angle()
 	# 파형 두께 = 판정 반경 — 스워시와 같은 이유로 텍스처 실측(WAVE_TEX_HALF_H)에 맞춘다
-	_wave_fx.scale = Vector2.ONE * (CombatMath.attack_radius(job, trait_value("reach")) / WAVE_TEX_HALF_H)
+	_wave_fx.scale = Vector2.ONE * (CombatMath.attack_radius(job, trait_value("reach"),
+		_weapon_override) / WAVE_TEX_HALF_H)
 	_wave_fx.position = _wave_dir * _wave_from
 	_wave_fx.modulate = _fx_color(1.0)
 	_wave_fx.visible = true

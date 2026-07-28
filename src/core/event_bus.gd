@@ -24,7 +24,7 @@ signal leave_to_village_requested  # 설정 → "마을로 가기" — SceneFlow
 signal job_change_requested(job_id: String)  # 설정 → "직업 변경" — PeerSync(마을 씬만)가 받아 로컬 직업 교체+재공지
 
 # --- combat (플레이어/적이 emit, 스테이지가 권한 처리) ---
-signal attack_hit(enemy: Node, job: JobDef)     # 로컬 공격 판정이 적에 닿음(공격자 job 동봉) — 확정은 호스트 경로(stage)
+signal attack_hit(enemy: Node, job: JobDef, dir: Vector2)  # 로컬 공격 판정이 적에 닿음(공격자 job + **그 타격의 조준 방향** 동봉) — 확정은 호스트 경로(stage). dir은 게스트가 G_HIT_REQ에 실어 호스트 부채꼴 검증에 쓴다(무기 모션 축 2026-07-28)
 signal enemy_hp_confirmed(eid: String, hp: int)  # 호스트 전용 emit(enemy 권한 경로/부활) — stage가 ehp 브로드캐스트
 signal player_hp_confirmed(peer_id: int, hp: int)  # 확정 HP 통지 — 호스트=Health 권한 경로, 게스트=php 수신 경로. 호스트일 때만 stage가 php 브로드캐스트
 signal mob_telegraph(eid: String, center: Vector2)  # 호스트 전용 emit(잔몹 AI WINDUP) — MobSync가 matk 브로드캐스트

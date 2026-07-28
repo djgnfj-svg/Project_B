@@ -182,6 +182,191 @@ func _initialize() -> void:
 	failures += _check(not CombatMath.is_hit_in_reach(origin, Vector2(99.0, 0.0), job, 48.0),
 		"reach bonus+radius: 같은 거리도 특성 없으면 거부")
 
+	# --- 무기 부채꼴 근접 판정 (무기 모션 축 2026-07-28) — §3 히트 기하 계약 ---
+	# 검/도끼/창을 가르는 축은 "사거리 × 반각" 둘뿐이고, 반각은 **EquipDef.swing_arc 그 자체**다
+	# (판정용 각 필드를 신설하면 표시와 판정이 갈라진다 — 보스 콘 텔레그래프의 그 실패 형태).
+	var spear := EquipDef.new()
+	spear.melee_range = 80.0
+	spear.swing_arc = 0.30      # 좁게 찌른다(±17°)
+	var axe := EquipDef.new()
+	axe.melee_range = 24.0
+	axe.swing_arc = 1.9         # 넓게 쓸어낸다(±109°)
+	var bare_weapon := EquipDef.new()  # melee_range 0 · swing_arc 기본 — 사거리는 직업 폴백
+	var spear_arc := CombatMath.melee_half_angle(spear)
+	var axe_arc := CombatMath.melee_half_angle(axe)
+
+	# 사거리: 무기가 직업 기본을 **대신한다**. 0/null = 항등 폴백.
+	failures += _check(is_equal_approx(CombatMath.effective_attack_range(job, 0.0, spear), 80.0),
+		"무기 사거리: melee_range 80이 직업 20을 대신한다")
+	failures += _check(is_equal_approx(CombatMath.effective_attack_range(job, 0.0, bare_weapon), 20.0),
+		"무기 사거리: melee_range 0 = 직업 기본(20) 폴백")
+	failures += _check(is_equal_approx(CombatMath.effective_attack_range(job, 0.0, null), 20.0),
+		"무기 사거리: 무장 해제(null) = 도입 전과 항등(20)")
+	failures += _check(is_equal_approx(CombatMath.effective_attack_range(job, 0.3, spear), 104.0),
+		"무기 사거리: reach 특성도 무기 기준으로 곱해진다(80→104)")
+	# 🔴 하드 상한 — 데이터 한 줄로 근접이 원거리가 되는 것 차단
+	var far_weapon := EquipDef.new()
+	far_weapon.melee_range = 1000.0
+	failures += _check(is_equal_approx(CombatMath.effective_attack_range(job, 0.0, far_weapon),
+			CombatMath.MAX_MELEE_RANGE),
+		"무기 사거리: melee_range 1000 → MAX_MELEE_RANGE(130) clamp")
+
+	# 반각: swing_arc가 곧 판정 각. 무장 해제 = 전방위(= 각 검사 없음).
+	failures += _check(is_equal_approx(spear_arc, 0.30), "부채꼴: 반각 = EquipDef.swing_arc 그대로")
+	failures += _check(is_equal_approx(CombatMath.melee_half_angle(null), CombatMath.MELEE_FULL_ARC),
+		"부채꼴: 무장 해제 = 전방위(PI)")
+
+	# 🔴 항등 — 각을 넘기지 않으면 도입 전과 완전히 같다(등 뒤도 맞았다)
+	failures += _check(CombatMath.is_hit_in_reach(origin, Vector2(-30.0, 0.0), job),
+		"부채꼴: 각 미지정 = 등 뒤(-30)도 허용 — 도입 전 항등")
+	failures += _check(not CombatMath.is_hit_in_reach(origin, Vector2(-30.0, 0.0), job,
+			0.0, 0.0, null, 0.0, 1.0),
+		"부채꼴: 각 1.0이면 등 뒤(180°) 거부 — 이 전환의 요점")
+
+	# 각 경계 — facing 0(오른쪽) 기준 ±1.0rad
+	var pt_in := Vector2(cos(0.9), sin(0.9)) * 30.0
+	var pt_out := Vector2(cos(1.1), sin(1.1)) * 30.0
+	failures += _check(CombatMath.is_hit_in_reach(origin, pt_in, job, 0.0, 0.0, null, 0.0, 1.0),
+		"부채꼴: 각 안(0.9 < 1.0) 허용")
+	failures += _check(not CombatMath.is_hit_in_reach(origin, pt_out, job, 0.0, 0.0, null, 0.0, 1.0),
+		"부채꼴: 각 밖(1.1 > 1.0) 거부")
+	# 적 반경 각 여유 — asin(r/dist). 중심이 각 밖이어도 **몸통이 걸치면** 맞는다(거리 쪽 -radius와 대칭)
+	failures += _check(CombatMath.is_hit_in_reach(origin, pt_out, job, 12.0, 0.0, null, 0.0, 1.0),
+		"부채꼴: 각 밖이어도 몸통(r12, asin=0.41)이 걸치면 허용")
+	failures += _check(CombatMath.is_hit_in_reach(origin, Vector2(5.0, 0.0), job, 20.0, 0.0, null,
+			PI, 0.30),
+		"부채꼴: 몸통 안(dist 5 < r20)이면 각 무관 허용 — 등 뒤 조준도 겹침이면 맞는다")
+
+	# 창 vs 도끼 — 같은 무기 축(사거리 × 각)이 정반대 성격을 만든다
+	var side_pt := Vector2(cos(0.5), sin(0.5)) * 40.0
+	failures += _check(CombatMath.is_hit_in_reach(origin, Vector2(90.0, 0.0), job, 0.0, 0.0,
+			spear, 0.0, spear_arc),
+		"창: 정면 90 허용(도달 80 × 여유 2.0)")
+	failures += _check(not CombatMath.is_hit_in_reach(origin, side_pt, job, 0.0, 0.0,
+			spear, 0.0, spear_arc),
+		"창: 옆 40(각 0.5 > 0.30) 거부 — 좁게 찌른다")
+	failures += _check(CombatMath.is_hit_in_reach(origin, side_pt, job, 0.0, 0.0, axe, 0.0, axe_arc),
+		"도끼: 같은 옆 40(각 0.5 < 1.9) 허용 — 넓게 쓸어낸다")
+	failures += _check(not CombatMath.is_hit_in_reach(origin, Vector2(90.0, 0.0), job, 0.0, 0.0,
+			axe, 0.0, axe_arc),
+		"도끼: 정면 90 거부(도달 24 × 여유 2.0 = 48) — 짧다")
+
+	# 🔴🔴 **로컬 ≤ 호스트 불변식** — 로컬 질의(player)가 통과시킨 타격을 호스트가 거부하면
+	#   G_HIT_REQ는 갔는데 확정이 안 나 **데미지만 조용히 사라진다**(에러 0). 두 경로가 각·반경
+	#   규칙을 공유하고 거리 여유만 벌리는 구조가 이 부등식의 근거다 — 한쪽에 조건을 더하면 빨개진다.
+	var strict_violations := 0
+	for probe: EquipDef in [spear, axe, bare_weapon]:
+		var p_range := CombatMath.effective_attack_range(job, 0.0, probe)
+		var p_arc := CombatMath.melee_half_angle(probe)
+		for ai in range(0, 36):
+			var ang := TAU * float(ai) / 36.0
+			for di in range(1, 16):
+				var probe_pt := Vector2(cos(ang), sin(ang)) * (float(di) * 8.0)
+				for prad: float in [0.0, 14.0, 42.0]:
+					var local_ok := CombatMath.is_melee_in_cone(origin, probe_pt, 0.0, p_arc,
+						p_range, prad)
+					var host_ok := CombatMath.is_hit_in_reach(origin, probe_pt, job, prad, 0.0,
+						probe, 0.0, p_arc)
+					if local_ok and not host_ok:
+						strict_violations += 1
+	failures += _check(strict_violations == 0,
+		"★로컬≤호스트 전수: 로컬이 통과시킨 근접타를 호스트가 거부하지 않는다 (위반 %d건)"
+			% strict_violations)
+
+	# --- 각 축 지연 보상 (netreview C-1, 2026-07-28) ---
+	# 🔴 거리엔 HIT_REACH_SLACK 여유가 원래 있었지만 **각엔 아무 보상이 없었다.** apex가 net_anchor()
+	#   (낡은 좌표)라 이동 중인 게스트는 각이 통째로 틀어져 정당한 타격이 거부됐다 — 게스트에서만·
+	#   배포본에서만 "스윙은 보이는데 적 HP만 안 깎인다". 좁은 각 무기(창)가 오면 상시가 된다.
+	# 위 전수 불변식은 두 apex에 **같은 좌표**를 넣으므로 이 축의 검출력이 0이다 — 여기서 따로 잡는다.
+	var lag_target := Vector2(30.0, 0.0)   # 정면 30px
+	var apex_off := Vector2(0.0, -20.0)    # 낡은 apex가 옆으로 20px 밀려 있다(걷기 ~150ms분)
+	# anchor에서 보면 적이 각 밖(atan2(20,30) = 0.588 > 0.30)이지만 lead(정확한 위치)에서는 정면
+	failures += _check(not CombatMath.is_hit_in_reach(apex_off, lag_target, job, 0.0, 0.0,
+			spear, 0.0, spear_arc),
+		"지연 보상 없음: 낡은 apex에서 각 밖(0.588 > 0.30) 거부 — 이것이 C-1의 증상")
+	failures += _check(CombatMath.is_hit_in_reach_lagged(apex_off, Vector2.ZERO, lag_target, job,
+			0.0, 0.0, spear, 0.0, spear_arc),
+		"★지연 보상: lead가 각 안이면 통과 — 정당한 타격이 삭제되지 않는다")
+	failures += _check(CombatMath.is_hit_in_reach_lagged(Vector2.ZERO, apex_off, lag_target, job,
+			0.0, 0.0, spear, 0.0, spear_arc),
+		"지연 보상: 반대(anchor가 각 안·lead가 밖)도 통과 — or 규약")
+	failures += _check(not CombatMath.is_hit_in_reach_lagged(apex_off, apex_off * 1.5, lag_target,
+			job, 0.0, 0.0, spear, 0.0, spear_arc),
+		"지연 보상: 둘 다 각 밖이면 거부 — or가 무조건 통과가 아니다")
+	# 🔴 **거리는 anchor 하나로 묶여 있다** — lead가 아무리 가까워도 anchor에서 사거리 밖이면 거부.
+	#   이 비대칭이 "판정 집합 ⊆ (anchor 중심, 그 무기 사거리) 원"을 지켜 신뢰 경계를 보존한다.
+	var far_anchor := Vector2(-400.0, 0.0)
+	failures += _check(not CombatMath.is_hit_in_reach_lagged(far_anchor, Vector2.ZERO, lag_target,
+			job, 0.0, 0.0, spear, 0.0, spear_arc),
+		"★지연 보상: 거리는 anchor 기준 — lead가 코앞이어도 anchor가 멀면 거부(신뢰 경계 보존)")
+	# 항등 — lead == anchor(호스트 자신·정지)면 비보상판과 완전히 같다
+	var lagged_identity := true
+	for ai2 in range(0, 24):
+		var a2 := TAU * float(ai2) / 24.0
+		for di2 in range(1, 10):
+			var p2 := Vector2(cos(a2), sin(a2)) * (float(di2) * 9.0)
+			if CombatMath.is_hit_in_reach_lagged(origin, origin, p2, job, 0.0, 0.0, axe, 0.0, axe_arc) \
+					!= CombatMath.is_hit_in_reach(origin, p2, job, 0.0, 0.0, axe, 0.0, axe_arc):
+				lagged_identity = false
+	failures += _check(lagged_identity,
+		"★지연 보상 항등 전수: lead == anchor면 비보상판과 완전 동일(호스트 자신·정지는 영향 0)")
+	# 🔴 **판정 집합이 그 무기의 원을 절대 못 넘는가** — lead를 임의로 주장해도(스푸핑 상한 밖까지)
+	#   anchor 기준 원 밖은 통과하지 못한다. 이 성질이 깨지면 각 보상이 사거리 우회로가 된다.
+	var lead_escape := 0
+	for ai3 in range(0, 24):
+		var a3 := TAU * float(ai3) / 24.0
+		var lead_far := Vector2(cos(a3), sin(a3)) * 500.0
+		for di3 in range(1, 20):
+			var p3 := Vector2(cos(a3 * 1.7), sin(a3 * 1.7)) * (float(di3) * 20.0)
+			var host_reach := CombatMath.effective_attack_range(job, 0.0, spear) \
+				* CombatMath.HIT_REACH_SLACK
+			if CombatMath.is_hit_in_reach_lagged(origin, lead_far, p3, job, 0.0, 0.0, spear,
+					0.0, spear_arc) and origin.distance_to(p3) > host_reach:
+				lead_escape += 1
+	failures += _check(lead_escape == 0,
+		"★지연 보상: 임의 lead 주장으로도 anchor 기준 사거리를 못 넘는다 (탈출 %d건)" % lead_escape)
+
+	# --- 대상(잔몹) 좌표 지연 보상 (netreview 2차 C-1, 2026-07-28) ---
+	# 🔴 위 `or`는 **공격자** apex 두 개를 훑는다 — 적 좌표는 두 apex가 똑같이 쓰므로 **원리적으로
+	#   못 덮는다**. 그리고 적 좌표가 더 낡다(G_MOB_POS 10Hz·fast·외삽 없음 vs 플레이어 15Hz+외삽).
+	#   창은 각 예산이 좁아(반각 17.2° + 몸통 7.2°) 정상 지연 14px만으로 40%를 먹는다.
+	failures += _check(CombatMath.mob_lag_slack_px(0.0) > 0.0,
+		"몹 지연 슬랙: 편도 0이어도 송신 주기(0.1s)분은 남는다")
+	failures += _check(
+		CombatMath.mob_lag_slack_px(100.0) > CombatMath.mob_lag_slack_px(0.0),
+		"몹 지연 슬랙: 편도가 크면 슬랙도 커진다")
+	# 창(80px/±17°) + 옆으로 14px 밀린 몹 — 보상 없으면 거부, 있으면 통과
+	var mob_off := Vector2(cos(0.30 + 0.12), sin(0.30 + 0.12)) * 80.0  # 각 0.42 > 반각 0.30
+	failures += _check(not CombatMath.is_hit_in_reach_lagged(origin, origin, mob_off, job,
+			0.0, 0.0, spear, 0.0, spear_arc),
+		"몹 지연: 보상 0이면 각 밖(0.42 > 0.30) 거부 — 이것이 2차 C-1의 증상")
+	failures += _check(CombatMath.is_hit_in_reach_lagged(origin, origin, mob_off, job,
+			0.0, 0.0, spear, 0.0, spear_arc, 12.0),
+		"★몹 지연: 슬랙 12px면 통과 — 게스트의 낡은 시야를 수용한다")
+	# 🔴 **슬랙은 각만 넓히고 거리는 못 넓힌다** — 넣으면 판정 원이 커져 부분집합 성질이 깨진다
+	var far_pt := Vector2(200.0, 0.0)  # 정면(각 통과) · 창 수용 160px 밖
+	failures += _check(not CombatMath.is_hit_in_reach_lagged(origin, origin, far_pt, job,
+			0.0, 0.0, spear, 0.0, spear_arc, 500.0),
+		"★몹 지연: 슬랙 500px여도 사거리(160)는 못 넘는다 — 각 전용")
+
+	# 🔴 데이터 전수: 모든 적 이속이 슬랙 유도 상한 안인가. 더 빠른 적을 추가하면 슬랙이 모자라
+	#   창 타격이 다시 조용히 사라진다(그때 상한을 올릴지 그 적을 느리게 할지 판단하게 된다).
+	var mob_speed_ok := true
+	var fastest_mob := 0.0
+	for enf: String in DirAccess.get_files_at("res://data/enemies"):
+		var ebase := enf.trim_suffix(".remap")
+		if ebase.get_extension() != "tres":
+			continue
+		var edef := load("res://data/enemies/%s" % ebase) as EnemyDef
+		if edef == null:
+			continue
+		fastest_mob = maxf(fastest_mob, edef.move_speed)
+		if edef.move_speed > CombatMath.MOB_LAG_SLACK_SPEED:
+			mob_speed_ok = false
+	failures += _check(mob_speed_ok,
+		"★몹 이속 전수: 최대 %.0f ≤ MOB_LAG_SLACK_SPEED(%.0f) — 슬랙 유도가 성립한다"
+			% [fastest_mob, CombatMath.MOB_LAG_SLACK_SPEED])
+
 	# --- 장비 스탯 (§3 하드 계약 — 제작/강화 UI·전투·HUD 공용 단일 소스) ---
 	failures += _check(CombatMath.calc_damage(job, 5) == 12, "calc_damage: 장비 보너스(+5) = 12")
 	failures += _check(CombatMath.calc_damage(job, 0) == 7, "calc_damage: 보너스 0 = 기존 항등 폴백")
@@ -807,6 +992,7 @@ func _initialize() -> void:
 	#    swing_time < attack_cooldown이 유지되나. 같은 배율을 곱하므로 수학적으로 자동 보존되지만,
 	#    누군가 한쪽만 스케일하도록 고치면 여기가 빨개진다.
 	var swing_ok := true
+	var fallback_reach_ok := true
 	var degenerate_ok := true
 	var lead_ok := true
 	var auto_fire_ok := true
@@ -863,7 +1049,42 @@ func _initialize() -> void:
 			for h: float in [0.0, 0.25, float(CombatMath.LEVEL_STAT_MAX["haste"])]:
 				if e.swing_time * CombatMath.haste_scale(h) >= CombatMath.effective_cooldown(j, h):
 					swing_ok = false
+			# 🔴 **호스트 폴백 창 불변식** (2026-07-28 netreview I-1) — `melee_range ≤ 직업 기본 × SLACK`.
+			#   G_STATS 미도착 창(스테이지 전환 직후)에는 호스트가 무기를 모른 채 `melee_weapon = null`로
+			#   판정한다 = **직업 기본 사거리 × HIT_REACH_SLACK**. 무기의 로컬 도달이 그걸 넘으면 그 창의
+			#   정당한 팁 타격이 **무음 거부**된다(창 80 vs 전사 42×2.0 = 84 — 여유 4px뿐이다).
+			#   폴백 창은 짧지만 `PeerSync._peer_stats`가 씬마다 새로 태어나 **스테이지 전환마다 재발**한다.
+			#   ⚠ reach 특성은 양변에 똑같이 곱해져 상쇄되므로 기본값끼리 비교하면 충분하다.
+			#   ⚠ 기존 `melee_range × 1.5 ≤ MAX_MELEE_RANGE` 트립와이어는 이 축을 **전혀 안 본다**(상한
+			#     130 기준이면 창은 87까지 통과하는데 실제로는 85부터 이 부등식이 깨진다).
+			if e.melee_range > 0.0 and e.melee_range > j.attack_range * CombatMath.HIT_REACH_SLACK:
+				fallback_reach_ok = false
 	failures += _check(swing_ok, "스윙 창 계약 전수: 모든 무기×직업×haste에서 swing_time < effective_cooldown")
+	failures += _check(fallback_reach_ok,
+		"★폴백 창 전수: melee_range ≤ 직업 기본 × HIT_REACH_SLACK (G_STATS 미도착 창의 무음 거부 방지)")
+
+	# 🔴 근접 기하 데이터 전수 (무기 모션 축 2026-07-28) — 둘 다 **에러 없이 조용히 깨지는** 부류다.
+	var melee_arc_ok := true
+	var melee_clamp_ok := true
+	for mf: String in DirAccess.get_files_at("res://data/equipment"):
+		var mbase := mf.trim_suffix(".remap")
+		if mbase.get_extension() != "tres":
+			continue
+		var mw := load("res://data/equipment/%s" % mbase) as EquipDef
+		if mw == null or mw.motion_type != "swing":
+			continue
+		# ⑴ 반각 0 = 정면 **한 점**만 판정 = 사실상 공격 불가. 휘두름은 그대로 보이고 데미지만 안 난다.
+		if mw.swing_arc <= 0.0:
+			melee_arc_ok = false
+		# ⑵ 특성 상한까지 곱해도 MAX_MELEE_RANGE 안이어야 한다 — 넘으면 `effective_attack_range`가
+		#    정당한 무기를 **조용히 절삭**한다(창을 100으로 만들면 여기서 걸린다). proj_range 관용구.
+		if mw.melee_range > 0.0 \
+				and mw.melee_range * (1.0 + CombatMath.MAX_REACH_BONUS) > CombatMath.MAX_MELEE_RANGE:
+			melee_clamp_ok = false
+	failures += _check(melee_arc_ok,
+		"근접 기하 전수: 모든 스윙 무기의 swing_arc > 0 (0이면 휘둘러도 안 맞는다)")
+	failures += _check(melee_clamp_ok,
+		"근접 기하 전수: melee_range × 특성 상한 ≤ MAX_MELEE_RANGE (조용한 절삭 방지)")
 	failures += _check(degenerate_ok, "퇴화 트립와이어: MAX_HASTE에서도 유효 쿨다운 게이트 > SAME_SWING_MS")
 	failures += _check(lead_ok, "외삽 상한 불변식: LAG_MAX_LEAD_DIST ≥ 최고 이속×구르기×최대 lead (전 직업)")
 	failures += _check(auto_fire_ok, "홀드 연사 전수: auto_fire_gap_s가 호스트 is_fire_rate_ok를 통과(직업×haste)")

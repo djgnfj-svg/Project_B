@@ -1,0 +1,28 @@
+[gd_resource type="Resource" script_class="EquipDef" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://src/core/equip_def.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/weapons/axe.png" id="2"]
+
+[resource]
+script = ExtResource("1")
+id = "heavy_axe"
+display_name = "파쇄 도끼"
+description = "날이 넓고 자루가 짧다. 한 놈을 겨누는 무기가 아니라 앞을 통째로 쓸어내는 무기다 — 대신 대검보다도 품이 짧아, 둘러싸였을 때가 제 자리다."
+icon = ExtResource("2")
+slot_name = "weapon"
+job_id = "warrior"
+base_attack = 4
+base_hp = 0
+atk_per_level = 3
+hp_per_level = 0
+max_level = 5
+upgrade_gold_base = 20
+weapon_texture = ExtResource("2")
+weapon_grip = Vector2(4, 11)
+melee_range = 38.0
+swing_sfx = "swing_heavy"
+hit_sfx = "thud"
+hit_shake = 3.5
+swing_arc = 2.8
+swing_time = 0.36
+swing_lunge = 14.0

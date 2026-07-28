@@ -621,6 +621,7 @@ func _initialize() -> void:
 	gg.free()
 
 	_check_all_data_loads()
+	_check_content_reachability()
 
 	gs.free()
 	if _fails == 0:
@@ -668,3 +669,82 @@ func _check(what: String, ok: bool) -> void:
 	else:
 		_fails += 1
 		printerr("  FAIL: %s" % what)
+
+
+# 🔴 **콘텐츠 도달성 트립와이어** (2026-07-28 신설).
+# 위 `_check_all_data_loads`가 "그 파일이 열리는가"를 본다면, 이쪽은 **"그 콘텐츠에 손이 닿는가"** 를 본다.
+# 🔴 정확히 이 축이 비어 있어서 2026-07-27에 값을 치렀다 — 유일한 도면 드랍원(브루트)이 어느 씬에도
+#   배치돼 있지 않아 **3직업 전부 제작대에 도달할 수 없었는데 스위트 8종이 내내 그린**이었다.
+#   파일은 전부 멀쩡히 열렸기 때문이다("코드상 닫힘"을 루프가 돈다는 근거로 쓰지 마라 — CLAUDE.md).
+# 보는 것 넷 — 전부 **에러 없이 조용히 깨지는** 부류다:
+#   ⑴ 레시피 결과 장비 실재 — 오타 하나면 제작 버튼이 조용히 아무것도 안 만든다
+#   ⑵ 레시피 재료 실재 — 없는 재료를 요구하면 **영원히 제작 불가**인데 UI는 정상으로 보인다
+#   ⑶ 적 드랍표 ref_id 실재 — 모르는 id는 `unlock_blueprint`/`add_material`이 경고 후 폐기(드랍이 증발)
+#   ⑷ 🔴 모든 레시피에 **드랍원이 있는가** — 아무 적도 그 도면을 안 떨구면 그 무기는 없는 것과 같다
+# ⚠ ⑷는 "그 적이 씬에 배치돼 있는가"까지는 못 본다(씬 스캔은 test_stage_dressing 몫). 한 겹 더 얕지만,
+#   드랍표에 아예 없는 경우는 여기서 확실히 잡힌다.
+func _check_content_reachability() -> void:
+	var equip_ids := _data_ids("res://data/equipment")
+	var material_ids := _data_ids("res://data/materials")
+	var recipe_ids := _data_ids("res://data/recipes")
+
+	# 적 드랍표에서 참조되는 도면·재료 id 수집 (⑶·⑷ 공용)
+	var dropped_blueprints := {}
+	var drop_ref_bad := 0
+	for f: String in DirAccess.get_files_at("res://data/enemies"):
+		if f.ends_with(".remap"):
+			f = f.trim_suffix(".remap")
+		elif not f.ends_with(".tres"):
+			continue
+		var edef := ResourceLoader.load("res://data/enemies/%s" % f) as EnemyDef
+		if edef == null or edef.drop_table == null:
+			continue
+		for entry: DropEntry in edef.drop_table.entries:
+			if entry == null:
+				continue
+			match entry.kind:
+				"blueprint":
+					dropped_blueprints[entry.ref_id] = true
+					if not recipe_ids.has(entry.ref_id):
+						_check("드랍 도면 실재: %s → data/recipes/%s.tres" % [f, entry.ref_id], false)
+						drop_ref_bad += 1
+				"material":
+					if not material_ids.has(entry.ref_id):
+						_check("드랍 재료 실재: %s → data/materials/%s.tres" % [f, entry.ref_id], false)
+						drop_ref_bad += 1
+	_check("적 드랍표 ref_id 전수 실재 (오류 %d건)" % drop_ref_bad, drop_ref_bad == 0)
+
+	var recipe_bad := 0
+	var unreachable := 0
+	for rid: String in recipe_ids:
+		var r := ResourceLoader.load("res://data/recipes/%s.tres" % rid) as RecipeDef
+		if r == null:
+			continue
+		# ⑴ 결과 장비
+		if not equip_ids.has(r.result_equip_id):
+			_check("레시피 결과 장비 실재: %s → %s" % [rid, r.result_equip_id], false)
+			recipe_bad += 1
+		# ⑵ 재료
+		for mid: Variant in r.material_costs.keys():
+			if not material_ids.has(str(mid)):
+				_check("레시피 재료 실재: %s → %s" % [rid, str(mid)], false)
+				recipe_bad += 1
+		# ⑷ 도달성 — 도면 드랍원이 없으면 그 무기는 영원히 못 만든다
+		if not r.unlocked_by_default and not dropped_blueprints.has(rid):
+			_check("🔴 도면 드랍원 없음: %s — 어떤 적도 이 설계도를 떨구지 않는다(영원히 제작 불가)" % rid,
+				false)
+			unreachable += 1
+	_check("레시피 참조 전수 실재 (오류 %d건)" % recipe_bad, recipe_bad == 0)
+	_check("🔴 레시피 도달성 전수: 모든 도면에 드랍원이 있다 (고아 %d건)" % unreachable, unreachable == 0)
+
+
+# 폴더의 .tres 파일명(확장자 제거) 집합 — id = 파일명 관례(rules §4)에 기댄다.
+func _data_ids(dir_path: String) -> Dictionary:
+	var out := {}
+	for f: String in DirAccess.get_files_at(dir_path):
+		if f.ends_with(".remap"):
+			f = f.trim_suffix(".remap")
+		elif not f.ends_with(".tres"):
+			continue
+		out[f.trim_suffix(".tres")] = true
+	return out

@@ -115,7 +115,7 @@ func _spawn(peer_id: int, is_local: bool) -> void:
 		p.set_equip_stats(int(st.get("atk", 0)), int(st.get("hp", 0)))
 		p.set_level_stats(st.get("lv", {}) as Dictionary)  # 레벨 5스탯도 같은 버퍼에서(공짜)
 		# 무기 겉모습(표시용) — id는 allowlist 리졸브(모르면 null→직업 기본 무기 폴백)
-		p.set_weapon_visual(GameState.equip_def(str(st.get("weapon", ""))))
+		p.set_weapon_visual(_remote_weapon_def(peer_id, str(st.get("weapon", ""))))
 		p.set_traits(peer_traits(peer_id))  # 하위 직업 특성 — 같은 버퍼에서
 	_players[peer_id] = p
 	# 스폰 완료 공지 — 호스트가 챕터 이월 HP를 재확정하는 입구 (CombatAuthority). 잡 반영 뒤에 emit.
@@ -255,7 +255,7 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			if _players.has(from_id):
 				_players[from_id].set_equip_stats(atk, hp)
 				_players[from_id].set_level_stats(lv)
-				_players[from_id].set_weapon_visual(GameState.equip_def(wid))
+				_players[from_id].set_weapon_visual(_remote_weapon_def(from_id, wid))
 				_players[from_id].set_traits(peer_traits(from_id))  # 원격 특성 — 연출·판정 기하 공용
 		NetSchema.G_ATK:
 			if _players.has(from_id):
@@ -273,3 +273,17 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			if _players.has(from_id):
 				_players[from_id].play_roll_fx(
 					Vector2(float(data.get("dx", 0.0)), float(data.get("dy", 0.0))))
+
+
+# 🔴 원격 피어의 무기 겉모습 — **호스트 판정과 같은 필터를 지난다**(`can_job_equip`, 2026-07-28
+#   netreview I-3). 필터가 없으면 "궁수가 대검을 공지"한 상태에서 화면엔 ±109° 궤적이 그려지는데
+#   호스트 판정은 무기를 폐기해 **직업 기본 + 전방위(360°)** 로 돌아간다 = **표시 ⊂ 판정**,
+#   즉 "안 보이는데 맞는다"(§3 금지 방향)다.
+# ⚠ 그 조합은 변조 클라만의 것이 아니다 — **정직한 클라가 상태 버그로 도달했던 부류**다
+#   (2026-07-26 "전사로 들어왔는데 마법 지팡이를 쓴다" 신고. rules §3 직업 귀속).
+# ⚠ 로컬(`_apply_local_stats`)은 `GameState.equipped_id`라 이미 착용 규칙을 지나므로 필터가 없다.
+func _remote_weapon_def(peer_id: int, weapon_id: String) -> EquipDef:
+	var e := GameState.equip_def(weapon_id)
+	if not GameState.can_job_equip(peer_job_id(peer_id), e):
+		return null  # 무장 해제 = 호스트가 판정에 쓰는 값(직업 기본 기하)과 일치시킨다
+	return e

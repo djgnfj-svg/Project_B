@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="BossDef" load_steps=16 format=3]
+[gd_resource type="Resource" script_class="BossDef" load_steps=18 format=3]
 
 [ext_resource type="Script" path="res://src/core/boss_def.gd" id="1"]
 [ext_resource type="Script" path="res://src/core/boss_pattern_def.gd" id="2"]
@@ -89,9 +89,21 @@ kind = "blueprint"
 ref_id = "iron_staff"
 chance = 1.0
 
+[sub_resource type="Resource" id="d_bp_axe"]
+script = ExtResource("5")
+kind = "blueprint"
+ref_id = "heavy_axe"
+chance = 1.0
+
+[sub_resource type="Resource" id="d_bp_spear"]
+script = ExtResource("5")
+kind = "blueprint"
+ref_id = "long_spear"
+chance = 1.0
+
 [sub_resource type="Resource" id="d_table"]
 script = ExtResource("4")
-entries = Array[DropEntry]([SubResource("d_gold"), SubResource("d_core"), SubResource("d_bp_sword"), SubResource("d_bp_bow"), SubResource("d_bp_staff")])
+entries = Array[DropEntry]([SubResource("d_gold"), SubResource("d_core"), SubResource("d_bp_sword"), SubResource("d_bp_bow"), SubResource("d_bp_staff"), SubResource("d_bp_axe"), SubResource("d_bp_spear")])
 
 [resource]
 script = ExtResource("1")

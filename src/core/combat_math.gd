@@ -164,30 +164,174 @@ static func clamp_reach(reach: float) -> float:
 
 # reach = 그 피어가 공지한 메인 하위 직업에서 **호스트가 로컬 리졸브한** 특성값(peer_sync.peer_reach_bonus).
 # 0 = 항등 = 특성 없음/도입 전과 완전히 동일.
-static func effective_attack_range(job: JobDef, reach: float = 0.0) -> float:
-	return job.attack_range * (1.0 + clamp_reach(reach))
+# equip = 착용 근접 무기 — `melee_range > 0`이면 **직업 기본 사거리를 대신한다**.
+#   ⚠ 여기에 실제 수치를 적지 마라(2026-07-28 리뷰 m-1: 적어 뒀던 셋이 전부 데이터와 갈라져 있었다).
+#   값은 `data/equipment/*.tres`가 정본이고, 하필 이 함수가 "수치를 복사하지 마라"를 가르치는 자리다.
+#   🔴 무기별 사거리를 여기 한 곳에서만 고르는 이유는 위 주석과 같다: 사거리 3함수가 전부 이 함수를
+#   지나므로, 호출부 하나라도 job.attack_range를 직접 읽으면 창의 긴 사거리가 판정과 표시 중
+#   한쪽에만 걸린다. null/0 = **직업 기본 = 도입 전과 완전 항등**.
+static func effective_attack_range(job: JobDef, reach: float = 0.0, equip: EquipDef = null) -> float:
+	var base := job.attack_range
+	if equip != null and equip.melee_range > 0.0:
+		base = equip.melee_range
+	return minf(base * (1.0 + clamp_reach(reach)), MAX_MELEE_RANGE)
 
 
-# 호스트의 적중 요청 검증 — 공격자 위치 기준 사거리 내인가 (지연 감안 여유 배율).
+# 🔴 근접 도달 거리의 **하드 상한** — `MAX_REACH_BONUS`가 특성 축에서 막는 것("근접이 원거리가 되면
+#   직업 = 플레이 방식의 변환이 무너진다")을 무기 축에서도 막는다. `melee_range`가 무기 데이터로
+#   열리면서 특성 상한만으로는 부족해졌다 — `melee_range = 1000` 한 줄이면 화면 전체가 근접 사거리다.
+# 🔴 **근거는 최단 원거리 무기(`worn_bow.arrow_range` 150)다** — 근접 도달이 그걸 넘으면 "창이 활보다
+#   멀리 닿는" 역전이 생긴다. 여유를 두고 130: 창 후보(80) × 특성 상한 1.5 = 120 < 130이라 정당한
+#   무기가 **조용히 절삭되지 않는다**. ⚠ 이 부등식은 아래 전수 트립와이어가 지킨다 — 창을 100으로
+#   만들면(100 × 1.5 = 150 > 130) 빨개지고, 그때 상한과 무기 중 무엇을 고칠지 판단하게 된다.
+#   (`proj_range` 상한을 `MAX_ARROW_RANGE`에서 유도한 것과 같은 관용구.)
+const MAX_MELEE_RANGE := 130.0
+
+
+# --- 근접 판정 부채꼴 (무기 모션 축, 2026-07-28) — 단일 소스 (§3) ---
+# 🔴 **판정 각 = `EquipDef.swing_arc` 그 자체다 — 판정용 각 필드를 따로 만들지 마라.**
+#   swing_arc는 원래 "휘두르는 궤적의 반각"(표시)이었다. 판정용 각을 신설하면 같은 것을 뜻하는
+#   숫자가 둘이 되어, 도끼를 넓게 튜닝했을 때 궤적만 넓어지고 판정은 그대로인(또는 반대인) 갈라짐이
+#   생긴다 — 보스 콘 텔레그래프가 "각이 픽셀에 박혀 데이터와 갈라진" 그 실패 형태와 같다(§3).
+#   하나로 두면 "넓게 휘두르는 무기가 넓게 맞는다"가 **구조로** 보장된다.
+# ⚠ 콤보 마무리 타의 `COMBO_FINISH_ARC` 배율은 **판정에 넣지 않는다** — 표시가 판정보다 넓은 것은
+#   안전한 방향(보이는데 안 맞을 수는 있어도 안 보이는데 맞지는 않는다)이고, 넣으려면 호스트가
+#   콤보 타수를 알아야 해서 신뢰 경계가 는다.
+const MELEE_FULL_ARC := PI  # 전방위(각 검사 없음) = 무기 미착용·미지정의 기본 = 도입 전과 항등
+# 🔴 엡실론은 float 반올림으로 "전방위"가 각 분기로 새는 것을 막는다 (보스 셰이더의 같은 가드와 미러).
+const MELEE_FULL_ARC_EPS := 0.01
+const HIT_REACH_SLACK := 2.0  # 호스트 사거리 여유 배율 — 지연 동안 벌어진 거리를 수용(정직한 타격 거부 방지)
+
+
+# 그 무기의 근접 판정 반각. 미착용/미지정 = 전방위(PI) = **도입 전과 완전 항등**.
+static func melee_half_angle(equip: EquipDef) -> float:
+	if equip == null:
+		return MELEE_FULL_ARC
+	return clampf(equip.swing_arc, 0.0, MELEE_FULL_ARC)
+
+
+# 호스트의 적중 요청 검증 — 공격자 위치 기준 **부채꼴** 안인가 (지연 감안 여유 배율).
 # enemy_radius = 적 몸 반경 — 중심거리에서 빼 준다. 거대 보스(radius ~48)는 중심이 멀어
 # "붙어도 사거리 밖"이 되므로 몸통 표면까지로 판정한다 (기본 0 = 기존 잔몹 동작 불변).
+# facing = 공격 방향(rad, G_HIT_REQ "dx"/"dy") · half_angle = 무기 반각.
+# 🔴 **half_angle 기본값이 전방위라 기존 호출부는 전부 항등이다** — 각을 넘기지 않으면 거리 검사만 한다.
+# 🔴 **각도 여유는 적 반경에서 유도한다**(`asin(radius/dist)`) — 상수 여유를 두면 가까운 적에겐
+#   턱없이 좁고 먼 적에겐 헐렁해진다. 거리 쪽이 이미 `- enemy_radius`로 몸통 표면을 보므로 대칭이고,
+#   "몸통이 부채꼴에 걸치면 맞는다"는 화면과 같은 판단이 된다.
 static func is_hit_in_reach(attacker_pos: Vector2, enemy_pos: Vector2, job: JobDef,
-		enemy_radius: float = 0.0, reach: float = 0.0) -> bool:
-	return attacker_pos.distance_to(enemy_pos) - enemy_radius <= effective_attack_range(job, reach) * 2.0
+		enemy_radius: float = 0.0, reach: float = 0.0, equip: EquipDef = null,
+		facing: float = 0.0, half_angle: float = MELEE_FULL_ARC) -> bool:
+	return is_melee_in_cone(attacker_pos, enemy_pos, facing, half_angle,
+		effective_attack_range(job, reach, equip) * HIT_REACH_SLACK, enemy_radius)
 
 
-# 히트 기하 — 단일 소스 (§3). 실제 판정(원형 질의)과 공격 FX 위치가 같은 함수를 부른다.
+# 근접 부채꼴 판정 코어 — 🔴 **로컬 질의(player)와 호스트 확정(combat_authority)이 같은 이 함수를 지난다.**
+#   여유 배율만 다르다(로컬은 지연이 없어 정확한 기하 / 호스트는 `HIT_REACH_SLACK`). 그래서
+#   `reach_dist`를 **이미 계산된 거리**로 받는다 — 여기서 다시 job/equip을 읽으면 두 호출부가 서로
+#   다른 여유를 갖는 순간 형태까지 갈라진다.
+# ⚠ 로컬이 호스트보다 **엄격하면** 정당한 타격이 아예 요청되지 않아 조용히 사라진다(로컬 탈락 =
+#   G_HIT_REQ 미송신). 그래서 각·반경 규칙은 반드시 공유하고 거리 여유만 벌린다.
+static func is_melee_in_cone(attacker_pos: Vector2, enemy_pos: Vector2, facing: float,
+		half_angle: float, reach_dist: float, enemy_radius: float = 0.0) -> bool:
+	if attacker_pos.distance_to(enemy_pos) - enemy_radius > reach_dist:
+		return false
+	return is_angle_in_cone(attacker_pos, enemy_pos, facing, half_angle, enemy_radius)
+
+
+# 부채꼴의 **각 축만** — 거리와 분리해 둔 이유는 하나다: 호스트가 게스트의 근접타를 확정할 때
+# apex(공격자 좌표)가 지연으로 어긋나므로 **두 apex로 각각 물어야** 하는데, 그때 거리까지 같이
+# 물으면 "lead에서 각은 맞는데 거리에서 탈락"이 생겨 보상이 반쪽이 된다(is_hit_in_reach_lagged).
+# target_radius = 대상 몸 반경 — 중심이 각 밖이어도 **몸통이 걸치면** 맞는다(거리 쪽 -radius와 대칭).
+static func is_angle_in_cone(apex: Vector2, target: Vector2, facing: float,
+		half_angle: float, target_radius: float = 0.0) -> bool:
+	if half_angle >= MELEE_FULL_ARC - MELEE_FULL_ARC_EPS:
+		return true  # 전방위 = 각 검사 없음 (도입 전 동작)
+	var to_target := target - apex
+	var dist := to_target.length()
+	if dist <= target_radius or dist < 0.01:
+		return true  # 몸통 안/겹침 — 각 계산 무의미
+	var angle_slack := asin(clampf(target_radius / dist, 0.0, 1.0))
+	return absf(angle_difference(facing, to_target.angle())) <= half_angle + angle_slack
+
+
+# 🔴 **근접 적중 검증의 지연 보상판** (netreview C-1, 2026-07-28) — 호스트가 게스트 타격을 확정할 때 쓴다.
+#   거리 축엔 `HIT_REACH_SLACK`(×2.0) 여유가 원래 있었지만 **각 축엔 아무 보상이 없었다.** apex가
+#   `net_anchor()`(외삽 없는 마지막 수신 좌표 = 편도 + 송신주기만큼 낡음)라서, 이동 중인 게스트는
+#   각이 통째로 틀어진다. 실측 근거는 이 파일이 이미 갖고 있다 — `LAG_MAX_LEAD_DIST`(115px)가
+#   **근접 교전 거리(30~80px)의 2~3배**다. 걷기만 해도 13px, 구르기 직후엔 ~35px 어긋난다.
+#   증상은 **게스트에서만·배포본에서만**: 스윙·궤적·타격음·화면 반동이 다 나오는데 **적 HP만 안 깎인다**.
+#   ⚠ 좁은 각 무기(창 ±17°)가 오면 예외가 아니라 **상시**가 된다 — 40px에서 13px 오차 = 각 18°.
+#
+# 🔴 **각만 `or`, 거리는 anchor 하나 — 이 비대칭이 계약이다.**
+#   ⑴ 거리를 anchor에만 묶어 두면 판정 집합이 **(anchor 중심, 그 무기 사거리) 원의 부분집합**으로
+#      남는다 → 신뢰 경계가 안 넓어진다(부채꼴 도입의 안전성 논거가 그대로 보존된다).
+#   ⑵ 각은 두 apex 중 **하나만** 통과하면 된다.
+# 🔴 **§3 「방어자 우대」(`is_strike_hit_lagged`의 `and`)와 의도적으로 반대 부호다 — 헷갈리지 마라.**
+#   저쪽은 게스트가 **방어자**이고 오차가 "안 맞는 쪽"으로 떨어져야 안전하다. 여기는 게스트가
+#   **공격자**라 안전한 방향이 정반대다: 오차가 "안 맞는 쪽"으로 떨어지면 그게 곧 삭제된 타격이다.
+#   두 규약을 같은 부호로 통일하려는 변경은 둘 중 하나를 반드시 망가뜨린다.
+#
+# ✅ **이 안전성 논거는 `LAG_MAX_LEAD_DIST` clamp에 의존하지 않는다** (리뷰 확인) — 거리 술어가
+#   `lead_pos`가 등장하기 **전에** 무조건 `return false`하는 조기 반환이고, `lead_pos`는 그 뒤
+#   `is_angle_in_cone`의 인자로만 쓰여 `bool`을 돌릴 뿐 반지름을 바꿀 경로가 없다. lead가 무한대여도
+#   최악이 "각 검사 생략 폴백과 동일" = 도입 전 동작이다. **조기 반환의 위치가 근거이고 전수 테스트는
+#   그 확인이다.** clamp를 조일 때 여기까지 재검토할 필요가 없고, 반대로 **여기가 clamp를 지켜준다고
+#   오해해 `is_strike_hit_lagged` 쪽 「외삽 상한 불변식」 트립와이어를 빼지도 마라** — 그쪽이 정본이다.
+# 🔴 **`target_lag_px`는 부등호 반대편(대상 좌표)의 지연분이다 — `or`로는 원리적으로 못 덮는다.**
+#   (2026-07-28 netreview 2차 C-1.) 위 `or`는 **공격자** apex 두 개를 훑지만, 적 좌표는 두 apex가
+#   똑같이 쓰므로 아무리 or를 걸어도 그 축이 안 덮인다. 그리고 적 좌표가 플레이어보다 **더 낡다**:
+#   `G_MOB_POS`는 10Hz·fast(유실 허용)이고 수신부에 **외삽이 없다**(플레이어는 15Hz + 속도 외삽).
+#   호스트는 몹 실시간 좌표를 아는데 게스트 화면은 낡아서, **게스트가 정당하게 맞힌 것을 호스트가
+#   거부**한다 → `mob_lag_slack_px`만큼 각 슬랙을 넓혀 그 시야 차를 수용한다.
+# ⚠ **각에만 더한다 — 거리에는 안 더한다.** 거리에 넣으면 판정 원 자체가 커져 "판정 집합 ⊆ anchor
+#   원"이 깨진다(이 함수의 안전성 논거 전체가 거기 걸려 있다).
+# ⚠ **넓히는 방향이 관대한 것은 의도다.** 여기서 관대해지는 대상은 **적(NPC)**이지 플레이어가 아니라,
+#   §3 「방어자 우대」가 지키려는 것("피했는데 맞았다")과 이해가 충돌하지 않는다. 반대로 좁히면
+#   플레이어의 정당한 타격이 조용히 사라진다. 거리 축은 `HIT_REACH_SLACK`(×2.0)으로 **이미 2배
+#   관대**했고 각만 엄격했던 것이 비대칭이었다.
+static func is_hit_in_reach_lagged(anchor: Vector2, lead_pos: Vector2, enemy_pos: Vector2,
+		job: JobDef, enemy_radius: float = 0.0, reach: float = 0.0, equip: EquipDef = null,
+		facing: float = 0.0, half_angle: float = MELEE_FULL_ARC,
+		target_lag_px: float = 0.0) -> bool:
+	if anchor.distance_to(enemy_pos) - enemy_radius \
+			> effective_attack_range(job, reach, equip) * HIT_REACH_SLACK:
+		return false
+	var angle_radius := enemy_radius + maxf(target_lag_px, 0.0)
+	return is_angle_in_cone(anchor, enemy_pos, facing, half_angle, angle_radius) \
+		or is_angle_in_cone(lead_pos, enemy_pos, facing, half_angle, angle_radius)
+
+
+# 대상(잔몹) 좌표가 게스트 화면에서 낡은 만큼의 **횡변위 예산(px)** — 각 슬랙 전용.
+# 유도 = 최대 몹 이속 × (몹 송신 주기 + 편도 지연). 실측(2026-07-28): 최대 `move_speed` 70
+#   (chaser·goblin_melee) · `MobSync.SEND_RATE` 10Hz. 배포본 편도 70~108ms에서 약 12~15px.
+# 🔴 **왜 창에서만 문제가 되나**: 각 오차 = `asin(변위/거리)`인데 창은 반각이 17°로 좁고 사거리가
+#   80px로 길다. 14px 변위가 80px에서 10°를 만들어 예산(반각 17.2 + 몸통 슬랙 7.2 = 24.4°)의 40%를
+#   먹는다. 검(109~137°)·도끼(160°)는 각 예산이 커서 무해하고, 보스는 `body_radius` 42가
+#   `asin(42/80)` = 31.6° 슬랙을 주므로 이미 덮인다 — **창 × 잔몹**에서만 상시가 된다.
+const MOB_LAG_SLACK_SPEED := 90.0  # 유도 상한(px/s) — 실측 최대 70 + 새 적 여지. 초과 시 트립와이어
+const MOB_POS_PERIOD_S := 0.1      # ⚠ `MobSync.SEND_RATE`(10Hz)와 **미러** — 그 값을 바꾸면 여기도 고친다
+
+
+static func mob_lag_slack_px(one_way_ms: float) -> float:
+	return MOB_LAG_SLACK_SPEED * (MOB_POS_PERIOD_S + clamp_one_way_ms(one_way_ms) / 1000.0)
+
+
+# 히트 기하 — 단일 소스 (§3). 실제 판정(부채꼴 질의)과 공격 FX 크기가 같은 함수에서 파생된다.
 # 한쪽만 조이면 "맞는 곳"과 "보이는 곳"이 어긋난다 — 손맛 튜닝은 반드시 여기서.
-const ATTACK_CENTER_SCALE := 0.6  # 공격 중심까지의 거리 = range * 이 값
-const ATTACK_RADIUS_SCALE := 0.5  # 판정 반경 = range * 이 값
+# ⚠ **판정 도달 거리는 `effective_attack_range` 그 자체다**(부채꼴 반경). 아래 두 스케일은 이제
+#   판정 형태가 아니라 **FX 기하**(궤적 굵기·파형 출발점)를 잡는 데 쓴다 — 부채꼴 전환(2026-07-28)
+#   전에는 "전방 오프셋 원"이 곧 판정이라 둘이 같았다. 도달 거리를 여기서 다시 유도하지 마라.
+const ATTACK_CENTER_SCALE := 0.6  # FX 중심까지의 거리 = range * 이 값
+const ATTACK_RADIUS_SCALE := 0.5  # FX 굵기(파형 세로 반높이 정합) = range * 이 값
 
 
-static func attack_center_offset(dir: Vector2, job: JobDef, reach: float = 0.0) -> Vector2:
-	return dir * (effective_attack_range(job, reach) * ATTACK_CENTER_SCALE)
+static func attack_center_offset(dir: Vector2, job: JobDef, reach: float = 0.0,
+		equip: EquipDef = null) -> Vector2:
+	return dir * (effective_attack_range(job, reach, equip) * ATTACK_CENTER_SCALE)
 
 
-static func attack_radius(job: JobDef, reach: float = 0.0) -> float:
-	return effective_attack_range(job, reach) * ATTACK_RADIUS_SCALE
+static func attack_radius(job: JobDef, reach: float = 0.0, equip: EquipDef = null) -> float:
+	return effective_attack_range(job, reach, equip) * ATTACK_RADIUS_SCALE
 
 
 # 한 스윙이 여러 적을 치는 것은 허용하되(SAME_SWING_MS 안), 스윙 간격은 쿨다운(지터 여유 0.9배)을 강제.
