@@ -33,6 +33,11 @@ func _ready() -> void:
 	_url_edit.text = Net.default_relay_url()
 	if Net.state == Net.State.CONNECTED:
 		_status.text = "서버 연결됨 — 방을 만들거나 참가하세요"
+	# 🔴 준비중 직업이 선택된 채로 들어오면 고를 수 있는 직업으로 되돌린다 — 세이브는 직업을 담지
+	#   않지만(rules §5) 로비 **재진입**에서는 이전 선택이 GameState에 그대로 남아 있어서, 잠그기 전에
+	#   궁수를 골랐던 세션이 "아무 버튼도 안 눌린 채 궁수로 시작"하는 상태가 된다(에러 없음).
+	if not GameState.is_job_playable(GameState.selected_job_id):
+		GameState.selected_job_id = GameState.playable_job_ids()[0]
 	for job_id: String in _job_btns:
 		var btn := _job_btns[job_id]
 		btn.button_pressed = job_id == GameState.selected_job_id  # 로비 재진입 시 이전 선택 복원
@@ -42,6 +47,9 @@ func _ready() -> void:
 		var tex := _job_icon(jd)
 		if icon != null and tex != null:
 			icon.texture = tex
+		if not GameState.is_job_playable(job_id):
+			_hide_job(btn)
+			continue  # 시그널을 연결하지 않는다 — 숨김에 얹어 두면 잠금을 푸는 조건이 두 개가 된다
 		# button_down: 이미 눌린 토글(기본 전사)을 다시 클릭해도 반드시 발화 — pressed는 그룹 토글
 		# 재클릭에서 안 올 수 있어, 자동 시작 트리거가 기본 직업 선택에서 데드락 나는 것을 막는다
 		btn.button_down.connect(_on_job_pressed.bind(job_id))
@@ -90,6 +98,19 @@ func _job_icon(jd: JobDef) -> Texture2D:
 	if f != null and f.has_animation(ICON_ANIM) and f.get_frame_count(ICON_ANIM) > 0:
 		return f.get_frame_texture(ICON_ANIM, 0)
 	return jd.sprite
+
+
+# 준비중 직업을 로비에서 **통째로 숨긴다** (사용자 결정 2026-07-29: "캐릭터 하나만 보이게").
+# 숨기는 것은 버튼이 아니라 **열(아이콘 + 버튼을 담은 VBox)** 이다 — 버튼만 숨기면 아이콘이 남아
+# 이름 없는 그림 두 개가 떠 있게 된다.
+# 🔴 `disabled`도 같이 건다 — `visible = false`만으로는 **ButtonGroup이 그 버튼을 계속 들고 있어서**
+#   나중에 코드가 그룹을 순회하면 안 보이는 버튼이 후보로 잡힌다. 잠금은 보이는 것과 무관해야 한다.
+func _hide_job(btn: Button) -> void:
+	btn.disabled = true
+	btn.button_pressed = false
+	var col := btn.get_parent() as Control
+	if col != null:
+		col.visible = false
 
 
 func _on_job_pressed(job_id: String) -> void:

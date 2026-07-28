@@ -91,6 +91,31 @@ func selected_job() -> JobDef:
 	return job_def(selected_job_id)
 
 
+# 🔴 "준비중" 게이트 단일 소스 (데모용 2026-07-29) — **플레이어가 고르는 UI 전부**가 이 함수를 지난다
+#   (로비 직업 선택 · 설정 패널 「직업 변경」). 판정 규칙을 UI마다 복사하면 한쪽만 풀렸을 때
+#   "로비에선 못 고르는데 마을에서 바꿔진다"가 된다 — 잠금은 새는 순간 의미가 없다.
+# ⚠ 신뢰 경계가 아니다 — 호스트 판정·네트워크 공지는 도입 전과 완전히 같다(`job_ids()` allowlist 그대로).
+#   `?debug=1` F1 패널은 **의도적으로** 이 게이트를 안 지난다(궁수·법사 개발·실기 확인용).
+func is_job_playable(id: String) -> bool:
+	if id not in job_ids():
+		return false
+	var j := job_def(id)
+	return j != null and not j.coming_soon
+
+
+# 플레이어가 고를 수 있는 직업 — 준비중 제외. 전부 준비중이면 기본 직업만이라도 돌려준다
+# (데이터를 잘못 채워 선택지가 0개가 되면 로비에서 아무것도 못 고르고 게임이 시작조차 안 된다).
+func playable_job_ids() -> Array[String]:
+	var out: Array[String] = []
+	for id: String in job_ids():
+		if is_job_playable(id):
+			out.append(id)
+	if out.is_empty():
+		push_error("[GameState] 고를 수 있는 직업이 0개 — coming_soon 데이터 확인. 기본 직업으로 폴백")
+		out.append(DEFAULT_JOB_ID)
+	return out
+
+
 # --- 챕터 진행 (챕터1 골격 2026-07-22) ---
 
 # 챕터 id 목록 — data/chapters/*.tres 스캔. job_ids와 같은 allowlist 규약 (rules §4).

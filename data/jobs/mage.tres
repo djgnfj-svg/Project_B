@@ -9,6 +9,7 @@
 script = ExtResource("1")
 id = "mage"
 display_name = "법사"
+coming_soon = true
 sprite = ExtResource("2")
 frames = ExtResource("3")
 weapon_texture = ExtResource("4")
