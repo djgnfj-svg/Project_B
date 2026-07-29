@@ -16,6 +16,14 @@ const TINT := Color(0.72, 0.86, 1.0)  # 청백 — 몸과 구분되게(잔상이
 const SPAWN_INTERVAL := 0.045   # 잔상 사이 최소 간격(s) — 호출부가 이 값으로 타이머를 돈다
 const Z_INDEX := 0              # 몸(1) 아래 · 바닥(-10) 위
 
+# --- 무기 잔상 (스윙 궤적 축 2026-07-29) — 칼이 지나간 각마다 칼 그림을 떼어 놓는다 ---
+const WEAPON_FADE_S := 0.16     # 대쉬 잔상보다 짧다 — 스윙 창(0.24s)이 대쉬보다 짧아 오래 남으면 겹쳐 뭉갠다
+const WEAPON_ALPHA := 0.5       # 태어날 때 불투명도 (실물 칼과 구분되게)
+# 🔴 **고정 z다 — `WeaponPivot.z_index`를 복사하지 마라.** 그 값은 조준 방향에 따라 0↔2를 오가므로
+#   (등에 멘 대검은 규칙이 반대다) 복사하면 잔상이 스윙 도중 몸 앞뒤를 오가며 깜빡인다.
+#   몸(1) 위 · 리본(3) 아래에 고정한다.
+const WEAPON_Z_INDEX := 2
+
 
 # sprite = 복제할 표시 노드(AnimatedSprite2D), host = 잔상을 남기는 주체(플레이어 등).
 # host의 부모(씬 루트)에 붙인다 — 부모가 없으면(테스트·해제 중) 조용히 아무것도 안 한다.
@@ -49,4 +57,36 @@ static func spawn(sprite: AnimatedSprite2D, host: Node2D) -> void:
 	# 페이드 후 자기 정리 — 타이머가 아니라 트윈에 매달아야 씬이 먼저 사라져도 같이 죽는다.
 	var tw := ghost.create_tween()
 	tw.tween_property(ghost, "modulate:a", 0.0, FADE_S).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_callback(ghost.queue_free)
+
+
+# 무기 잔상 — 칼 그림을 그 각도에 떼어 놓는다. 리본(`player.SwingTrail`)이 칼끝 **선**을 그린다면
+# 이쪽은 칼 **면**을 남긴다. 둘 다 칼의 실제 배치식에서 나오므로 서로도, 칼과도 정확히 포개진다.
+#
+# 🔴 **위 `spawn`처럼 노드를 통째로 복제할 수 없다.** 칼은 `WeaponPivot`(회전 중심) →
+#   `Weapon`(centered=false · position = 그립 보정) **2단 구조**라, `Weapon` 하나만 복제하면
+#   회전 중심이 칼 좌상단으로 바뀌어 전혀 다른 호를 그린다. 그래서 회전 중심(pivot)과
+#   그림 오프셋(weapon.position)을 나눠 받는다.
+# 🔴 **각은 호출부가 넘긴다** — `pivot.global_rotation`을 읽으면 안 된다: `_update_weapon`이 이 프레임의
+#   회전을 아직 안 썼을 수 있어 **한 프레임 뒤처진 잔상**이 남는다(리본이 `_swing_angle_at`을 쓰는 것과 같은 이유).
+# ⚠ `global_*`은 **add_child 뒤에** 대입한다 — 트리 밖에서는 global이 local과 같아 부모 변환이 반영되지 않는다.
+static func spawn_weapon(weapon: Sprite2D, pivot: Node2D, host: Node2D,
+		angle: float, tint: Color) -> void:
+	if weapon == null or pivot == null or host == null or weapon.texture == null:
+		return
+	var parent := host.get_parent()
+	if parent == null:
+		return
+	var ghost := Sprite2D.new()
+	ghost.texture = weapon.texture
+	ghost.centered = weapon.centered
+	ghost.offset = weapon.position   # 그립 보정 — 회전 중심(pivot)에서 칼이 놓이는 자리
+	ghost.flip_v = weapon.flip_v
+	ghost.z_index = WEAPON_Z_INDEX
+	ghost.modulate = Color(tint.r, tint.g, tint.b, tint.a * WEAPON_ALPHA)
+	parent.add_child(ghost)
+	ghost.global_position = pivot.global_position
+	ghost.global_rotation = angle
+	var tw := ghost.create_tween()
+	tw.tween_property(ghost, "modulate:a", 0.0, WEAPON_FADE_S).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tw.tween_callback(ghost.queue_free)

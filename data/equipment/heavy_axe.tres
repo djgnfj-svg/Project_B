@@ -29,5 +29,3 @@ swing_lunge = 10.0
 swing_windup_ratio = 0.35
 swing_strike_ratio = 0.25
 swing_ease = "accel"
-swing_fx_inner_mult = 0.75
-swing_fx_tip_mult = 0.6

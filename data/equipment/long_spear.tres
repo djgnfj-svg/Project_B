@@ -32,5 +32,3 @@ swing_pull = 9.0
 swing_windup_ratio = 0.2
 swing_strike_ratio = 0.25
 swing_ease = "decel"
-swing_fx_inner_mult = 0.25
-swing_fx_tip_mult = 2.0

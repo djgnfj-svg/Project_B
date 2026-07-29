@@ -35,12 +35,6 @@ const DebugBridgeScript := preload("res://src/core/debug_bridge.gd")
 const TITLE_W := 52.0
 const VALUE_W := 50.0
 
-# 🔴 **슬라이더 상한은 "코드가 조용히 clamp하기 시작하는 값"에 맞춰 뒀다.**
-#   `player._apply_weapon_feel`이 `SWING_FX_INNER_RATIO`(0.55)·`SWING_FX_TIP_BOOST`(0.35)에 배율을 곱한 뒤
-#   0.95 / 1.0으로 clampf한다 — 그 위로는 슬라이더만 움직이고 화면은 안 변해서 "고장난 것"으로 읽힌다.
-#   0.95/0.55 = 1.72 · 1.0/0.35 = 2.85. ⚠ 저 두 const를 조이면 여기도 같이 본다(그래서 근거를 적어 둔다).
-const FX_INNER_MAX := 1.72
-const FX_TIP_MAX := 2.85
 # `hit_shake / HIT_SHAKE_REF ≤ HIT_WEIGHT_MAX(3.0)` → 4.5부터 saturation(그 위로는 셰이크만 커지고
 # 카메라 킥·박힘이 안 따라온다 = 무게 단일 소스가 조용히 반쪽이 된다). 상한을 그 지점에 둔다.
 const HIT_SHAKE_MAX := 4.5
@@ -61,8 +55,6 @@ const FIELDS: Array = [
 	{"key": "swing_pull", "title": "당김", "lo": 0.0, "hi": 40.0, "step": 0.5, "fmt": "%.1f px"},
 	{"key": "swing_lunge", "title": "내지르기", "lo": 0.0, "hi": 40.0, "step": 0.5, "fmt": "%.1f px"},
 	{"key": "hit_shake", "title": "무게", "lo": 0.5, "hi": HIT_SHAKE_MAX, "step": 0.1, "fmt": "%.1f"},
-	{"key": "swing_fx_inner_mult", "title": "궤적안쪽", "lo": 0.1, "hi": FX_INNER_MAX, "step": 0.01, "fmt": "%.2f"},
-	{"key": "swing_fx_tip_mult", "title": "궤적칼끝", "lo": 0.1, "hi": FX_TIP_MAX, "step": 0.01, "fmt": "%.2f"},
 ]
 
 const EASES: Array = [
@@ -225,6 +217,7 @@ func _slider_row(e: EquipDef, f: Dictionary) -> Control:
 	row.add_child(t)
 	var s := HSlider.new()
 	s.min_value = f["lo"]
+	# 스윙창만 상한이 동적이다(직업 쿨다운 미만) — 그 위로는 슬라이더만 움직이고 결과가 안 따라온다.
 	s.max_value = _swing_time_max() if key == "swing_time" else f["hi"]
 	s.step = f["step"]
 	s.value = clampf(float(e.get(key)), s.min_value, s.max_value)

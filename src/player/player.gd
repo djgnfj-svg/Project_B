@@ -9,7 +9,6 @@ const HitStop := preload("res://src/feel/hit_stop.gd")
 const HitFlash := preload("res://src/feel/hit_flash.gd")
 const Flinch := preload("res://src/feel/flinch.gd")
 const AfterImage := preload("res://src/feel/afterimage.gd")
-const SWING_SHADER := preload("res://assets/shaders/swing_arc.gdshader")  # 궤적을 데이터에서 직접 그린다(§3)
 
 # 연출값 (rules §0 예외 — 사용자가 플레이하며 조인다)
 # ⚠ 구르기 시간·쿨다운은 여기 없다 — CombatMath.ROLL_TIME_S/ROLL_COOLDOWN_S(§3 단일 소스,
@@ -34,30 +33,19 @@ const ATTACK_FX_TIME := CombatMath.MELEE_TRAIL_FADE_S  # 스윕 완료 뒤 궤�
 #   성립한다** (netreview M-2 정정 — 여기에 그 보장을 단독으로 단언해 뒀던 것은 거짓이었다).
 #   래치가 없으면 판정 프레임에 무기 각이 이미 복귀 분기로 물러나 있어 **최대 약 19°가 안 그려진
 #   채로** 굳는다. 둘 중 하나라도 빠지면 보장이 깨지니 같이 본다.
-const SWING_TRAIL_TAIL_MIN := 0.35
-# 스윙 궤적 셰이더 (무기 모션 축 2026-07-28) — 연출값(§0 예외, 사용자 튜닝).
-# 🔴 **각·도달은 여기 없다 — 그건 판정 데이터다**(`EquipDef.swing_arc` / `effective_attack_range`).
-#   보스 텔레그래프의 `TELEGRAPH_*`에 각·반지름이 아예 없는 것과 같은 규율이다: 연출 const로
-#   궤적을 키우면 그 순간 "보이는 곳 ≠ 맞는 곳"이 된다. 범위를 바꾸려면 `.tres`를 고쳐라 = 밸런스.
-const SWING_FX_PIXEL_PX := 2.0        # 픽셀 양자화 격자(월드 px) — 전 게임 도트와 같은 계단
-# 🔴 격자에서 **유도한다**(셀 반대각선 = 스냅 최대 이동거리) — 독립 상수로 박으면 격자를 조일 때
-#   "판정 안은 반드시 칠한다" 보장이 조용히 깨진다(rules §3 보스 `TELEGRAPH_EDGE_BIAS_PX`와 같은 유도).
-const SWING_FX_EDGE_BIAS_PX := SWING_FX_PIXEL_PX * 0.7071
-# 호 밴드 안쪽 시작 = 도달 × 이 값 (연출 — 판정 아님).
-# ⚠ 0.55에서 내렸다 (2026-07-28 "칼과 빛이 따로 논다" 원인 3): 궤적이 도넛이라 **칼자루~칼몸이
-#   있는 안쪽 구간에 빛이 아예 없었다.** 칼은 `hold_dist`(8px)부터 있는데 궤적은 도달×0.55부터라
-#   그 사이가 통째로 비어 두 물체로 보였다. 낮출수록 띠가 두꺼워지고 칼을 감싼다.
-const SWING_FX_INNER_RATIO := 0.38
-const SWING_FX_EDGE_SOFT_PX := 3.0    # 밴드 가장자리 페이드 폭(px)
-const SWING_FX_TIP_BOOST := 0.35      # 칼끝이 밝아지는 정도
-# 🔴 **궤적 반경의 추가 배율 — 기본 1.0이고, 진짜 크기는 아래 `_swing_draw_reach()`가 정한다.**
-#   전역 배율(한때 2.0)로 궤적을 키웠더니 **칼과 빛이 따로 놀았다**(사용자 신고 2026-07-28): 궤적은
-#   84px인데 칼끝은 56px이라 띠의 74%가 칼이 안 닿는 허공이었다. 근본 원인은 배율이 아니라
-#   **궤적 반경(판정 사거리)과 칼 길이(텍스처 픽셀)를 잇는 코드가 한 줄도 없다**는 것이다 —
-#   실측 비율이 무기마다 1.33(낡은 대검) / 1.61(도끼) / 0.98(창)로 제각각이라 **전역 배율 하나로는
-#   원리적으로 못 맞춘다.** 그래서 유도로 바꿨다(`_swing_draw_reach`). 이 상수는 그 위에 얹는
-#   순수 취향 배율이고 F2 튜너의 「궤적크기」 슬라이더가 민다.
-const SWING_FX_REACH_MULT := 1.0
+# --- 칼끝 리본 궤적 (2026-07-29) — 🔴 **부채꼴 셰이더를 대신한다.** ---
+# 왜 바꿨나: 셰이더는 "칼이 지나간 **영역**"(반지름 35~51 × 각 104°짜리 부채꼴 띠)을 칠하는데
+#   칼은 그 영역의 **테두리 한 줄**이다. 형태가 다르니 각을 3°까지 맞춰도 절대 포개지지 않는다
+#   (사용자 요구: *"검의 궤적과 vfx 궤적을 하나로 깔끔하게 포개달라"*). 리본은 **칼끝 좌표를 그대로
+#   읽어** 잇기 때문에 각·반지름·회전중심이라는 어긋날 축이 **애초에 없다** — 정합이 구조로 보장된다.
+# 🔴 §3(표시 ≥ 판정)은 그대로 지켜진다: 칼이 지나가는 각 `[-arc×젖힘, +arc]` ⊇ 판정 각 `±arc`이고,
+#   부채꼴 **안쪽**을 비우는 것은 셰이더 시절부터 "순수 연출"로 허용된 자리다(안 보이는데 맞는다가
+#   아니라, 가까운 적은 칼이 몸을 지나가는 것으로 읽힌다).
+const TRAIL_SUBSTEPS := 4       # 프레임 사이 각 보간 — 60fps 스윕이 5~7프레임뿐이라 없으면 각진다
+const TRAIL_MAX_POINTS := 48    # 점 상한(안전판) — 스윕 길이 × SUBSTEPS를 넉넉히 덮는다
+# 칼 잔상 장수 — 🔴 **시간이 아니라 스윕 진행(u) 간격으로 센다.** 시간 타이머로 돌리면 프레임률과
+#   무기 속도(0.24~0.34s)에 따라 장수가 들쭉날쭉해져 "빠른 무기는 잔상이 한 장"이 된다.
+const GHOST_STEPS := 4
 # 🔴 **어깨에 걸치기 — 선딜에 칼을 젖히는 각의 배율** (2026-07-28 사용자 요구: *"검과 도끼는 어깨에
 #   걸치듯이 진행이 되어야 함"*). `_begin_swing`이 **시작각에만** 곱한다.
 # 왜 시작각만인가: 끝각(`_swing_to`)은 궤적 선단이 판정 부채꼴을 덮는다는 불변식(§3)이 걸려 있어
@@ -67,14 +55,11 @@ const SWING_FX_REACH_MULT := 1.0
 #   통째로 꺼져 부채꼴이 한 번에 번쩍인다(= 이 개편 전 그림). 그래서 `_begin_swing`이 무기 각에서
 #   최대치를 유도해 자른다: 넓은 무기(도끼 160°)일수록 남은 여유가 작아 자동으로 덜 젖혀진다.
 const SWING_WINDUP_ARC_MULT := 1.5
-# 검기 파형 (검성 메인 특성, GDD v1.9) — **표시 전용**. 평타 스윙과 같은 프레임에 태어나 앞으로 뻗는다.
-# 🔴 파형은 판정을 만들지 않는다 — 판정은 확장된 사거리를 쓴 원형 질의 하나뿐이고, 파형은 그 사거리가
-#   왜 늘었는지를 눈에 보여주는 것이다(GDD §6: 파형 자체 데미지 없음). 그래서 도달 거리를 연출값으로
-#   따로 두지 않고 **항상 기하(attack_center_offset+attack_radius)에서 파생**한다 — 여기 값을 키워
-#   더 멀리 보이게 만들면 "보이는 곳 ≠ 맞는 곳"이 된다.
-const WAVE_FX_TIME := 0.22           # 파형이 뻗어 사라지기까지 (연출값 — 사용자 실기 튜닝, §0 예외)
-const WAVE_TEX_HALF_H := 12.0        # sword_wave.png 세로 반높이(px) — 판정 반경 정합 스케일 기준 (텍스처와 미러)
-const WAVE_START_RATIO := 0.55       # 파형이 태어나는 지점 = 기본 사거리 도달점 × 이 비율 (스윙 궤적 안에서 출발)
+# 🔴 **검기 파형(`WaveFx` · `sword_wave.png`)은 2026-07-29에 삭제했다** — 사용자 요청.
+#   검성 특성(`reach`)이 켜지면 초승달이 칼과 **별개로 앞으로 날아가던** 연출인데, 칼끝을 따라가는
+#   리본·잔상과 나란히 두니 "칼과 무관한 것이 하나 더 날아간다"로 읽혔다. `reach` 특성 자체(사거리
+#   증가)는 그대로다 — 사라진 것은 그 사거리를 눈에 보여주던 표시뿐이다.
+#   ⚠ 되살릴 거면 파형을 **칼 궤도 위에서** 뻗게 해야 한다(옛 코드처럼 직선으로 날리면 같은 신고가 돈다).
 # ⚠ 미러(rules §3): 스윙 창은 모든 JobDef.attack_cooldown보다 짧아야 한다 (전사 0.4s) —
 #   원격 창-잠금 가드(play_attack_fx)가 정당한 연속 공격의 스윙을 무시하지 않으려면.
 #   이 3상수는 무장 해제/폴백 기본값이고, 무기별 실값은 EquipDef.swing_time/arc/lunge(→ _swing_*).
@@ -119,6 +104,9 @@ const SWING_BITE_MAX_S := 0.10
 const SWING_BITE_RECOVER_MAX := 0.7  # 후딜 창의 이 비율까지만 — 나머지는 회수 모션이 보이게 남긴다
 const WEAPON_AIM_LERP := 18.0        # 원격 조준각 보간 속도
 const HOLD_DIST := 8.0               # 몸 중심 → 그립 거리 (몸에 붙지 않게 떨어뜨려 든다)
+# 무장 해제(무기 없음) 때의 회전 중심. ⚠ `EquipDef.weapon_pivot`의 기본값과 **같아야 한다** —
+# 갈라지면 "맨손일 때와 무기 낄 때 회전 중심이 다르다"가 에러 없이 생긴다(그쪽 필드 주석이 짝).
+const WEAPON_PIVOT_DEFAULT := Vector2(0.0, -4.0)
 const LUNGE_DIST := 5.0              # 스윕 중 앞으로 내지르는 거리
 const REMOTE_MAX_SPEED_MULT := 1.5  # 원격 변위 클램프 여유 — 순간이동 스푸핑 완화 (rules §3)
 const ENEMY_BODY_MASK := 1 << 2  # 물리 레이어 3 enemy_body — rules §5 배정표가 단일 소스
@@ -190,10 +178,11 @@ var _kill_move_left: float = 0.0  # 「광란」(kill_move) 남은 지속 — �
 # 무기 겉모습 — 착용 무기(EquipDef.weapon_texture)에서 그린다. 미착용이면 직업 기본 무기로 폴백.
 # _weapon_grip은 _update_weapon이 매 프레임 참조 → 착용/직업에 따라 바뀌므로 멤버로 보관(job.weapon_grip 직참 금지).
 var _weapon_grip: Vector2 = Vector2(4.0, 8.0)
+# 등에 멘 무기인가 — `_update_weapon`의 앞뒤(z) 규칙을 뒤집는다. 무기 교체마다 재대입(EquipDef.weapon_on_back).
+var _weapon_on_back: bool = false
 var _weapon_override: EquipDef = null       # 마지막 착용 무기 — set_job 재호출(재공지/재합류) 시 겉모습 유지용 보관. null = 무장 해제
 
 # 무기 손맛 — set_weapon_visual이 착용 무기(EquipDef)에서 세팅, 미착용/미지정이면 기본값 폴백. 전부 표시 전용(네트워크 0).
-static var _quad_tex: ImageTexture = null  # 궤적 셰이더용 1×1 흰 쿼드 (전 인스턴스 공유 — `_swing_quad_tex`)
 var _swing_color: Color = Color(1, 1, 1, 1)    # 궤적 틴트(페이드 알파와 곱해 적용)
 var _swing_sfx: String = "swing"               # 스윙(휘두름) 효과음 id
 var _hit_sfx: String = ""                       # 적중 시 무기 고유 타격음 id (비면 무음)
@@ -208,11 +197,8 @@ var _swing_windup: float = CombatMath.DEFAULT_SWING_WINDUP   # 예비 구간 비
 var _swing_strike: float = CombatMath.DEFAULT_SWING_STRIKE   # 타격 구간 비율 (복귀 = 나머지)
 var _swing_ease: String = "smooth"              # 타격 구간 이징 (smooth/accel/decel)
 var _swing_pull: float = 0.0                    # 예비에 뒤로 당기는 거리(px) — 찌르기의 주 모션, 0 = 항등
-var _fx_inner: float = SWING_FX_INNER_RATIO     # 궤적 밴드 안쪽 시작 비율 (연출 — 판정 아님)
-var _fx_tip: float = SWING_FX_TIP_BOOST         # 칼끝 밝기
 # 궤적 표시 배율 — 위 const 주석이 정본. **표시 전용**이라 무기 데이터(EquipDef)가 아니라 여기 있다
 # (rules §0: 손맛 전역 크기는 const, 무기별로 갈리는 것만 데이터). F2 튜너가 실기에서 이 값을 민다.
-var _fx_reach_mult: float = SWING_FX_REACH_MULT
 # 선딜 젖힘 배율 — 위 const 주석이 정본. 표시 전용(각 시작점만 움직인다)이라 여기 있다.
 var _windup_arc_mult: float = SWING_WINDUP_ARC_MULT
 var _hold_dist: float = HOLD_DIST      # 몸 중심 → 무기 그립 거리 (무기별 = EquipDef.weapon_hold_dist, 대검 8·활 20)
@@ -234,11 +220,11 @@ var _roll_cd_left: float = 0.0
 var _roll_dir: Vector2 = Vector2.RIGHT
 var _fx_left: float = 0.0           # 스윕 완료 뒤 궤적 페이드 잔여(s)
 var _swing_fx_armed: bool = false   # 이번 스윙의 궤적이 아직 그려지는 중인가(스윕 완료 시 꺼진다)
+# 리본에 마지막으로 찍은 진행값 — 프레임 사이를 보간해 각지지 않게 한다. 음수 = 이번 스윙 첫 점 이전.
+var _trail_last_u: float = -1.0
+# 다음 칼 잔상을 남길 스윕 진행값 — `_arm_swing_trail`이 0으로 되돌린다.
+var _ghost_next_u: float = 0.0
 # 검기 파형 진행 상태 (표시 전용) — 방향·출발/도착 거리를 스윙 시점에 굳혀 두고 선형 보간한다.
-var _wave_left: float = 0.0
-var _wave_dir: Vector2 = Vector2.RIGHT
-var _wave_from: float = 0.0
-var _wave_to: float = 0.0
 var _attack_queued: bool = false
 var _shot_seq: int = 0          # 로컬 발사 카운터 — 투사체 고유 id "my_id:seq" 생성 (shoot/charge 무기)
 var _recoil_left: float = 0.0   # 발사 반동 잔여(s) — _update_weapon이 활을 뒤로 당김 (로컬·원격 공용 연출)
@@ -262,6 +248,9 @@ var _remote_moving: bool = false
 var _afterimage_left: float = 0.0   # 다음 잔상까지 남은 시간(s) — 대쉬 중에만 돈다
 var _was_dashing: bool = false      # 직전 프레임 대쉬 여부 — 종료 순간(되튐 킥)을 잡는 엣지 감지
 var _stance_sway: float = 0.0       # 현재 적용 중인 무기 스탠스 각(rad) — 목표로 부드럽게 따라간다
+# 이 스윙이 시작될 때의 스탠스 각 — 🔴 **선딜 동안 0까지 끌어내리는 기준점**이다(`_tick_stance`).
+#   lerp로 흘려보내면 프레임률에 따라 잔량이 달라져 "칼만 몇 도 기울어진 채 궤적이 시작"된다.
+var _stance_enter_sway: float = 0.0
 var _sway_phase: float = 0.0        # 흔들림 위상 — delta로 누적(Time 전역 대신, 일시정지·씬 전환에 안전)
 var _combo_index: int = 0           # 근접 스윙 콤보 타수(0..COMBO_MAX-1) — 표시 전용
 var _combo_left: float = 0.0        # 근접 콤보가 이어지는 남은 시간(s)
@@ -337,8 +326,7 @@ var _swamp_factors: Array[float] = []  # 현재 겹친 늪들의 이동 배율 (
 var _prev_hp: int = 0  # 피격 손맛(combat_impact 감소량) 계산용 — hp_changed 표시 경로 추적
 
 @onready var _sprite: AnimatedSprite2D = $Sprite
-@onready var _attack_fx: Sprite2D = $AttackFx
-@onready var _wave_fx: Sprite2D = $WaveFx  # 검기 파형(메인 특성) — 표시 전용
+@onready var _swing_trail: Line2D = $SwingTrail  # 칼끝 리본 궤적 — 표시 전용(판정 무관)
 @onready var _health: HealthComponent = $Health
 @onready var _weapon_pivot: Node2D = $WeaponPivot
 @onready var _weapon: Sprite2D = $WeaponPivot/Weapon
@@ -528,22 +516,20 @@ func set_weapon_visual(equip: EquipDef) -> void:
 	_weapon.texture = tex
 	_weapon_grip = grip
 	_weapon.position = -grip + Vector2(_hold_dist, 0.0)
+	# 🔴 회전 중심은 **매번 전량 대입한다** — 노드가 재사용돼 무기를 오가므로, 지정 없는 무기로
+	#   바꿨을 때 대입을 건너뛰면 이전 무기(어깨)의 피벗이 그대로 남는다(궤적 셰이더 유니폼과 같은 함정).
+	#   씬(`player.tscn`)의 WeaponPivot position은 에디터 미리보기용이고 런타임 진실원은 여기다.
+	_weapon_pivot.position = equip.weapon_pivot if equip != null else WEAPON_PIVOT_DEFAULT
+	_weapon_on_back = equip != null and equip.weapon_on_back
 	_weapon_pivot.visible = tex != null
 	_apply_weapon_feel(equip)
 
 
 # 무기 손맛(궤적 색·SFX·타격 셰이크·스윙 모션) 반영 — 착용 무기가 지정하면 그 값, 아니면 대검 기본.
-# ⚠ 궤적의 **형태**(각·도달)는 여기서 안 정한다 — 셰이더가 판정 데이터에서 직접 그린다(§3).
+# ⚠ 궤적의 **형태**는 여기서 안 정한다 — 리본(`SwingTrail`)이 칼끝 좌표를 그대로 잇고, 잔상은 칼
+#   스프라이트를 그대로 복제한다. 즉 형태를 정하는 데이터가 **존재하지 않는다**(2026-07-29).
 # set_weapon_visual이 로컬·원격 모두 부르므로 무기 교체 시 손맛도 자동으로 갈린다 (표시 전용, 판정 무관).
 func _apply_weapon_feel(equip: EquipDef) -> void:
-	# 🔴 궤적은 셰이더가 데이터(도달·`swing_arc`)에서 직접 그린다 — 텍스처는 **1×1 흰 쿼드**뿐이다
-	#   (`_swing_quad_tex`). 형태를 그린 PNG를 물리면 알파가 셰이더 형태를 다시 잘라 정합이 깨진다.
-	#   기하 세팅은 스윕 구간에 `_tick_swing_motion` → `_draw_swing_trail`이 **매 프레임** 한다 —
-	#   도달이 그 프레임의 reach 특성·무기에 따라 달라지고, 진행(선단각)이 매 프레임 자라기 때문이다.
-	_attack_fx.texture = _swing_quad_tex()
-	_attack_fx.centered = true
-	_attack_fx.offset = Vector2.ZERO
-	_attack_fx.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_swing_color = equip.swing_color if equip != null else Color(1, 1, 1, 1)
 	_swing_sfx = equip.swing_sfx if equip != null and not equip.swing_sfx.is_empty() else "swing"
 	_hit_sfx = equip.hit_sfx if equip != null else ""
@@ -554,12 +540,6 @@ func _apply_weapon_feel(equip: EquipDef) -> void:
 	_swing_lunge = equip.swing_lunge if equip != null else LUNGE_DIST
 	_swing_ease = equip.swing_ease if equip != null else "smooth"
 	_swing_pull = maxf(equip.swing_pull, 0.0) if equip != null else 0.0
-	# 궤적 룩은 **배율**로만 무기별로 간다 — 절대값을 데이터에 두면 위 const(전역 크기)와 진실원이
-	# 둘이 되어, 사용자가 const를 조여도 무기들이 안 따라온다(rules §0 "손맛 전역 크기는 const").
-	_fx_inner = clampf(SWING_FX_INNER_RATIO
-		* (equip.swing_fx_inner_mult if equip != null else 1.0), 0.0, 0.95)
-	_fx_tip = clampf(SWING_FX_TIP_BOOST
-		* (equip.swing_fx_tip_mult if equip != null else 1.0), 0.0, 1.0)
 	_apply_motion_shape(equip)
 	_hold_dist = equip.weapon_hold_dist if equip != null else HOLD_DIST  # 큰 무기(활)는 멀리 잡아 몸과 안 겹침
 	_arrow_range = equip.arrow_range if equip != null else CombatMath.DEFAULT_ARROW_RANGE  # shoot/charge 사거리
@@ -739,10 +719,9 @@ func _update_life_state(p_hp: int) -> void:
 		_shadow.visible = false  # 관전 고스트는 그림자 없음(떠 있는 느낌)
 		_dust.emitting = false
 		_cancel_swing()       # 진행 중이던 스윙(선딜·스윕·판정 예약)을 통째로 끊는다
-		_attack_fx.visible = false
-		_fx_left = 0.0        # 궤적 잔상도 즉시 정리 — 시체에서 스워시가 뜨지 않게
-		_wave_fx.visible = false
-		_wave_left = 0.0      # 날아가던 검기 파형도 정리 (스워시와 같은 이유)
+		_fx_left = 0.0        # 궤적 잔상도 즉시 정리 — 시체에서 자국이 뜨지 않게
+		_swing_trail.visible = false
+		_swing_trail.clear_points()  # 리본도 같이 — 남기면 시체 옆에 자국이 굳는다
 		_roll_time_left = 0.0
 		_remote_roll_left = 0.0
 		_was_dashing = false     # 사망으로 끊긴 대쉬가 되튐 킥을 남기지 않게(엣지 감지 리셋)
@@ -834,7 +813,6 @@ func _tick_timers(delta: float) -> void:
 	# 🔴 판정 카운트다운은 **스윙 창과 반드시 같은 자리에서** 흐른다 — 근거는 멤버 주석(락스텝).
 	if _swing_hit_armed:
 		_swing_hit_left -= delta
-	_tick_wave(delta)  # 파형 진행은 스윙 블록 **밖** — 안에 두면 그 창에서만 움직이다 얼어붙는다
 
 
 # 🔴🔴 **스윙 시간 축의 단일 소스** (선딜/후딜 + 궤적 진행 축 2026-07-28).
@@ -872,10 +850,6 @@ func _tick_swing_motion(delta: float) -> void:
 				# 휘두름 소리는 **칼이 움직이기 시작할 때** 난다(클릭이 아니라). 로컬·원격 공용 —
 				# 양쪽이 같은 오프셋으로 이 지점에 도달하므로 두 화면의 소리 시점이 자동으로 맞는다.
 				EventBus.player_swing.emit(global_position, _swing_sfx)
-				var rb := trait_value("reach")
-				if rb > 0.0:
-					# 검기 파형 — 늘어난 사거리 끝까지. 판정이 쓰는 것과 **같은 함수**다(§3).
-					_start_wave(CombatMath.effective_attack_range(job, rb, _weapon_override))
 				# ⚠ 카메라 킥은 **로컬만** — EventBus는 전역이라 원격 아바타가 emit하면 남이 휘두를
 				#   때 내 화면이 밀린다(event_bus.gd가 명시한 함정).
 				if is_local and _combo_index == COMBO_MAX - 1:
@@ -904,9 +878,11 @@ func _tick_swing_motion(delta: float) -> void:
 			_resolve_swing_hit()
 	if _fx_left > 0.0:
 		_fx_left -= delta
-		_attack_fx.modulate = _fx_color(clampf(_fx_left / ATTACK_FX_TIME, 0.0, 1.0))
+		# 자국은 칼이 회수돼도 그 자리에 남았다가 흩어진다("벤 자국").
+		_swing_trail.modulate = _fx_color(clampf(_fx_left / ATTACK_FX_TIME, 0.0, 1.0))
 		if _fx_left <= 0.0:
-			_attack_fx.visible = false
+			_swing_trail.visible = false
+			_swing_trail.clear_points()
 
 
 # 스윕 마무리 — 궤적을 완성된 부채꼴로 굳히고 판정을 확정한다. **멱등이다**(플래그를 내린다).
@@ -952,8 +928,15 @@ func _play_dir_anim(base: StringName) -> void:
 		return
 	var idx := _facing_index(_aim_angle)
 	# 서(2)는 동(0) 프레임을 뒤집어 쓴다 — 시트 장수를 반으로.
-	var dir_flip := idx == 2
-	var want := StringName(String(base) + "_" + DIR_SUFFIX[0 if dir_flip else idx])
+	var mirrored := idx == 2
+	var dir_flip := mirrored
+	# 🔴 북(3)도 뒤집는다 — 뒷모습 한 장이 "뒤좌/뒤우"를 겸하기 때문이다(사용자 확정 2026-07-28).
+	#   여기서 idx를 0으로 접지 **않는** 것이 핵심이다: 접으면 뒤를 보는데 동쪽(앞모습) 시트가 나온다.
+	#   그래서 "어느 시트를 쓰나"(mirrored)와 "뒤집나"(dir_flip)를 분리했다 — 둘을 한 변수로 겸하면
+	#   북쪽에서 반드시 한쪽이 깨진다.
+	if idx == 3:
+		dir_flip = cos(_aim_angle) < 0.0
+	var want := StringName(String(base) + "_" + DIR_SUFFIX[0 if mirrored else idx])
 	if frames.has_animation(want):
 		_sprite.flip_h = dir_flip
 		if _sprite.animation != want:
@@ -1009,17 +992,43 @@ func _update_weapon(delta: float) -> void:
 	_weapon_pivot.rotation = ang
 	_weapon.position = -_weapon_grip + Vector2(_hold_dist + lunge, 0.0)
 	# 위쪽 조준 = 몸 뒤(0), 아래 = 몸 앞(2) — 몸(Sprite z=1) 기준 상대 배치.
+	# 🔴 **등에 멘 무기(대검)는 이 규칙이 정반대다** — 정면(아래 조준)이면 검이 등 뒤라 몸에 가리고,
+	#   뒤통수(위 조준)면 우리 쪽으로 나온다. 손에 든 무기(활·지팡이)는 손이 앞이라 원래 규칙이 맞으므로
+	#   `EquipDef.weapon_on_back`으로 가른다(무기 축이지 직업 축이 아니다).
 	# ⚠ 음수 z_index는 배경 타일 밑으로 꺼져 무기가 통째로 사라진다 (실기에서 확인) — 전부 0 이상 유지
-	_weapon_pivot.z_index = 0 if sin(ang) < 0.0 else 2
+	var behind := sin(ang) < 0.0
+	if _weapon_on_back:
+		behind = not behind
+	_weapon_pivot.z_index = 0 if behind else 2
 	_weapon_pivot.visible = _alive and _roll_time_left <= 0.0 and _remote_roll_left <= 0.0
 
 
 # 무기 스탠스 각 갱신 — 평상시엔 내려 들고 흔들리게, 모션 중(스윙·발사 반동·차지)엔 0으로 되돌린다.
 # 목표로 lerp하므로 모션이 시작/끝날 때 각이 튀지 않는다. 로컬·원격 모두 자기 상태에서 파생(네트워크 0).
+#
+# 🔴🔴 **스윙 중에는 lerp가 아니라 선딜 진행도로 끌어내린다** (2026-07-29 "칼과 궤적이 어긋난다").
+#   이 각은 **무기에만 더해지고 궤적·판정에는 없다**(`_update_weapon`의 `ang` vs
+#   궤적이 쓰는 `_swing_angle_at`) — 의도된 비대칭이다: 판정 기준은 조준각이지 흔들린 각이
+#   아니고(위 const 주석), 궤적은 그 판정을 덮어야 해서 조준각에 묶여 있다. 그래서 **스윙 중 이 값이
+#   0이 아닌 만큼 칼만 판정 밖으로 밀려난다.**
+#   전에는 `target = 0`으로 lerp만 했는데, `STANCE_LERP`(9.0)로는 선딜이 끝날 때까지 다 안 빠진다:
+#   실측 60fps에서 궤적이 처음 그려지는 시점(선딜 끝 ≈ 5프레임)에 **정지 6.4° · 이동 8.7°** 잔존 —
+#   칼끝 51px에서 6~8px이고, `flip_v`로 부호까지 뒤집혀 좌·우향에서 어긋나는 쪽이 달라진다.
+#   🔴 진행도 기반이라 **프레임률과 무관하게 스윕 시작 = 궤적 시작 시점에 정확히 0**이다. lerp 계수를
+#     키우는 방식은 저사양(30fps)에서 `minf(1.0, ...)`에 걸려 첫 프레임에 각이 툭 튄다.
+#   ⚠ 시작값에서 연속적으로 줄어드므로 스윙 진입 시 점프가 없다(원래 lerp가 지키던 성질 그대로).
+#   ⚠ 판정 쪽에 sway를 더해 맞추는 방향은 **금지다** — 호스트가 흔들림 위상을 알아야 해서 신뢰 경계가
+#     늘고, 궤적만 sway로 돌리면 부채꼴이 통째로 기울어 반대쪽에 "안 보이는데 맞는" 구역이 생긴다(§3).
 func _tick_stance(delta: float, swinging: bool) -> void:
+	if swinging:
+		# 굳힌 시간 축에서만 파생한다(`_tick_swing_motion`과 같은 근거 — netreview M-1 방어).
+		var t := clampf(1.0 - _attack_anim_left / _swing_win_total, 0.0, 1.0)
+		var w := maxf(_swing_windup_l, 0.0001)
+		_stance_sway = _stance_enter_sway * clampf(1.0 - t / w, 0.0, 1.0)
+		return
 	var charging := _charging if is_local else _remote_charge >= 0
 	var target := 0.0
-	if not swinging and _recoil_left <= 0.0 and not charging:
+	if _recoil_left <= 0.0 and not charging:
 		var moving := (velocity.length_squared() > 1.0) if is_local else _remote_moving
 		var amp := RUN_SWAY_AMP if moving else IDLE_SWAY_AMP
 		_sway_phase = fmod(_sway_phase + delta * (RUN_SWAY_SPEED if moving else IDLE_SWAY_SPEED), TAU)
@@ -1267,6 +1276,9 @@ func _begin_swing(combo: int) -> void:
 	_swing_win_total = maxf(_swing_time, 0.0001)
 	_swing_windup_l = _swing_windup
 	_swing_strike_l = _swing_strike
+	# 🔴 스탠스 각도 **여기서 굳힌다** — `_tick_stance`가 선딜 동안 이 값에서 0까지 끌어내린다.
+	#   스윙 중 살아 있는 `_stance_sway`를 기준으로 삼으면 자기 자신을 참조해 0에 도달하지 못한다.
+	_stance_enter_sway = _stance_sway
 	_swing_hit_at = _swing_win_total * (_swing_windup_l + _swing_strike_l)
 	# 새 스윙은 항상 박힘 없이 시작한다 — 안 지우면 이전 스윙의 멎음이 이어져 모션이 굳는다.
 	_swing_bite_left = 0.0
@@ -1357,7 +1369,9 @@ func _cancel_swing() -> void:
 	_motion_off = 0.0
 	_motion_lunge = 0.0
 	# 이미 그려진 부분 궤적은 지우지 말고 흩어지게 둔다(뚝 끊기면 화면이 튄다).
-	if _attack_fx.visible and _fx_left <= 0.0:
+	# 🔴 **리본도 반드시 이 가드에 포함된다** — 페이드를 태울 유일한 자리라, 빠지면 취소된 스윙의
+	#   자국이 `_fx_left = 0`인 채 **영원히 화면에 굳는다**(구르기로 스윙을 끊을 때마다 한 줄씩 쌓인다).
+	if _swing_trail.visible and _fx_left <= 0.0:
 		_fx_left = ATTACK_FX_TIME
 
 
@@ -1461,7 +1475,12 @@ func _arm_swing_trail() -> void:
 	_swing_fx_armed = true
 	_swing_onset_pending = true
 	_fx_left = 0.0
-	_attack_fx.visible = false  # 선딜 동안은 아무것도 안 보인다 — 칼이 아직 안 지나갔다
+	# 🔴 이전 스윙의 점을 반드시 비운다 — 안 비우면 두 스윙의 자국이 **한 줄로 이어져** 칼이 지나간
+	#   적 없는 직선이 화면을 가로지른다(콤보 2·3타에서 방향이 뒤집히므로 특히 눈에 띈다).
+	_swing_trail.clear_points()
+	_swing_trail.visible = false
+	_trail_last_u = -1.0
+	_ghost_next_u = 0.0
 
 
 # 궤적 한 프레임 — 🔴 **선단각은 무기 각(`_motion_off`) 그 자체다.** 사본을 만들면 "칼이 지나간 각 ≠
@@ -1479,141 +1498,48 @@ func _arm_swing_trail() -> void:
 #     순간)도 같이 없앤다: 박힘은 `t`를 `선딜+스윕`에 붙들어 무기를 `_swing_to`에 두는데, 궤적도
 #     이제 같은 각에 있다.
 func _draw_swing_trail(u: float) -> void:
-	var reach := CombatMath.effective_attack_range(job, trait_value("reach"), _weapon_override)
-	var from_rad := _swing_from
-	# 🔴 선단 = 칼이 **도달한 최대 각**. `_motion_at`의 스윕 분기와 **같은 함수**(m-6)라 사본이 아니고,
-	#   분기가 없어 `u == 1.0`에서 `head == _swing_to`가 **등식**으로 성립한다.
-	var head_rad := _swing_angle_at(u)
-	var reach_ratio := 1.0
-	var tail := lerpf(SWING_TRAIL_TAIL_MIN, 1.0, clampf(u, 0.0, 1.0))
-	if _weapon_motion() == "thrust":
-		# 🔴 찌르기는 **각이 아니라 도달**이 진행한다 — 부채꼴이 ±17°로 좁아 각 스윕이 읽히지 않고,
-		#   무기 모션도 거리가 주다(`_motion_at`). 각 창은 처음부터 판정 부채꼴 전체이고 도달이 자란다.
-		var half := CombatMath.melee_half_angle(_weapon_override)
-		from_rad = -half
-		head_rad = half
-		reach_ratio = clampf(u, 0.0, 1.0)
-		tail = 1.0  # 각 방향 꼬리 개념이 없다 — 뻗어 나가는 느낌은 tip_boost가 준다
-	_apply_swing_fx_geometry(reach, from_rad, head_rad, reach_ratio, tail)
-	_attack_fx.modulate = _fx_color(1.0)
-	_attack_fx.visible = true
+	# 🔴 **칼끝 좌표를 그대로 이어 붙인다 — 이 한 줄이 "포개짐"의 전부다.** 각·반지름·회전중심을
+	#   따로 계산하지 않으므로 어긋날 축이 존재하지 않는다(부채꼴 셰이더가 3°/2.8px씩 어긋나던 자리).
+	# ⚠ 프레임당 한 점만 찍으면 각진다 — 60fps에서 스윕이 5~7프레임뿐이다(worn 0.084s). 그래서 직전
+	#   진행값과의 사이를 `TRAIL_SUBSTEPS`로 나눠 채운다. 첫 프레임은 이을 상대가 없어 한 점만 찍는다.
+	if _trail_last_u < 0.0:
+		_trail_push(u)
+	else:
+		for i: int in range(1, TRAIL_SUBSTEPS + 1):
+			_trail_push(lerpf(_trail_last_u, u, float(i) / float(TRAIL_SUBSTEPS)))
+	_trail_last_u = u
+	_swing_trail.modulate = _fx_color(1.0)
+	_swing_trail.visible = _swing_trail.get_point_count() >= 2
+	# 칼 잔상 — 리본이 칼끝 **선**이라면 이쪽은 칼 **면**이다. 같은 `_swing_angle_at`을 쓰므로
+	# 리본·실물 칼과 셋 다 같은 호 위에 놓인다.
+	# ⚠ `while`인 것은 한 프레임에 여러 칸을 건너뛸 수 있기 때문이다(저프레임·짧은 스윕).
+	var ghost_gap := 1.0 / float(GHOST_STEPS)
+	while _ghost_next_u <= u and _ghost_next_u < 1.0:
+		AfterImage.spawn_weapon(_weapon, _weapon_pivot, self,
+			_swing_dir.angle() + _swing_angle_at(_ghost_next_u), _fx_color(1.0))
+		_ghost_next_u += ghost_gap
 
 
-# 궤적 표시 기하 — 🔴 **판정 기하를 화면으로 넘기는 유일한 지점**("맞는 곳 = 보이는 곳", §3).
-#   부채꼴 = apex(플레이어) 기준 반지름 `reach` ∩ 전체각 2×`swing_arc` ≡ `CombatMath.is_melee_in_cone`
-# 규약은 보스 텔레그래프와 **같다**: 노드 원점 = apex · 회전 = facing · **균일** scale = quad_px.
-#   🔴 비균일 스케일 금지(정원이 타원이 되어 축 방향 말고는 어긋난다).
-#   🔴 quad는 지름과 **분리된** 값이다 — 딱 지름이면 호 상하좌우 끝에서 셀 중심이 쿼드 밖으로 나가
-#     프래그먼트가 아예 안 돌아 "판정 안인데 안 그려지는" 픽셀이 생긴다.
-# 🔴 반각은 `_swing_arc`가 아니라 **판정이 쓰는 함수**(`melee_half_angle`)에서 받는다 — 사본을 만들면
-#   그 clamp(0~PI)가 한쪽에만 걸려 다시 갈라진다.
-#
-# 🔴🔴 **진행 인자(sweep_from/sweep_head/reach_ratio)의 불변식** (궤적 진행 축 2026-07-28):
-#   **판정이 확정되는 순간(스윕 완료) 이 셋은 반드시 부채꼴 전체를 덮는다.**
-#   🔴 **이 보장은 공짜가 아니라 `_draw_swing_trail`의 선단 래치가 만든다**(netreview M-2 정정).
-#     래치 없이 무기 각을 그대로 넘기면 판정 프레임엔 이미 복귀 분기라 선단이 물러나 있고,
-#     **최대 약 19°가 "맞는데 안 그려진" 채로** 페이드 내내 굳는다. 래치를 지우면 이 절이 거짓이 된다.
-#     · 베기 = `[_swing_from, _swing_to]` = `±swing_arc` = 판정 반각과 **같다**
-#       (마무리 타는 `COMBO_FINISH_ARC` 배만큼 **넓다** = 안전한 방향)
-#     · 찌르기 = 각 창이 처음부터 `±melee_half_angle` 전체 · `reach_ratio`가 완료 시 정확히 1.0
-#     · `tail_floor`도 완료 시 1.0으로 수렴 → **그 순간의 그림은 도입 전과 완전히 같은 균일 부채꼴**
-#   그래서 "표시 < 판정"(= 안 보이는데 맞는다, rules §3 금지)이 **시간 축에서도 원천 불가**다.
-#   ⚠ 스윕 도중에는 일부만 그려지지만 **그때는 아직 판정이 없다**(`_swing_hit_left > 0`).
-# 🔴 **궤적 반경 = max(판정 도달, 칼끝이 실제로 닿는 거리) × 취향 배율** (2026-07-28 "칼과 빛이 따로
-#   논다" 신고의 처방). 두 축을 `max`로 잇는 것이 핵심이고, 이유는 축마다 틀리는 방향이 다르기 때문이다:
-#   · **칼끝 > 판정**(낡은 대검 56 vs 42 · 도끼 61 vs 38): 판정으로 그리면 **칼이 궤적을 뚫고 나간다.**
-#     칼날 끝이 빛 밖에 있는 그림이라 "빛이 칼을 못 따라온다"로 읽힌다.
-#   · **판정 > 칼끝**(창 80 vs 78): 칼끝으로 그리면 **표시 < 판정**이 되어 rules §3 금지에 걸린다
-#     (안 보이는데 맞는다). 그래서 이쪽은 판정이 이겨야 한다.
-#   `max`는 두 경우 모두에서 **큰 쪽**을 고르므로 "칼을 덮으면서 판정도 덮는" 최소 반경이 된다.
-# 🔴 **칼끝은 무기 표시 배치와 같은 식에서 유도한다** — `_update_weapon`의
-#   `position = -grip + (hold_dist + lunge, 0)`이 정본이고, 텍스처 오른쪽 끝이 곧 칼끝이다.
-#   식을 복제하지 말고 여기 한 곳에서만 계산해라(둘이 되면 그립을 조정했을 때 다시 갈라진다).
-# ⚠ `lunge`는 프레임마다 변하지만 여기서는 **이 스윙의 최대치**를 쓴다 — 매 프레임 반경이 출렁이면
-#   궤적이 숨을 쉬는 것처럼 보이고, 셰이더의 `reach_ratio`(진행)와 역할이 겹친다.
-# ⚠ 무장 해제(텍스처 없음)면 칼끝이 0이라 판정 도달이 그대로 이긴다 = 도입 전과 항등.
-func _swing_draw_reach(reach: float) -> float:
-	var tip := 0.0
-	if _weapon.texture != null:
-		tip = _weapon.texture.get_width() - _weapon_grip.x + _hold_dist \
-			+ _swing_lunge * _swing_lunge_mult
-	return maxf(reach, tip) * maxf(1.0, _fx_reach_mult)
+# 리본에 점 하나 — `uu`는 이징된 스윕 진행값(0~1).
+# 🔴 각은 `_swing_angle_at`을 쓴다 — **무기 각과 같은 함수**라 사본이 아니다(m-6이 지키는 그 자리).
+func _trail_push(uu: float) -> void:
+	if _swing_trail.get_point_count() >= TRAIL_MAX_POINTS:
+		_swing_trail.remove_point(0)
+	_swing_trail.add_point(_blade_tip_global(_swing_angle_at(uu)))
 
 
-func _apply_swing_fx_geometry(reach: float, sweep_from: float, sweep_head: float,
-		reach_ratio: float, tail_floor: float) -> void:
-	var draw_reach := _swing_draw_reach(reach)
-	var quad := 2.0 * (draw_reach + SWING_FX_PIXEL_PX + SWING_FX_EDGE_BIAS_PX)
-	_attack_fx.rotation = _swing_dir.angle()
-	_attack_fx.position = Vector2.ZERO
-	_attack_fx.scale = Vector2.ONE * quad
-	var mat := _attack_fx.material as ShaderMaterial
-	if mat == null or mat.shader != SWING_SHADER:
-		mat = ShaderMaterial.new()
-		mat.shader = SWING_SHADER
-		_attack_fx.material = mat
-	# ⚠ 매번 전량 심는다(기본값 의존 금지) — 노드가 재사용돼 무기를 오가므로 한 번이라도 안 심으면
-	#   이전 무기의 각·도달이 남는다(보스 텔레그래프와 같은 함정).
-	mat.set_shader_parameter(&"quad_px", quad)
-	mat.set_shader_parameter(&"radius_px", draw_reach)
-	mat.set_shader_parameter(&"half_angle", CombatMath.melee_half_angle(_weapon_override))
-	# ⚠ 무기별로 갈리는 것은 **밴드 안쪽 시작·칼끝 밝기**뿐이다(둘 다 연출). 바깥 반지름과 각은
-	#   위에서 판정 데이터로 심었다 — 무기 데이터로 그 둘을 넓히는 자리는 **일부러 두지 않았다**.
-	mat.set_shader_parameter(&"inner_ratio", _fx_inner)
-	mat.set_shader_parameter(&"pixel_px", SWING_FX_PIXEL_PX)
-	mat.set_shader_parameter(&"edge_bias_px", SWING_FX_EDGE_BIAS_PX)
-	mat.set_shader_parameter(&"edge_soft_px", SWING_FX_EDGE_SOFT_PX)
-	mat.set_shader_parameter(&"tip_boost", _fx_tip)
-	# 진행 — 위 불변식이 정본. 🔴 `sweep_head`는 이 프레임 **무기의 각 그 자체**이고, `reach_ratio`는
-	#   무기 각과 **같은 `u`** 에서 나온다(`_draw_swing_trail`) — 셰이더가 자기 시간을 갖지 않는다.
-	mat.set_shader_parameter(&"sweep_from", sweep_from)
-	mat.set_shader_parameter(&"sweep_head", sweep_head)
-	mat.set_shader_parameter(&"reach_ratio", clampf(reach_ratio, 0.0, 1.0))
-	mat.set_shader_parameter(&"tail_floor", clampf(tail_floor, 0.0, 1.0))
-
-
-# 궤적 셰이더가 쓰는 1×1 흰 쿼드 — 형태는 전부 셰이더가 그린다(보스 `_telegraph_quad_tex` 미러).
-# ⚠ **형태를 그린 텍스처를 물리지 마라** — 알파가 셰이더 형태를 다시 잘라 정합이 깨진다.
-static func _swing_quad_tex() -> ImageTexture:
-	if _quad_tex == null:
-		var img := Image.create_empty(1, 1, false, Image.FORMAT_RGBA8)
-		img.fill(Color.WHITE)
-		_quad_tex = ImageTexture.create_from_image(img)
-	return _quad_tex
-
-
-# 검기 파형 발진 (메인 특성 보유자만) — 스윙 궤적 안에서 태어나 확장 사거리 끝(tip)까지 나아간다.
-# tip은 호출부가 그 프레임 스워시에 쓴 것과 **같은 기하 계산 결과**다 — 그래서 파형이 멈추는 곳이
-# 곧 판정이 닿는 곳이다(§3). 로컬·원격 모두 이 경로를 지난다(원격은 그 피어가 공지한 특성으로).
-func _start_wave(tip: float) -> void:
-	if job == null:
-		return
-	# 출발점은 **특성 없는 기본 사거리** 기준 — 파형이 "기본 도달점 밖으로 더 나아가는" 것으로 읽히게.
-	# ⚠ 무기(_weapon_override)는 넘긴다 — 창을 든 검성의 파형이 검 기준으로 출발하면 뒤에서 튀어나온다.
-	var base_tip := CombatMath.effective_attack_range(job, 0.0, _weapon_override)
-	_wave_dir = _swing_dir
-	_wave_from = base_tip * WAVE_START_RATIO
-	_wave_to = tip
-	_wave_left = WAVE_FX_TIME
-	_wave_fx.rotation = _swing_dir.angle()
-	# 파형 두께 = 판정 반경 — 스워시와 같은 이유로 텍스처 실측(WAVE_TEX_HALF_H)에 맞춘다
-	_wave_fx.scale = Vector2.ONE * (CombatMath.attack_radius(job, trait_value("reach"),
-		_weapon_override) / WAVE_TEX_HALF_H)
-	_wave_fx.position = _wave_dir * _wave_from
-	_wave_fx.modulate = _fx_color(1.0)
-	_wave_fx.visible = true
-
-
-# 파형 진행 — 앞으로 밀며 페이드. 무기 틴트(_fx_color)를 그대로 쓴다(§4: 중립 텍스처 + swing_color).
-func _tick_wave(delta: float) -> void:
-	if _wave_left <= 0.0:
-		return
-	_wave_left -= delta
-	var t := 1.0 - clampf(_wave_left / WAVE_FX_TIME, 0.0, 1.0)
-	_wave_fx.position = _wave_dir * lerpf(_wave_from, _wave_to, t)
-	_wave_fx.modulate = _fx_color(1.0 - t * t)  # 끝에서 빠르게 흩어진다
-	if _wave_left <= 0.0:
-		_wave_fx.visible = false
+# 칼끝의 **월드 좌표** — `_update_weapon`의 배치식에서 그대로 유도한다:
+#   피벗 = `global_position + WeaponPivot.position` (플레이어는 회전하지 않으므로 회전 없이 더한다)
+#   칼끝 = 피벗 + (텍스처 오른쪽 끝까지의 거리)를 `조준각 + 스윙 오프셋`으로 돌린 것
+# ⚠ `SwingTrail`이 `top_level = true`라 `add_point`가 받는 좌표가 곧 월드 좌표다(씬 주석이 짝).
+# ⚠ **`_motion_lunge`(현재값)를 쓴다** — `_weapon_tip_dist()`의 최대 lunge가 아니다. 저쪽은 부채꼴
+#   반경이 매 프레임 출렁이지 않게 최대치로 굳히는 용도이고, 리본은 칼이 **지금** 있는 자리를 찍는다.
+func _blade_tip_global(ang_off: float) -> Vector2:
+	if _weapon.texture == null:
+		return global_position
+	var tip := _weapon.texture.get_width() - _weapon_grip.x + _hold_dist + _motion_lunge
+	return global_position + _weapon_pivot.position \
+		+ Vector2(tip, 0.0).rotated(_swing_dir.angle() + ang_off)
 
 
 # 네트워크 검증용 좌표 — 원격은 lerp된 표시 좌표가 아니라 (클램프된) 최신 수신 좌표를 쓴다.
