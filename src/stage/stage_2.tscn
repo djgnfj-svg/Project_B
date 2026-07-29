@@ -1,4 +1,4 @@
-[gd_scene load_steps=28 format=3]
+[gd_scene load_steps=29 format=3]
 
 [ext_resource type="Script" path="res://src/stage/stage.gd" id="1"]
 [ext_resource type="Texture2D" path="res://assets/sprites/stage/ground_32.png" id="2"]
@@ -27,6 +27,7 @@
 [ext_resource type="Script" path="res://src/stage/ground_detail.gd" id="25"]
 [ext_resource type="Script" path="res://src/stage/foliage_field.gd" id="26"]
 [ext_resource type="PackedScene" path="res://src/stage/foliage.tscn" id="27"]
+[ext_resource type="Resource" path="res://data/enemies/brute.tres" id="28"]
 
 [node name="Stage" type="Node2D"]
 script = ExtResource("1")
@@ -76,6 +77,11 @@ position = Vector2(470, 265)
 eid = "goblin3"
 def = ExtResource("4")
 
+[node name="Brute1" parent="." instance=ExtResource("3")]
+position = Vector2(575, 285)
+eid = "brute1"
+def = ExtResource("28")
+
 [node name="PeerSync" type="Node" parent="."]
 script = ExtResource("5")
 scene_id = "stage"
@@ -94,6 +100,7 @@ drop_authority_path = NodePath("../DropAuthority")
 
 [node name="ArrowField" type="Node" parent="."]
 script = ExtResource("13")
+peer_sync_path = NodePath("../PeerSync")
 
 [node name="MobSync" type="Node" parent="."]
 script = ExtResource("7")

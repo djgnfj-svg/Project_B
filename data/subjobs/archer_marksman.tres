@@ -1,0 +1,26 @@
+[gd_resource type="Resource" script_class="SubJobDef" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://src/core/sub_job_def.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/subjobs/archer_marksman.png" id="2"]
+
+[resource]
+script = ExtResource("1")
+id = "archer_marksman"
+display_name = "사수"
+description = "활을 처음 잡은 자의 기본기. 겨누는 법보다 빠지는 법을 먼저 배운다 — 구르기가 잦아지고 화살이 조금 더 나간다."
+icon = ExtResource("2")
+series_id = "archer"
+order = 0
+unlocks_next_at = 3
+max_level = 5
+crit_per_level = 0.015
+crit_dmg_per_level = 0.035
+haste_per_level = 0.015
+move_per_level = 0.02
+leech_per_level = 0.009
+main_trait_name = "발 놀림"
+main_trait_key = "roll_cd"
+main_trait_value = 0.2
+sub_trait_name = "곧은 시위"
+sub_trait_key = "proj_range"
+sub_trait_value = 0.1

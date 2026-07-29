@@ -186,7 +186,7 @@ func _on_hp_changed(hp: int, dropped: bool) -> void:
 		_prev_hp = hp
 		EventBus.combat_impact.emit("enemy", global_position, maxi(amount, 0), _health.last_crit)  # 손맛 공용 훅 (crit = 표시 강조)
 		if dead:
-			EventBus.entity_died.emit("enemy", global_position)  # 사망 SFX
+			EventBus.entity_died.emit("enemy", global_position, def.respawns)  # 사망 SFX (+ 광란 제외 판단)
 		else:
 			HitStop.punch(_sprite)   # 맞은 대상만 정지+스케일 튕김
 			HitFlash.flash(_sprite)  # 흰색 번쩍

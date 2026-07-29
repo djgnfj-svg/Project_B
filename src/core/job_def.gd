@@ -4,6 +4,13 @@ extends Resource
 
 @export var id: String = ""              # data/jobs/<id>.tres 파일명과 일치 — 네트워크 직업 공지의 키
 @export var display_name: String = ""
+# 🔴 "준비중" 잠금 (데모용, 2026-07-29 사용자 결정) — true면 **플레이어가 고르는 UI에서 못 고른다**
+#   (로비 직업 선택 · 설정 패널 「직업 변경」). 데모까지 궁수·법사를 잠그기 위한 칸이고,
+#   푸는 것은 이 한 줄을 false로 되돌리는 것이다 — 코드를 지우지 마라.
+#   ⚠ **삭제가 아니라 표시 게이트다**: 직업 데이터·시작 장비·하위 직업·판정 경로는 전부 그대로 살아 있고
+#     `?debug=1` F1 패널로는 계속 고를 수 있다(개발·실기 확인용). 즉 신뢰 경계는 **안 바뀐다** —
+#     조작 클라가 공지한 직업은 도입 전과 똑같이 `job_ids()` allowlist만 지난다.
+@export var coming_soon: bool = false
 @export var sprite: Texture2D            # 캐릭터 단일 컷 (UI 미리보기용 — 인게임 표시는 frames)
 @export var frames: SpriteFrames         # idle/run/roll 애니 (assets/sprites/player/<id>_frames.tres, 2방향 좌/우 플립 — GDD §5)
 @export var weapon_texture: Texture2D    # (레거시/폴백 데이터) 무기 스프라이트 — 겉모습은 이제 착용 무기(EquipDef)에서 그린다(무기 = 장비). 미착용 = 무장 해제

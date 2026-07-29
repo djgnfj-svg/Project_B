@@ -51,8 +51,8 @@ func _ready() -> void:
 	EventBus.player_swing.connect(func(_pos: Vector2, sfx: String) -> void: play(sfx))  # 무기별 휘두름음
 	EventBus.weapon_impact.connect(func(_pos: Vector2, sfx: String, _shake: float) -> void: play(sfx))  # 무기 고유 타격음(비면 무음)
 	EventBus.player_roll.connect(func(_pos: Vector2) -> void: play("roll"))
-	EventBus.entity_died.connect(func(kind: String, _pos: Vector2) -> void:
-		play("enemy_death" if kind == "enemy" else "player_death"))
+	EventBus.entity_died.connect(func(kind: String, _pos: Vector2, _respawns: bool) -> void:
+		play("enemy_death" if kind == "enemy" else "player_death"))  # 소리는 부활 여부와 무관
 	# 드랍 손맛 SFX (표시 전용 훅, 네트워크 0 — 각 클라 로컬 재생). 도면은 팡파레가 픽업음을 대신한다.
 	EventBus.item_dropped.connect(func(_kind: String, _rarity: int, _pos: Vector2) -> void: play("drop"))
 	EventBus.item_picked.connect(_on_item_picked)

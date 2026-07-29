@@ -175,6 +175,89 @@ func _initialize() -> void:
 	gload.leave_chapter()
 	gload.free()
 
+	# --- 투사체 파라미터 리졸브 (§3 단일 소스 — 표시 ArrowField = 판정 CombatAuthority) ---
+	# 🔴 **적용 지점 자체**를 겨눈다. CombatMath.effective_projectile_range만 검사하면 "함수는 맞는데
+	#   projectile_params가 그 함수를 안 부른다"가 통과한다 — 그 결함의 증상이 정확히
+	#   "맞는 곳 ≠ 보이는 곳"이고, 화면엔 이유가 안 드러난다(호스트만 짧은 화살로 판정).
+	# 무기 = worn_bow(motion_type shoot). 수명 = 사거리/속도라 수명 비교가 곧 거리 비교다.
+	# ⚠ **사거리 수치를 하드코딩하지 마라** — 밸런스 튜닝(2026-07-27에 220→150)마다 거짓 빨간불이 뜬다.
+	#   .tres에서 읽되 검증은 여전히 독립적이다(projectile_lifetime_s로 다시 계산해 대조한다).
+	var gproj := GameStateScript.new() as Node
+	var bow_range: float = (gproj.equip_def("worn_bow") as EquipDef).arrow_range
+	var pp_base: Dictionary = gproj.projectile_params("worn_bow", 0.0, 0)
+	var pp_zero: Dictionary = gproj.projectile_params("worn_bow", 0.0, 0, 0.0)
+	var pp_bonus: Dictionary = gproj.projectile_params("worn_bow", 0.0, 0, 0.25)
+	_check("projectile_params: 특성 인자 생략 = 0 = 도입 전과 항등",
+		is_equal_approx(float(pp_base.get("life", -1.0)), float(pp_zero.get("life", -2.0))))
+	_check("projectile_params: 특성 0의 수명 = arrow_range/속도 (항등 폴백)",
+		is_equal_approx(float(pp_zero.get("life", -1.0)),
+			CombatMath.projectile_lifetime_s(bow_range, float(pp_zero.get("speed", 0.0)))))
+	_check("projectile_params: proj_range +25% → 수명(=사거리)이 실제로 1.25배 ★적용 지점 검출",
+		is_equal_approx(float(pp_bonus.get("life", -1.0)), float(pp_zero.get("life", -2.0)) * 1.25))
+	# 상한 초과 주장은 TRAIT_MAX에서, 그 뒤 사거리는 MAX_ARROW_RANGE에서 잘린다(이중 방어)
+	var pp_over: Dictionary = gproj.projectile_params("worn_bow", 0.0, 0, 9.0)
+	_check("projectile_params: 과대 특성 주장 → TRAIT_MAX(+50%)까지만",
+		is_equal_approx(float(pp_over.get("life", -1.0)), float(pp_zero.get("life", -2.0)) * 1.5))
+	# 무기 리졸브 실패(모르는 id) 경로에도 같이 걸린다 — fallback_range 쪽만 특성이 빠지면 갈라진다
+	var pp_fb: Dictionary = gproj.projectile_params("bogus_weapon", 200.0, 0, 0.5)
+	_check("projectile_params: 폴백 사거리(모르는 무기)에도 특성이 걸린다",
+		is_equal_approx(float(pp_fb.get("life", -1.0)),
+			CombatMath.projectile_lifetime_s(300.0, float(pp_fb.get("speed", 0.0)))))
+
+	# --- 평타 콤보 (궁수 "평·평·쭉") 적용 지점 (§3 — 표시 ArrowField = 판정 CombatAuthority) ---
+	# 🔴 CombatMath.combo_*만 검사하면 "함수는 맞는데 projectile_params가 안 부른다"가 통과한다.
+	#   그 결함의 증상이 정확히 "3타가 화면에선 멀리 나가는데 판정은 평타"이고 화면엔 이유가 안 드러난다.
+	# worn_bow = 사거리 150 · 콤보 [1, 1, 2] · 데미지 [1, 1, 2.5]. 수명 = 사거리/속도라 수명 비교가 곧 거리 비교다.
+	var pp_c0: Dictionary = gproj.projectile_params("worn_bow", 0.0, 0, 0.0, 0)
+	var pp_c1: Dictionary = gproj.projectile_params("worn_bow", 0.0, 0, 0.0, 1)
+	var pp_c2: Dictionary = gproj.projectile_params("worn_bow", 0.0, 0, 0.0, 2)
+	_check("projectile_params: 콤보 인자 생략 = 0타 = 도입 전과 항등",
+		is_equal_approx(float(pp_zero.get("life", -1.0)), float(pp_c0.get("life", -2.0))))
+	_check("projectile_params: 1타·2타는 같은 사거리(평·평)",
+		is_equal_approx(float(pp_c0.get("life", -1.0)), float(pp_c1.get("life", -2.0))))
+	_check("projectile_params: 3타 사거리 = 2배(쭉) ★적용 지점 검출 — 안 걸리면 여기가 빨개진다",
+		is_equal_approx(float(pp_c2.get("life", -1.0)), float(pp_c0.get("life", -2.0)) * 2.0))
+	_check("projectile_params: 3타 데미지 배율 = 2.5 (사거리와 **같은 리졸브**에서 함께 온다)",
+		is_equal_approx(float(pp_c2.get("combo_dmg", -1.0)), 2.5))
+	_check("projectile_params: 1타 데미지 배율 = 1.0 (항등)",
+		is_equal_approx(float(pp_c0.get("combo_dmg", -1.0)), 1.0))
+	# 범위 밖 타수 주장은 항등으로 떨어진다(표시 경로는 발신자 주장을 그대로 넘기므로 여기가 마지막 방어)
+	_check("projectile_params: 범위 밖 타수 주장(99) → 항등 사거리",
+		is_equal_approx(float(gproj.projectile_params("worn_bow", 0.0, 0, 0.0, 99).get("life", -1.0)),
+			float(pp_c0.get("life", -2.0))))
+	# 콤보 없는 무기(법사 지팡이)는 어떤 타수를 실어도 그대로 — 사용자 확정 "법사는 그대로 둔다"
+	var pp_staff0: Dictionary = gproj.projectile_params("worn_staff", 0.0, 0, 0.0, 0)
+	var pp_staff2: Dictionary = gproj.projectile_params("worn_staff", 0.0, 0, 0.0, 2)
+	_check("projectile_params: 지팡이는 타수를 실어도 사거리 불변 ★법사 무변경 회귀 방어",
+		is_equal_approx(float(pp_staff0.get("life", -1.0)), float(pp_staff2.get("life", -2.0))))
+	_check("projectile_params: 지팡이 데미지 배율도 항등",
+		is_equal_approx(float(pp_staff2.get("combo_dmg", -1.0)), 1.0))
+	# 🔴 **비차지 무기(마법볼)에 실린 차지 레벨은 폭발 반경에서도 떨어진다** (2026-07-27 netreview I1).
+	#   `level`·`scale`·`step_time`은 처음부터 게이트를 지났는데 `blast`만 `lv`를 날것으로 썼었다.
+	#   판정은 `is_charge_time_ok`가 막지만 **표시**(`arrow_field`)는 이 함수를 직접 불러 반경을 기억하므로,
+	#   조작 클라 한 통이 **정직한 파트너 화면에도** 48px 폭발 FX·소리·셰이크를 띄웠다.
+	# 🔴 이 단정이 그 결함 클래스의 **유일한 자동 방어**다 — 나머지 층(`combat_authority`의 발사형 가드)은
+	#   씬 글루라 `-s`가 preload할 수 없어 지워도 스위트가 초록이다(그 파일 주석 참조).
+	var staff_r0 := float(gproj.projectile_params("worn_staff", 0.0, 0).get("blast", -1.0))
+	var staff_r3 := float(gproj.projectile_params("worn_staff", 0.0, 3).get("blast", -1.0))
+	_check("projectile_params: 마법볼(shoot)에 c=3을 실어도 폭발 반경 불변 ★표시 스푸핑 방어",
+		is_equal_approx(staff_r0, staff_r3))
+	_check("projectile_params: 마법볼 c=3 반경 = 0단계 반경(게이트를 되돌리면 ×2.4로 빨개진다)",
+		is_equal_approx(staff_r3, CombatMath.charge_blast_radius(staff_r0, 0)))
+	# ⚠ 반대 방향 회귀 방어 — **차지 무기는 여전히 자란다.** 위 게이트를 `is_charge` 없이 0으로
+	#   못 박으면(과잉 수정) 여기가 빨개진다. 기대값은 .tres가 아니라 CombatMath에서 유도한다.
+	var iron_r0 := float(gproj.projectile_params("iron_staff", 0.0, 0).get("blast", -1.0))
+	var iron_r3 := float(gproj.projectile_params("iron_staff", 0.0, 3).get("blast", -1.0))
+	_check("projectile_params: 철 지팡이(charge)는 c=3에서 반경이 자란다 ★과잉 수정 방어",
+		iron_r3 > iron_r0 and is_equal_approx(iron_r3, CombatMath.charge_blast_radius(iron_r0, 3)))
+	# 특성(proj_range)과 콤보가 **함께** 곱해지되 MAX_ARROW_RANGE clamp를 우회하지 않는가(심층 방어).
+	# ⚠ 기대값도 .tres에서 유도한다 — 사거리를 조일 때마다 여기가 거짓으로 빨개지지 않게.
+	_check("projectile_params: 3타 × proj_range 상한이 함께 곱해진다(clamp 우회 없음)",
+		is_equal_approx(float(gproj.projectile_params("worn_bow", 0.0, 0, 0.5, 2).get("life", -1.0)),
+			CombatMath.projectile_lifetime_s(bow_range * 2.0 * 1.5,
+				float(pp_c0.get("speed", 0.0)))))
+	gproj.free()
+
 	# --- 창고 넣기/빼기 (개인·로컬 보관함, 비네트워크) ---
 	# 재료: 예치→창고 증가·가방 감소, 회수→역. 0이 된 창고 키는 삭제(표시 정돈).
 	gs.deposit_material("goblin_hide", 1)
@@ -268,7 +351,24 @@ func _initialize() -> void:
 	_check("계열 목록 = order 정렬(검사 → 광전사 → 검성)",
 		series.size() == 3 and series[0] == "warrior_swordsman" and series[1] == "warrior_berserker" \
 		and series[2] == "warrior_swordmaster")
-	_check("타 계열(archer) 하위 직업 없음(미작성 = 스트레치)", gg.sub_jobs_of_series("archer").is_empty())
+	# 궁수 계열(2026-07-27 신설) — 전사와 **같은 관용구로** 전수 단정한다. 계열이 늘어도 이 줄이
+	# 자동으로 커버하지는 않으므로, 새 계열을 만들면 여기 블록을 하나 더 추가해라(느슨하게 두면
+	# order 뒤집힘·id 오타가 해금 체인을 조용히 어긋나게 한다 — 위 전사 주석과 같은 이유).
+	var a_series: Array = gg.sub_jobs_of_series("archer")
+	_check("궁수 계열 목록 = order 정렬(사수 → 속사수 → 저격수)",
+		a_series.size() == 3 and a_series[0] == "archer_marksman" and a_series[1] == "archer_ranger" \
+		and a_series[2] == "archer_sniper")
+	var m_series: Array = gg.sub_jobs_of_series("mage")
+	_check("법사 계열 목록 = order 정렬(술사 → 비전학자 → 마도사)",
+		m_series.size() == 3 and m_series[0] == "mage_adept" and m_series[1] == "mage_arcanist" \
+		and m_series[2] == "mage_magus")
+	# 🔴 3계열이 전부 채워졌다(2026-07-27) — 이제 "미작성 계열" 단정은 없다. 대신 **계열 목록 자체**를
+	#   `data/jobs` 스캔에서 파생해 전수로 돈다: 직업이 늘었는데 하위 직업을 안 만들면 여기가 빨개진다
+	#   (`add_exp`가 보유 0이면 즉시 return 해서 **성장 축이 통째로 안 도는데 에러가 안 난다** — 궁수·법사가
+	#   실제로 그 상태였다). 계열별 개수는 위 세 블록이 이름까지 못박으므로 여기선 "비어 있지 않음"만 본다.
+	for jid: String in gg.job_ids():
+		_check("계열 '%s'에 하위 직업이 있다(없으면 EXP가 안 쌓인다)" % jid,
+			not gg.sub_jobs_of_series(jid).is_empty())
 
 	# 지급 — 멱등(grant_starting_loadout 미러)
 	_check("지급 전 보유 0", gg.owned_sub_jobs().is_empty())
@@ -520,6 +620,9 @@ func _initialize() -> void:
 	gg2.free()
 	gg.free()
 
+	_check_all_data_loads()
+	_check_content_reachability()
+
 	gs.free()
 	if _fails == 0:
 		print("TEST_OK game_state")
@@ -529,9 +632,119 @@ func _initialize() -> void:
 		quit(1)
 
 
+# 🔴 **`data/**/*.tres` 전수 로드 트립와이어** (2026-07-27 신설).
+# 이 프로젝트가 **같은 결함 클래스로 세 번** 값을 치렀다 — 전부 "에러 없이 초록불"이었다:
+#   ⑴ 2026-07-26 보스 `.tres`가 `.aseprite`(로컬 전용 임포터)를 참조 → 챕터1 보스전이 통째로
+#      로드 실패했는데 **웹 익스포트가 exit 0**이었다(실패는 로그 ERROR 줄에만 남는다).
+#   ⑵ 2026-07-27 브루트가 어느 씬에도 없어 루프가 안 도는데 **스위트 8종이 내내 그린**.
+#   ⑶ 2026-07-27 하위 직업 3장이 아이콘 미존재로 전량 로드 실패인데 **TEST_OK + exit 0**.
+# 🔴 공통점 = **스위트는 계약을 지키지만 "그 파일이 실제로 열리는가"는 아무도 안 봤다.**
+#   리졸버 테스트가 이걸 못 잡는 이유: `sub_job_def()` 류가 로드 실패 시 **null을 돌려주고 조용히
+#   건너뛰므로**, 계열 목록이 비면 "미작성 계열"과 "깨진 계열"이 구분되지 않는다.
+# ⚠ 그래서 여기서는 리졸버를 거치지 않고 **`ResourceLoader.load()`를 직접** 부른다(verify §2-5의
+#   그 확인법 그대로). 새 데이터 폴더가 생기면 DirAccess 스캔이 자동으로 덮는다.
+func _check_all_data_loads() -> void:
+	var root := "res://data"
+	var dirs := DirAccess.get_directories_at(root)
+	_check("data 폴더 스캔 0건 아님(경로가 바뀌면 이 테스트가 통째로 무력해진다)", not dirs.is_empty())
+	var total := 0
+	for sub: String in dirs:
+		var dir_path := "%s/%s" % [root, sub]
+		for f: String in DirAccess.get_files_at(dir_path):
+			# 익스포트본에서는 .tres가 .remap으로 바뀔 수 있다 — 확장자를 벗겨 원본 경로로 되돌린다.
+			if f.ends_with(".remap"):
+				f = f.trim_suffix(".remap")
+			elif not f.ends_with(".tres"):
+				continue
+			total += 1
+			var path := "%s/%s" % [dir_path, f]
+			if ResourceLoader.load(path) == null:
+				_check("데이터 로드: %s" % path, false)
+	_check("data/**/*.tres 전수 로드 (%d개)" % total, true)
+
+
 func _check(what: String, ok: bool) -> void:
 	if ok:
 		print("  ok: %s" % what)
 	else:
 		_fails += 1
 		printerr("  FAIL: %s" % what)
+
+
+# 🔴 **콘텐츠 도달성 트립와이어** (2026-07-28 신설).
+# 위 `_check_all_data_loads`가 "그 파일이 열리는가"를 본다면, 이쪽은 **"그 콘텐츠에 손이 닿는가"** 를 본다.
+# 🔴 정확히 이 축이 비어 있어서 2026-07-27에 값을 치렀다 — 유일한 도면 드랍원(브루트)이 어느 씬에도
+#   배치돼 있지 않아 **3직업 전부 제작대에 도달할 수 없었는데 스위트 8종이 내내 그린**이었다.
+#   파일은 전부 멀쩡히 열렸기 때문이다("코드상 닫힘"을 루프가 돈다는 근거로 쓰지 마라 — CLAUDE.md).
+# 보는 것 넷 — 전부 **에러 없이 조용히 깨지는** 부류다:
+#   ⑴ 레시피 결과 장비 실재 — 오타 하나면 제작 버튼이 조용히 아무것도 안 만든다
+#   ⑵ 레시피 재료 실재 — 없는 재료를 요구하면 **영원히 제작 불가**인데 UI는 정상으로 보인다
+#   ⑶ 적 드랍표 ref_id 실재 — 모르는 id는 `unlock_blueprint`/`add_material`이 경고 후 폐기(드랍이 증발)
+#   ⑷ 🔴 모든 레시피에 **드랍원이 있는가** — 아무 적도 그 도면을 안 떨구면 그 무기는 없는 것과 같다
+# ⚠ ⑷는 "그 적이 씬에 배치돼 있는가"까지는 못 본다(씬 스캔은 test_stage_dressing 몫). 한 겹 더 얕지만,
+#   드랍표에 아예 없는 경우는 여기서 확실히 잡힌다.
+func _check_content_reachability() -> void:
+	var equip_ids := _data_ids("res://data/equipment")
+	var material_ids := _data_ids("res://data/materials")
+	var recipe_ids := _data_ids("res://data/recipes")
+
+	# 적 드랍표에서 참조되는 도면·재료 id 수집 (⑶·⑷ 공용)
+	var dropped_blueprints := {}
+	var drop_ref_bad := 0
+	for f: String in DirAccess.get_files_at("res://data/enemies"):
+		if f.ends_with(".remap"):
+			f = f.trim_suffix(".remap")
+		elif not f.ends_with(".tres"):
+			continue
+		var edef := ResourceLoader.load("res://data/enemies/%s" % f) as EnemyDef
+		if edef == null or edef.drop_table == null:
+			continue
+		for entry: DropEntry in edef.drop_table.entries:
+			if entry == null:
+				continue
+			match entry.kind:
+				"blueprint":
+					dropped_blueprints[entry.ref_id] = true
+					if not recipe_ids.has(entry.ref_id):
+						_check("드랍 도면 실재: %s → data/recipes/%s.tres" % [f, entry.ref_id], false)
+						drop_ref_bad += 1
+				"material":
+					if not material_ids.has(entry.ref_id):
+						_check("드랍 재료 실재: %s → data/materials/%s.tres" % [f, entry.ref_id], false)
+						drop_ref_bad += 1
+	_check("적 드랍표 ref_id 전수 실재 (오류 %d건)" % drop_ref_bad, drop_ref_bad == 0)
+
+	var recipe_bad := 0
+	var unreachable := 0
+	for rid: String in recipe_ids:
+		var r := ResourceLoader.load("res://data/recipes/%s.tres" % rid) as RecipeDef
+		if r == null:
+			continue
+		# ⑴ 결과 장비
+		if not equip_ids.has(r.result_equip_id):
+			_check("레시피 결과 장비 실재: %s → %s" % [rid, r.result_equip_id], false)
+			recipe_bad += 1
+		# ⑵ 재료
+		for mid: Variant in r.material_costs.keys():
+			if not material_ids.has(str(mid)):
+				_check("레시피 재료 실재: %s → %s" % [rid, str(mid)], false)
+				recipe_bad += 1
+		# ⑷ 도달성 — 도면 드랍원이 없으면 그 무기는 영원히 못 만든다
+		if not r.unlocked_by_default and not dropped_blueprints.has(rid):
+			_check("🔴 도면 드랍원 없음: %s — 어떤 적도 이 설계도를 떨구지 않는다(영원히 제작 불가)" % rid,
+				false)
+			unreachable += 1
+	_check("레시피 참조 전수 실재 (오류 %d건)" % recipe_bad, recipe_bad == 0)
+	_check("🔴 레시피 도달성 전수: 모든 도면에 드랍원이 있다 (고아 %d건)" % unreachable, unreachable == 0)
+
+
+# 폴더의 .tres 파일명(확장자 제거) 집합 — id = 파일명 관례(rules §4)에 기댄다.
+func _data_ids(dir_path: String) -> Dictionary:
+	var out := {}
+	for f: String in DirAccess.get_files_at(dir_path):
+		if f.ends_with(".remap"):
+			f = f.trim_suffix(".remap")
+		elif not f.ends_with(".tres"):
+			continue
+		out[f.trim_suffix(".tres")] = true
+	return out

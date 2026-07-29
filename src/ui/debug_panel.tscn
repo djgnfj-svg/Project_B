@@ -1,0 +1,80 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://src/ui/debug_panel.gd" id="1"]
+
+[node name="DebugPanel" type="CanvasLayer"]
+layer = 12
+visible = false
+script = ExtResource("1")
+
+[node name="Backdrop" type="ColorRect" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="Center" type="CenterContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="Dialog" type="PanelContainer" parent="Center"]
+custom_minimum_size = Vector2(600, 0)
+layout_mode = 2
+
+[node name="Margin" type="MarginContainer" parent="Center/Dialog"]
+layout_mode = 2
+
+[node name="VBox" type="VBoxContainer" parent="Center/Dialog/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="TitleRow" type="HBoxContainer" parent="Center/Dialog/Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Title" type="Label" parent="Center/Dialog/Margin/VBox/TitleRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"TitleLabel"
+text = "개발 디버그 (F1)"
+
+[node name="CloseBtn" type="Button" parent="Center/Dialog/Margin/VBox/TitleRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(56, 0)
+layout_mode = 2
+focus_mode = 0
+text = "닫기"
+
+[node name="NoticeLabel" type="Label" parent="Center/Dialog/Margin/VBox"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_type_variation = &"InfoLabel"
+theme_override_constants/line_spacing = 0
+autowrap_mode = 3
+
+[node name="BodyScroll" type="ScrollContainer" parent="Center/Dialog/Margin/VBox"]
+custom_minimum_size = Vector2(0, 228)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="Body" type="VBoxContainer" parent="Center/Dialog/Margin/VBox/BodyScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="HintLabel" type="Label" parent="Center/Dialog/Margin/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"InfoLabel"
+theme_override_constants/line_spacing = 0
+autowrap_mode = 3

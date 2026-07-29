@@ -15,6 +15,22 @@ description: Project_B(2D Godot) 프로젝트의 검증 규율. Godot 헤드리�
 
 PowerShell은 자식 프로세스 stdout을 안 보여준다 — **테스트는 Bash 툴로 돌려라.** 실행 파일은 프로젝트 루트의 `Godot_v4.7.1-stable_win64.exe`다.
 
+### 🔴 실행 정본 = `bash scripts/run_tests.sh` (2026-07-28 신설)
+
+```bash
+bash scripts/run_tests.sh            # 전체 (파스 체크 + 단일 전수 + 멀티 방 왕복)
+bash scripts/run_tests.sh --fast     # 멀티 방 왕복 생략 (3프로세스라 느리다)
+bash scripts/run_tests.sh combat     # 이름에 그 문자열이 든 것만
+```
+판정 = `ALL_TESTS_OK` + exit 0. **아래 개별 명령은 디버깅용**이고, 평소에는 이걸 쓴다.
+
+- ✅ **`tests/test_*_auto.gd`를 자동 탐색한다** — 새 테스트는 **파일을 놓는 것만으로** 들어온다. 그전까지 "총 N종"이 이 문서·`CLAUDE.md` 두 곳(실은 세 곳)에 복제돼 있었고, 문서가 스스로 *"목록에서 빠진 테스트는 낡아 죽는다"* 고 경고하던 자리다. **이제 개수를 문서에 적지 마라.**
+- ✅ **판정 3조건을 전부 본다** — `exit 0` + `TEST_OK` ≥ 1 + `SCRIPT ERROR` 0. `grep TEST_OK`만 하면 §3의 「침묵 통과」를 놓친다(실제로 `exit 0 / TEST_OK=1 / SCRIPT_ERROR=8`인 상태를 이 러너가 잡았다).
+- 🔴 **씬 글루 파스 체크가 스위트보다 먼저 돈다.** `player.gd`·`combat_authority.gd`·`peer_sync.gd`·`boss.gd`는 `-s`가 preload를 안 해서 **문법 오류·없는 함수 호출조차 스위트가 통과시킨다** — 2026-07-28에 `player.gd`가 존재하지 않는 `CombatMath` 함수를 불러 **게임이 아예 안 뜨는 상태**로 "스위트 그린"이 보고됐다. 변경된 `.gd`만 `--check-only --script`로 훑는다(1파일 ≈ 1초).
+  - ⚠ **오토로드 전역(`EventBus`·`Net`…)은 `--check-only`에서도 정상적으로 미해결이다**(§1 아래 함정과 같은 이유) — 그 줄과 연쇄 줄만 걸러낸다. 이름은 `project.godot`에서 **읽어서** 만들므로 오토로드가 늘어도 미러를 손대지 않는다. 🔴 **`$code`로 판정하지 마라** — 오토로드 에러만으로도 Godot exit가 1이라 필터가 무의미해진다.
+  - ⚠ 작업 중인 트리를 검증하면 **레이스**가 난다(파스 체크가 도는 사이 파일이 바뀌면 뒤 항목과 판정이 갈린다). 하네스 결함이 아니니 재실행해라.
+- ⚠ **`$(grep -c … || echo 0)` 관용구를 쓰지 마라** — `grep -c`는 0매치일 때 "0"을 출력하고 **exit 1**이라 결과가 `"0\n0"`이 되어 `[ … -eq 0 ]`이 터진다. **정상(에러 0)일 때만 깨진다.** 대입문 **뒤에** `|| n=0`을 두는 것이 맞다(러너의 `count_in()` 참조).
+
 ```bash
 # CombatMath 단위 (사거리·쿨다운·구르기·잔몹 타격 반경·부채꼴·화살 발사율/원점/명중반경/사거리 clamp + 차지 발사(레벨 clamp·홀드→레벨·위력/반경 배율·폭발 판정·차지 시간 검증·탄속 clamp·터널링 불변식) + 장비 스탯 total_stats/equip_stat_at_level/upgraded_stats/upgrade_cost·calc_damage 보너스 + **성장축 5스탯**(level_stats 메인/서브 합산·clamp_level_stats 경계·confirm_damage 곱 순서·반올림 1회·치명 경계·leech_gain 오버킬·haste_scale/effective_cooldown + 검증 3함수 haste 버전·**스윙 창 계약 데이터 전수**·SAME_SWING 퇴화 트립와이어·effective_move_speed·level_for_exp/exp_progress) + **하위 직업 특성**(effective_attack_range 항등/+30%/상한 clamp/음수/INF · 기하 3함수가 같은 확장 사거리에서 파생되는지 = "맞는 곳=보이는 곳" · 적 body_radius 조합 · **특성 카탈로그 clamp_trait(s)** 상한/음수/INF/모르는 키/빠진 키 · **구르기 파생** effective_roll_cooldown·effective_roll_speed와 is_roll_grant_ok의 특성 게이트 · trait_text 부호 · **외삽 상한 불변식에 roll_dist 포함**) — 신뢰 경계·§3 계약)
 ./Godot_v4.7.1-stable_win64.exe --headless --path . -s res://tests/test_combat_math_auto.gd
@@ -66,7 +82,7 @@ wait $GUEST_PID; kill $RELAY_PID
 # 판정: host/guest 로그 둘 다 "TEST_OK" + exit 0. "SCRIPT ERROR"도 같이 grep해라 (§3).
 ```
 
-새 테스트를 추가하면 위 목록과 `CLAUDE.md`의 「검증 명령」 절을 **동시에** 갱신해라.
+✅ **새 테스트를 추가해도 목록을 손댈 필요가 없다** — `run_tests.sh`가 자동 탐색한다(위). 위 개별 명령은 **무엇을 검증하는지의 설명**으로 유지하되, "총 N종" 같은 개수는 어디에도 적지 마라(그게 갈라지던 미러다). ⚠ 인자·다중 프로세스가 필요한 예외(`test_net_room_auto`)를 새로 만들면 러너에 분기를 추가해야 한다.
 
 **진단 도구(스위트 아님) — 릴레이 왕복 지연 계측 `tests/measure_latency.gd`:** "렉이 있다·게스트만 맞는다" 류 신고가 오면 추측하지 말고 먼저 재라. 게임과 같은 홉(클라A→릴레이→클라B→릴레이→클라A)을 왕복해 RTT 분포 + 그 지연이 깎아먹는 **회피 창 예산**까지 환산해 찍는다. `_auto`가 아니라 스위트에 안 들어간다(외부 네트워크 의존).
 

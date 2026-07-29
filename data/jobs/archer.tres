@@ -9,11 +9,14 @@
 script = ExtResource("1")
 id = "archer"
 display_name = "궁수"
+coming_soon = true
 sprite = ExtResource("2")
 frames = ExtResource("3")
 weapon_texture = ExtResource("4")
 weapon_grip = Vector2(13, 17)
 starting_weapon_id = "worn_bow"
+starting_sub_job_id = "archer_marksman"
+exp_curve = PackedInt32Array(0, 25, 60, 105, 160, 300)
 move_speed = 110.0
 attack_damage = 1
 attack_range = 48.0

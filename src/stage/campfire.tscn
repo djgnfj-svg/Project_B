@@ -112,6 +112,7 @@ peer_sync_path = NodePath("../PeerSync")
 
 [node name="ArrowField" type="Node" parent="."]
 script = ExtResource("11")
+peer_sync_path = NodePath("../PeerSync")
 
 [node name="SceneFlow" type="Node" parent="."]
 script = ExtResource("8")

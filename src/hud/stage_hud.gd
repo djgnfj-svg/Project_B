@@ -16,6 +16,13 @@ const INV_ICON_SIZE := 16.0  # 인벤 아이콘 표시 크기(px)
 # UI 오버레이 조합 — HUD가 설정/인벤 패널을 무는 것은 조합(rules §0 예외). class_name 대신 preload(§0).
 const SettingsPanelScene := preload("res://src/ui/settings_panel.tscn")
 const InventoryPanelScene := preload("res://src/ui/inventory_panel.tscn")
+# 개발용 디버그 패널(F1) — `?debug=1`(웹) 또는 비웹(에디터·네이티브)에서만 만든다.
+# 스크립트를 따로 preload하는 이유 = **게이트 판정을 인스턴스 없이** 물어보기 위해서다(panel_enabled는 static).
+const DebugPanelScene := preload("res://src/ui/debug_panel.tscn")
+const DebugPanel := preload("res://src/ui/debug_panel.gd")
+# 개발용 모션 튜너(F2) — 같은 게이트, 다른 성격이다: F1은 모달(뒤 클릭 차단)이라 열어 둔 채 휘두를 수
+# 없어 손맛 조율에 못 쓴다. 이쪽은 **비모달**이라 슬라이더를 만진 채 바로 공격할 수 있다(그 파일 상단).
+const MotionTunerScene := preload("res://src/ui/motion_tuner.tscn")
 const UiTheme := preload("res://src/ui/ui_theme.gd")  # UI 톤 단일 소스 (로비·패널과 같은 테마)
 const GOLD_TEX := preload("res://assets/sprites/items/gold.png")  # 골드 인벤 아이콘 (DropField와 같은 소스)
 
@@ -24,6 +31,8 @@ var _toast_queue: Array[Dictionary] = []  # 대기 중 토스트 — 같은 프�
 var _toast_busy: bool = false  # 현재 한 건을 표시 중인가 (타이머 만료 시 다음 것으로 넘어감)
 var _phase_banner_seq: int = 0  # 페이즈 배너 자동 숨김 타이머 경합 가드 (다른 배너가 덮으면 안 지움)
 var _inv_panel: CanvasLayer = null  # I키 인벤 창 — HUD가 무는 조합(어디서나 열림)
+var _debug_panel: CanvasLayer = null  # F1 디버그 창 — 게이트가 닫혀 있으면 null(만들지도 않는다)
+var _motion_tuner: CanvasLayer = null  # F2 모션 튜너 — 같은 게이트(비모달이라 열어 둔 채 휘두를 수 있다)
 var _ping_refresh_accum: float = 0.0  # 핑 표시 갱신 누산
 var _local_player: Node = null  # 구르기 쿨 표시용 로컬 아바타 캐시 (씬/스폰마다 바뀌므로 유효성 재확인)
 var _roll_ready: bool = true  # 구르기 준비 상태 — 바뀔 때만 색을 덮어쓴다(매 프레임 override는 WASM에서 낭비)
@@ -62,6 +71,13 @@ func _ready() -> void:
 	# I키 인벤 창 — HUD가 물어 어디서나(스테이지·마을) I로 토글. 여는 키는 HUD가 소비(아래 _unhandled_input).
 	_inv_panel = InventoryPanelScene.instantiate() as CanvasLayer
 	add_child(_inv_panel)
+	# F1 디버그 창 — 인벤과 같은 조합(HUD가 물고, 여는 키는 HUD가 소비). 게이트가 닫히면 아예 안 만든다.
+	if DebugPanel.panel_enabled():
+		_debug_panel = DebugPanelScene.instantiate() as CanvasLayer
+		add_child(_debug_panel)
+		# F2 모션 튜너 — 같은 게이트 뒤에 함께 만든다(둘 다 `DebugBridge.panel_enabled()` 단일 소스).
+		_motion_tuner = MotionTunerScene.instantiate() as CanvasLayer
+		add_child(_motion_tuner)
 	var max_hp := GameState.selected_job().max_hp
 	_hp_bar.max_value = float(max_hp)
 	_set_own_hp(max_hp)
@@ -149,10 +165,26 @@ func _local_player_node() -> Node:
 
 
 # I키로 인벤 창 토글 — HUD가 확실히 소비(패널은 I를 안 먹는다, 중복 방지). Esc 닫기는 패널 자체.
+# 🔴 F1(디버그 패널)도 **여기 한 곳에서만** 소비한다 — 패널이 같이 먹으면 열자마자 닫힌다(rules §5).
+#   InputMap 액션이 아니라 raw 키로 본다: project.godot(입력 맵)은 리드 몫이고, F1은 리바인드 대상이
+#   아닌 개발용 키라 액션을 늘릴 이유가 없다. 게이트가 닫혀 패널이 없으면 키를 **소비하지 않는다**.
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("inventory"):
 		if _inv_panel != null:
 			_inv_panel.call("toggle")
+		get_viewport().set_input_as_handled()
+		return
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return
+	if key.keycode == KEY_F1 and _debug_panel != null:
+		_debug_panel.call("toggle")
+		get_viewport().set_input_as_handled()
+	# 🔴 F2도 **여기 한 곳에서만** 소비한다(F1과 같은 이유 — 패널이 같이 먹으면 열자마자 닫힌다).
+	#   ⚠ 모션 튜너는 비모달이라 그 패널은 어떤 키도 삼키지 않는다: Esc·F·WASD가 전부 게임으로 가야
+	#   열어 둔 채로 움직이며 휘두를 수 있다. 그래서 닫는 키가 여기 있는 F2뿐이다.
+	elif key.keycode == KEY_F2 and _motion_tuner != null:
+		_motion_tuner.call("toggle")
 		get_viewport().set_input_as_handled()
 
 

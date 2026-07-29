@@ -87,12 +87,20 @@ func _on_job_pressed() -> void:
 		var label := jd.display_name if jd != null and not jd.display_name.is_empty() else id
 		if id == GameState.selected_job_id:
 			label += "  ✓"
+		# 🔴 준비중 직업은 여기서도 막는다 (데모용 2026-07-29) — 로비와 **같은 판정 함수**를 쓴다.
+		#   UI마다 규칙을 복사하면 한쪽만 풀렸을 때 "로비에선 못 고르는데 마을에서 바꿔진다"가 된다.
+		#   여긴 버튼 폭이 160px라 로비와 달리 라벨에 그대로 넣어도 열이 안 어긋난다.
+		var playable := GameState.is_job_playable(id)
+		if not playable:
+			label += "  (준비중)"
 		var b := _mk_btn(label, 160)
+		b.disabled = not playable
 		var jid := id
-		b.pressed.connect(func() -> void:
-			_dismiss_overlay()
-			EventBus.job_change_requested.emit(jid)  # PeerSync(마을)가 반영+재공지
-			close())
+		if playable:
+			b.pressed.connect(func() -> void:
+				_dismiss_overlay()
+				EventBus.job_change_requested.emit(jid)  # PeerSync(마을)가 반영+재공지
+				close())
 		vb.add_child(b)
 	var cancel := _mk_btn("취소", 160)
 	cancel.pressed.connect(_dismiss_overlay)

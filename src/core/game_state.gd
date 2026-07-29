@@ -91,6 +91,31 @@ func selected_job() -> JobDef:
 	return job_def(selected_job_id)
 
 
+# 🔴 "준비중" 게이트 단일 소스 (데모용 2026-07-29) — **플레이어가 고르는 UI 전부**가 이 함수를 지난다
+#   (로비 직업 선택 · 설정 패널 「직업 변경」). 판정 규칙을 UI마다 복사하면 한쪽만 풀렸을 때
+#   "로비에선 못 고르는데 마을에서 바꿔진다"가 된다 — 잠금은 새는 순간 의미가 없다.
+# ⚠ 신뢰 경계가 아니다 — 호스트 판정·네트워크 공지는 도입 전과 완전히 같다(`job_ids()` allowlist 그대로).
+#   `?debug=1` F1 패널은 **의도적으로** 이 게이트를 안 지난다(궁수·법사 개발·실기 확인용).
+func is_job_playable(id: String) -> bool:
+	if id not in job_ids():
+		return false
+	var j := job_def(id)
+	return j != null and not j.coming_soon
+
+
+# 플레이어가 고를 수 있는 직업 — 준비중 제외. 전부 준비중이면 기본 직업만이라도 돌려준다
+# (데이터를 잘못 채워 선택지가 0개가 되면 로비에서 아무것도 못 고르고 게임이 시작조차 안 된다).
+func playable_job_ids() -> Array[String]:
+	var out: Array[String] = []
+	for id: String in job_ids():
+		if is_job_playable(id):
+			out.append(id)
+	if out.is_empty():
+		push_error("[GameState] 고를 수 있는 직업이 0개 — coming_soon 데이터 확인. 기본 직업으로 폴백")
+		out.append(DEFAULT_JOB_ID)
+	return out
+
+
 # --- 챕터 진행 (챕터1 골격 2026-07-22) ---
 
 # 챕터 id 목록 — data/chapters/*.tres 스캔. job_ids와 같은 allowlist 규약 (rules §4).
@@ -524,23 +549,56 @@ func current_stats() -> Dictionary:
 # weapon_id = G_SHOOT "w"(발신자 주장) → **allowlist 리졸브만** 한다(모르는 id → null → 기본 화살 폴백,
 # 경로 조작 불가 §3). 리졸브되면 사거리·속도·폭발 반경은 전송값이 아니라 **내 로컬 무기 데이터**에서 나온다
 # (스푸핑 표면 최소화). 리졸브 실패 시에만 전송 사거리(fallback_range)를 clamp해 쓴다(궁수 구경로 호환).
-func projectile_params(weapon_id: String, fallback_range: float, charge: int) -> Dictionary:
+# 🔴 **proj_range = 발사자 아바타의 「투사체 사거리」 특성**(player.trait_value) — 기본값 0이면 특성
+#   도입 전과 **완전 항등**이다. 인자로 받는 이유: GameState는 peer_sync를 참조하지 않는다(모듈 경계 §0 +
+#   `-s` 테스트 호환). 그래서 "누가 쐈나"를 아는 **호출부**가 그 값을 실어 준다.
+#   🔴 두 호출부(표시 ArrowField · 판정 CombatAuthority)가 **같은 아바타**에서 읽어야 "맞는 곳 = 보이는
+#   곳"이 유지된다 — 이 함수가 존재하는 이유 그 자체다. 값 자체는 네트워크로 오지 않는다(하위 직업 id만).
+# 🔴 **combo = 평타 콤보 타수**(궁수 "평·평·쭉", 2026-07-27). 기본값 0 = 도입 전과 **완전 항등**이다.
+#   네트워크로 오는 것은 **타수(정수)뿐**이고 사거리·데미지 배율은 여기서 로컬 .tres로 리졸브한다
+#   (차지 레벨 "c"와 같은 철학 — 배율을 전송하면 그게 곧 스푸핑 표면).
+#   🔴 표시(ArrowField)는 **발신자 주장 타수**를, 판정(CombatAuthority)은 **호스트가 센 타수**
+#   (CombatMath.authoritative_combo ≤ 주장)를 넘긴다. 그래서 갈라짐은 항상 "그려졌는데 안 맞는다"
+#   쪽으로만 떨어진다 — G_SHOOT "w"(무기 사칭) 처리와 같은 관용구다.
+func projectile_params(weapon_id: String, fallback_range: float, charge: int,
+		proj_range: float = 0.0, combo: int = 0) -> Dictionary:
 	var e := equip_def(weapon_id)
 	var lv := CombatMath.clamp_charge_level(charge)
 	var is_charge := e != null and e.motion_type == "charge"
 	var speed := CombatMath.clamp_projectile_speed(e.projectile_speed if e != null else 0.0)
-	var travel := e.arrow_range if e != null else fallback_range
+	# 사거리 특성·콤보 배율은 여기 한 곳에서만 곱한다(단일 소스 §3). 결과는 아래 projectile_lifetime_s
+	# 안에서 MAX_ARROW_RANGE clamp를 그대로 지난다 — 상한을 우회하는 계산 순서를 만들지 마라(심층 방어).
+	# ⚠ 콤보 배율은 **무기 리졸브에 실패하면 항등(1.0)** 이다 — 모르는 id에 배율을 실을 자리가 없다.
+	var travel := CombatMath.effective_projectile_range(
+		e.arrow_range if e != null else fallback_range, proj_range,
+		CombatMath.combo_range_mult_at(e, combo))
 	return {
 		"level": lv if is_charge else 0,  # 비차지 무기에 실린 레벨 주장은 여기서 떨군다(심층 방어 — is_charge_time_ok와 이중)
 		"speed": speed,
 		"life": CombatMath.projectile_lifetime_s(travel, speed),
-		"blast": CombatMath.charge_blast_radius(e.blast_radius if e != null else 0.0, lv),
+		# 🔴 **비차지 무기에 실린 레벨 주장은 반경에서도 떨군다** (2026-07-27 netreview I1).
+		#   `level`·`scale`·`step_time`은 처음부터 `is_charge` 게이트를 지났는데 여기만 `lv`를 날것으로 썼다.
+		#   법사 지팡이가 둘 다 charge였을 땐 도달 불가였고, **낡은 지팡이가 shoot(마법볼)로 갈라지면서
+		#   `blast_radius > 0`인 비차지 무기가 처음 생겨** 열린 경로다.
+		# 🔴 **판정이 아니라 표시가 문제였다.** 판정 쪽은 `is_charge_time_ok`가 c≥1을 통째로 거부하지만,
+		#   `arrow_field`는 그 게이트 없이 이 함수를 직접 불러 `_blasts[aid].radius`로 기억한다 —
+		#   조작 클라의 `w="worn_staff", c=3` 한 통이면 **정직한 파트너 화면에도** 48px 폭발 FX·소리·
+		#   반경 비례 셰이크가 뜬다(정상 20px). 표시 스푸핑이라 "사칭자 화면에만"이라는 기존 완화가 안 통한다.
+		# 🔴 **층수 문제라 한 줄 조임 이상이다** — `level`은 스스로 "이중"이라 적을 수 있었지만 `blast`의
+		#   방어층은 `combat_authority.gd`(씬 글루) **하나뿐**이었고, 그 파일 주석이 이미 인정했듯 거긴
+		#   `-s`가 preload할 수 없어 **지워도 스위트 8종이 전부 초록이다.** 이 함수는 헤드리스로 겨눌 수
+		#   있으므로, 이 게이트가 그 결함 클래스를 자동 방어 안으로 들여놓는 유일한 자리다.
+		#   ⚠ **항등이다** — charge 무기는 무변경, 정직한 shoot는 애초에 c=0이라 결과가 같다(순수 조임).
+		"blast": CombatMath.charge_blast_radius(e.blast_radius if e != null else 0.0, lv if is_charge else 0),
 		"texture": e.projectile_texture if e != null else null,
 		"spin": e.projectile_spin if e != null else false,
 		"scale": CombatMath.CHARGE_ORB_SCALE[lv] if is_charge else 1.0,
 		"tint": e.swing_color if e != null else Color(1, 1, 1, 1),
 		"blast_sfx": e.blast_sfx if e != null else "",
 		"step_time": e.charge_step_time if is_charge else 0.0,  # 0 = 차지 무기가 아님 → 호스트가 레벨 주장을 거부
+		# 그 타의 데미지 배율 — 호스트가 confirm_damage에 넘긴다(사거리와 **같은 리졸브**를 지나야
+		# "더 멀리 나가는 타 = 더 아픈 타"가 데이터 한 장에서 함께 온다). 표시 쪽은 안 쓴다.
+		"combo_dmg": CombatMath.combo_damage_mult_at(e, combo),
 	}
 
 

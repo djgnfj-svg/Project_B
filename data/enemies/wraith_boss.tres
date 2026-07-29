@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="BossDef" load_steps=10 format=3]
+[gd_resource type="Resource" script_class="BossDef" load_steps=18 format=3]
 
 [ext_resource type="Script" path="res://src/core/boss_def.gd" id="1"]
 [ext_resource type="Script" path="res://src/core/boss_pattern_def.gd" id="2"]
@@ -6,6 +6,56 @@
 [ext_resource type="Script" path="res://src/core/drop_table.gd" id="4"]
 [ext_resource type="Script" path="res://src/core/drop_entry.gd" id="5"]
 [ext_resource type="SpriteFrames" path="res://assets/sprites/enemies/boss_wraith_frames.tres" id="8"]
+
+[sub_resource type="Resource" id="p_sweep_l"]
+script = ExtResource("2")
+id = "swing"
+shape = "cone"
+telegraph_s = 1.2
+damage = 18
+range = 130.0
+half_angle = 0.75
+cooldown_s = 2.0
+recover_s = 0.4
+priority = 3
+use_min_dist = 0.0
+use_max_dist = 150.0
+min_phase = 1
+creates_swamp = false
+burst_count = 1
+
+[sub_resource type="Resource" id="p_slam"]
+script = ExtResource("2")
+id = "slam"
+shape = "circle"
+telegraph_s = 1.3
+damage = 26
+range = 80.0
+cooldown_s = 4.0
+recover_s = 0.6
+priority = 2
+use_min_dist = 50.0
+use_max_dist = 300.0
+min_phase = 1
+creates_swamp = true
+burst_count = 1
+
+[sub_resource type="Resource" id="p_nova"]
+script = ExtResource("2")
+id = "spray"
+shape = "circle"
+telegraph_s = 1.5
+damage = 20
+range = 44.0
+cooldown_s = 6.0
+recover_s = 0.5
+priority = 1
+use_min_dist = 120.0
+use_max_dist = 400.0
+min_phase = 1
+creates_swamp = false
+burst_count = 6
+burst_spread = 120.0
 
 [sub_resource type="Resource" id="d_gold"]
 script = ExtResource("5")
@@ -21,9 +71,39 @@ chance = 1.0
 qty_min = 1
 qty_max = 2
 
+[sub_resource type="Resource" id="d_bp_sword"]
+script = ExtResource("5")
+kind = "blueprint"
+ref_id = "iron_greatsword"
+chance = 1.0
+
+[sub_resource type="Resource" id="d_bp_bow"]
+script = ExtResource("5")
+kind = "blueprint"
+ref_id = "iron_bow"
+chance = 1.0
+
+[sub_resource type="Resource" id="d_bp_staff"]
+script = ExtResource("5")
+kind = "blueprint"
+ref_id = "iron_staff"
+chance = 1.0
+
+[sub_resource type="Resource" id="d_bp_axe"]
+script = ExtResource("5")
+kind = "blueprint"
+ref_id = "heavy_axe"
+chance = 1.0
+
+[sub_resource type="Resource" id="d_bp_spear"]
+script = ExtResource("5")
+kind = "blueprint"
+ref_id = "long_spear"
+chance = 1.0
+
 [sub_resource type="Resource" id="d_table"]
 script = ExtResource("4")
-entries = Array[DropEntry]([SubResource("d_gold"), SubResource("d_core")])
+entries = Array[DropEntry]([SubResource("d_gold"), SubResource("d_core"), SubResource("d_bp_sword"), SubResource("d_bp_bow"), SubResource("d_bp_staff"), SubResource("d_bp_axe"), SubResource("d_bp_spear")])
 
 [resource]
 script = ExtResource("1")
@@ -36,8 +116,9 @@ body_radius = 42.0
 move_speed = 62.0
 aggro_range = 600.0
 keep_distance = 150.0
+exp = 30
 drop_table = SubResource("d_table")
-patterns = Array[BossPatternDef]([])
+patterns = Array[BossPatternDef]([SubResource("p_sweep_l"), SubResource("p_slam"), SubResource("p_nova")])
 phase2_hp_ratio = 0.5
 swamp_radius = 44.0
 swamp_slow_factor = 0.5

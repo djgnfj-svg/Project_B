@@ -5,6 +5,8 @@ extends Control
 
 const SettingsPanelScene := preload("res://src/ui/settings_panel.tscn")  # rules §0: class_name 대신 preload
 const UiTheme := preload("res://src/ui/ui_theme.gd")  # UI 톤 단일 소스 (제작/인벤/HUD와 같은 테마)
+# 개발 모드 게이트 단일 소스. 오토로드 인스턴스 대신 **스크립트**를 물어 static으로 부른다.
+const DebugBridgeScript := preload("res://src/core/debug_bridge.gd")
 
 @onready var _url_edit: LineEdit = %UrlEdit
 @onready var _code_edit: LineEdit = %CodeEdit
@@ -12,6 +14,7 @@ const UiTheme := preload("res://src/ui/ui_theme.gd")  # UI 톤 단일 소스 (�
 @onready var _join_btn: Button = %JoinBtn
 @onready var _adv_btn: Button = %AdvBtn
 @onready var _settings_btn: Button = %SettingsBtn
+@onready var _debug_btn: Button = %DebugBtn  # 개발 모드 토글 — 켜 두면 F1 패널이 URL 없이 열린다
 @onready var _status: Label = %Status
 @onready var _job_btns: Dictionary[String, Button] = {  # job id -> 토글 버튼 (ButtonGroup로 라디오)
 	"warrior": %WarriorBtn as Button,
@@ -30,20 +33,41 @@ func _ready() -> void:
 	_url_edit.text = Net.default_relay_url()
 	if Net.state == Net.State.CONNECTED:
 		_status.text = "서버 연결됨 — 방을 만들거나 참가하세요"
+	# 🔴 준비중 직업이 선택된 채로 들어오면 고를 수 있는 직업으로 되돌린다 — 세이브는 직업을 담지
+	#   않지만(rules §5) 로비 **재진입**에서는 이전 선택이 GameState에 그대로 남아 있어서, 잠그기 전에
+	#   궁수를 골랐던 세션이 "아무 버튼도 안 눌린 채 궁수로 시작"하는 상태가 된다(에러 없음).
+	if not GameState.is_job_playable(GameState.selected_job_id):
+		GameState.selected_job_id = GameState.playable_job_ids()[0]
 	for job_id: String in _job_btns:
 		var btn := _job_btns[job_id]
 		btn.button_pressed = job_id == GameState.selected_job_id  # 로비 재진입 시 이전 선택 복원
-		# 아이콘 = JobDef.sprite 데이터 바인딩 (rules §4) — 로비 미리보기와 인게임 그림이 갈라지지 않게
+		# 아이콘 = 인게임 시트에서 유도 (아래 _job_icon) — 로비 미리보기와 인게임 그림이 갈라지지 않게
 		var icon := btn.get_parent().get_node_or_null("Icon") as TextureRect
 		var jd := GameState.job_def(job_id)
-		if icon != null and jd != null and jd.sprite != null:
-			icon.texture = jd.sprite
+		var tex := _job_icon(jd)
+		if icon != null and tex != null:
+			icon.texture = tex
+		if not GameState.is_job_playable(job_id):
+			_hide_job(btn)
+			continue  # 시그널을 연결하지 않는다 — 숨김에 얹어 두면 잠금을 푸는 조건이 두 개가 된다
 		# button_down: 이미 눌린 토글(기본 전사)을 다시 클릭해도 반드시 발화 — pressed는 그룹 토글
 		# 재클릭에서 안 올 수 있어, 자동 시작 트리거가 기본 직업 선택에서 데드락 나는 것을 막는다
 		btn.button_down.connect(_on_job_pressed.bind(job_id))
 	_host_btn.pressed.connect(_on_host_pressed)
 	_join_btn.pressed.connect(_on_join_pressed)
 	_adv_btn.pressed.connect(func() -> void: _url_edit.visible = not _url_edit.visible)
+	# 개발 모드 — `?debug=1`을 URL에 매번 붙이지 않으려고 만든 토글(사용자 요청 2026-07-28).
+	# ⚠ 다른 경로(URL `?debug=1` · 에디터/네이티브)로 이미 켜진 경우엔 **토글로 끌 수 없다** —
+	#   게이트가 OR이라 토글을 꺼도 그쪽이 계속 연다. 눌러도 안 꺼지는 버튼은 고장으로 읽히므로
+	#   비활성 + 사유를 툴팁에 적는다.
+	var elsewhere := DebugBridgeScript.panel_enabled() and not DebugBridgeScript.panel_forced()
+	_debug_btn.button_pressed = DebugBridgeScript.panel_forced() or elsewhere
+	_debug_btn.disabled = elsewhere
+	_debug_btn.tooltip_text = ("이미 켜져 있습니다 — URL의 debug=1 또는 개발 환경(에디터) 때문입니다"
+		if elsewhere else "켜면 게임 중 F1로 개발 패널(직업·장비·레벨·시험장)이 열립니다. 이 선택은 기억됩니다")
+	_debug_btn.toggled.connect(func(on: bool) -> void:
+		DebugBridgeScript.set_panel_forced(on)
+		_status.text = "개발 모드 %s — F1로 패널을 엽니다" % ("켬" if on else "끔"))
 	var settings := SettingsPanelScene.instantiate()
 	add_child(settings)  # CanvasLayer(layer 10) — 로비 위 오버레이
 	_settings_btn.pressed.connect(settings.open)
@@ -55,6 +79,38 @@ func _ready() -> void:
 	EventBus.room_created.connect(
 		func(code: String) -> void: _status.text = "방 생성됨 — 코드: %s" % code)
 	_try_autostart()
+
+
+# 로비 아이콘 = 그 직업의 **인게임 idle 첫 프레임**에서 유도한다 (2026-07-29).
+# 🔴 `JobDef.sprite`(별도 단일 컷 PNG)를 직접 쓰면 시트를 다시 그렸을 때 **조용히 갈라진다** —
+#   실제로 `warrior_anim.png`를 새로 그린 뒤 로비만 7월 22일자 옛 캐릭터를 계속 보여줬다(에러 없음,
+#   화면만 어긋나는 부류). 두 파일이 같은 캐릭터를 뜻하는데 갱신 책임이 사람에게 있으면 반드시 어긋난다.
+#   frames에서 유도하면 아트가 시트를 갈아도 로비가 자동으로 따라온다.
+# ⚠ `sprite`는 폴백으로만 남긴다 — 시트가 없거나 idle이 빠진 직업(`_frames.tres` 작업 전)에서 빈 칸이
+#   되는 것보다 옛 그림이라도 뜨는 편이 낫다. 필드 자체를 지우려면 참조처를 전수로 봐야 한다.
+const ICON_ANIM := &"idle"
+
+
+func _job_icon(jd: JobDef) -> Texture2D:
+	if jd == null:
+		return null
+	var f := jd.frames
+	if f != null and f.has_animation(ICON_ANIM) and f.get_frame_count(ICON_ANIM) > 0:
+		return f.get_frame_texture(ICON_ANIM, 0)
+	return jd.sprite
+
+
+# 준비중 직업을 로비에서 **통째로 숨긴다** (사용자 결정 2026-07-29: "캐릭터 하나만 보이게").
+# 숨기는 것은 버튼이 아니라 **열(아이콘 + 버튼을 담은 VBox)** 이다 — 버튼만 숨기면 아이콘이 남아
+# 이름 없는 그림 두 개가 떠 있게 된다.
+# 🔴 `disabled`도 같이 건다 — `visible = false`만으로는 **ButtonGroup이 그 버튼을 계속 들고 있어서**
+#   나중에 코드가 그룹을 순회하면 안 보이는 버튼이 후보로 잡힌다. 잠금은 보이는 것과 무관해야 한다.
+func _hide_job(btn: Button) -> void:
+	btn.disabled = true
+	btn.button_pressed = false
+	var col := btn.get_parent() as Control
+	if col != null:
+		col.visible = false
 
 
 func _on_job_pressed(job_id: String) -> void:

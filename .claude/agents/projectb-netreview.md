@@ -55,7 +55,7 @@ model: inherit
 - 메시지 크기: 릴레이는 2048 UTF-16 유닛 초과 시 `close(1009)`로 **끊지만 직결엔 상한이 없다** → 배치를 키우는 변경은 "직결일 땐 되는데 폴백하는 순간 튕긴다"가 된다. 릴레이 상한 기준으로 쪼갰나.
 
 **7. 스키마 미러**
-- `src/core/net_schema.gd`를 고쳤으면 **`server/relay-worker/index.js`의 JS 미러**도 같이 고쳤나(§2). 릴레이 상수(`IDLE_LIMIT_MS`·`SEEN_WRITE_MS`)는 `Net`의 keepalive 주기와 부등식으로 묶여 있고 `test_net_transport_auto`가 지킨다.
+- `src/core/net_schema.gd`를 고쳤으면 **`server/relay-worker/src/index.js`의 JS 미러**도 같이 고쳤나(§2). ⚠ 미러가 필요한 것은 **kind 상수값·릴레이 상수**뿐이다 — 페이로드 **필드**를 더하는 것(예: G_SHOOT `cb`)은 릴레이가 kind만 보고 라우팅/로그 제외를 하므로 갱신이 필요 없다. 갱신 대상과 아닌 것을 구분해서 지적해라. 릴레이 상수(`IDLE_LIMIT_MS`·`SEEN_WRITE_MS`)는 `Net`의 keepalive 주기와 부등식으로 묶여 있고 `test_net_transport_auto`가 지킨다.
 
 ## 리포트
 

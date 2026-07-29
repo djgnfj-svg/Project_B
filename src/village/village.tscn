@@ -1,4 +1,4 @@
-[gd_scene load_steps=64 format=3]
+[gd_scene load_steps=65 format=3]
 
 [ext_resource type="Script" path="res://src/village/village.gd" id="1"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/ground/baked_960.png" id="2"]
@@ -53,6 +53,7 @@
 [ext_resource type="Texture2D" path="res://assets/sprites/village/npc/bobber.png" id="47"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/npc/guard.png" id="48"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/npc/rabbit.png" id="49"]
+[ext_resource type="Script" path="res://src/stage/arrow_field.gd" id="70"]
 
 [sub_resource type="RectangleShape2D" id="shape_craft"]
 size = Vector2(60, 60)
@@ -566,6 +567,10 @@ spawn_base = Vector2(120, 285)
 
 [node name="SceneFlow" type="Node" parent="."]
 script = ExtResource("6")
+
+[node name="ArrowField" type="Node" parent="."]
+script = ExtResource("70")
+peer_sync_path = NodePath("../PeerSync")
 
 [node name="Tone" type="CanvasModulate" parent="."]
 color = Color(1, 0.98, 0.93, 1)
