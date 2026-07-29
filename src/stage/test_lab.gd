@@ -2,7 +2,7 @@ extends Node
 # 테스트 랩 컨트롤러 — ?test=1일 때 main이 보스 아레나에 붙인다 (TestMode 게이트, 프로덕션 무접촉·rules §5 씬 글루).
 # 그림 구조: 아레나[보스 + player1(무적) + NPC 더미(무적, 코옵 2인 채움)] + 우측 패턴/상태 패널.
 #  · 보스 자동공격·코옵 자동순환을 끄고(debug_hold) → 버튼으로 특정 패턴만 즉시 발동해 관찰·튜닝.
-#  · 체크박스로 현재 상태(무적/보스정지/코옵정지/NPC) 확인·토글. HP 회복 버튼.
+#  · 체크박스로 현재 상태(무적/보스정지/NPC) 확인·토글. HP 회복 버튼.
 #  · 2인 실기: NPC 체크 해제하면 더미 제거 → 실제 2명으로 테스트.
 
 const PlayerScene := preload("res://src/player/player.tscn")
@@ -11,9 +11,6 @@ const HealthComponent := preload("res://src/combat/health_component.gd")
 const UiTheme := preload("res://src/ui/ui_theme.gd")   # UI 톤 단일 소스 (HUD·패널과 같은 팔레트 — class_name 대신 preload, rules §0)
 const NetSchema := preload("res://src/core/net_schema.gd")  # SCENE_* id (새 보스 리셋 = 스테이지 재진입)
 const Afterimage := preload("res://src/feel/afterimage.gd")  # 카운터 대시 잔상 (손맛 재사용)
-
-# 코옵 파훼 버튼 (인덱스 = coop_authority MECHS 순서)
-const COOP_BTNS: Array = [["케이지", 0], ["별낙하", 1], ["봉인진", 2], ["분산", 3], ["뭉치기", 4], ["직면", 5]]
 
 var _boss: Node = null
 var _coop: Node = null
@@ -25,7 +22,6 @@ var _npc_on: bool = true
 
 var _cb_invin: CheckBox = null
 var _cb_boss: CheckBox = null
-var _cb_coop: CheckBox = null
 var _cb_npc: CheckBox = null
 var _hp_label: Label = null
 
@@ -69,10 +65,14 @@ const COUNTER_OFFSET := 46.0    # F 표식이 뜨는 보스 중심으로부터 �
 const COUNTER_DAMAGE := 45      # 카운터 1회 피해
 const EYE_OFFSET := Vector2(0.0, -6.0)   # 보스 눈 대략 위치(반짝 표시 지점)
 # 시퀀스: 5초 → 눈 반짝 → 조준(보스가 바라보며 줄 생김) → 돌진(도중 F=카운터, 아니면 명중).
-const COUNTER_INTERVAL := 5.0   # IDLE 대기(s)
+const COUNTER_INTERVAL := 5.0   # (미사용 — 자동 반복 폐기, 버튼 트리거로 전환)
+const MAX_DASHES := 5           # 한 세트 = 보스 돌진 5번
+const DASH_GAP := 0.8           # 돌진 후 회복 간격(s) — 그로기가 있으면 그로기가 대신
+const FILLER_LEAD := 1.6        # 틈새 공격(장판 게이지/탄막) 시간 — 이게 끝나야 다음 돌진
 const COUNTER_GLINT := 0.5      # 눈 반짝(s)
 const CHARGE_AIM := 0.5         # 조준: 바라봄 + 줄 생김(s)
 const CHARGE_SPEED := 1550.0    # 돌진 속도(px/s) — x2.5 (반응해서 패링 가능한 속도)
+const DASH_DECEL := 11000.0     # 지나친 뒤 감속(px/s²) — 팔로스루 ~110px (급정지 끊김 방지)
 # 진짜 패링: 돌진 중 보스가 근접하면 받아치기 창이 열리고, 그 안에서만 F 성공. 이른 F는 헛침(잠금).
 const PARRY_OPEN_RANGE := 165.0 # 돌진 중 보스가 이 안이면 창 열림(여유 있게 미리)
 const PARRY_WINDOW := 0.28      # 창 지속(s) — 이 안에 F. 돌진 끝에 안 잘리고 제 시간 유지
@@ -93,16 +93,35 @@ var _counter_marker: Node2D = null
 var _counter_poly: Polygon2D = null
 var _counter_label: Label = null
 var _eye_glint: Node2D = null
+var _eye_cores: Array = []      # 눈 핫 코어 2개 (충전 램프로 dim→hot)
+var _eye_halos: Array = []      # 눈 바깥 헤일로 2개
+var _dash_line: Line2D = null   # 돌진 위험선 — AIM/DASH 동안 보스 앞으로 뻗는 영혼 줄
+var _soul_mote_last: float = 0.0 # 영혼 모트 마지막 스폰 시각(줄을 따라 흐르는 빛 알갱이 간격)
 var _counter_t: float = 0.0     # 마커 맥동 위상
 var _cstate: int = CS_IDLE
 var _cstate_t: float = 0.0
 var _charge_dir: Vector2 = Vector2.RIGHT     # 돌진 방향(조준 시 고정) — 이 방향으로 직진
 var _charge_traveled: float = 0.0            # 돌진 이동 거리 안전 상한용
+var _dash_speed: float = 0.0                 # 현재 돌진 속도 — 지나치면 감속(팔로스루)
 var _parry_open_t: float = -1.0   # >=0 = 받아치기 창 열림 카운트다운, -1 = 아직 안 열림
 var _parry_used: bool = false     # 이번 돌진에서 이른 F로 헛치면 잠금(스팸 방지)
+var _in_rune_window: bool = false # 받아치기 창이 열린 동안 활성 룬 안에 한 번이라도 있었나 → 파훼 판정을 F 순간 한 프레임이 아니라 창 전체로 넓힌다(가장자리 이탈 방지)
+var _break_rune: int = -1         # 이번 파훼로 깰 룬 인덱스(창 동안 올라선 룬을 래치) — 어느 룬이든 플레이어가 간 룬
+var _broken_count: int = 0        # 이 패턴에서 깬 룬 수(0~3) — "N번째" 표시 + 3개 소진 판정
+var _rune_diamond: Node2D = null  # 현재 타겟 룬 위에 뜨는 금색 다이아몬드 마커
+var _dash_count: int = 0          # 이번 5돌진 세트에서 지나간 돌진 수(0~5)
+var _next_dash_cd: float = 0.0    # 다음 돌진까지 쿨다운(s) — 그로기 중에도 흐른다(실패/성공 무관 3초 여유)
+var _filler_alt: bool = false     # 틈새 공격 번갈아 (장판 유도 ↔ 원형 탄막)
+var _filler_pending: bool = false # 다음 돌진 전에 틈새 공격 한 번 (회복 뒤 발동)
+var _pattern_active: bool = false # 5돌진 세트 진행 중 (패턴 랩 버튼으로 시작)
+var _pattern_label: Label = null  # "돌진 M/5 · 룬 N/3" 상태 표시
 var _lock_linger: float = 0.0     # 잠금(빨간 ✕)을 눈에 보이게 잠깐 더 유지
 var _clashing: bool = false       # 클래시(성공 연출) 진행 중 — 이때도 구르기 억제(연타 F가 tween과 충돌해 벽 뚫는 것 방지)
-var _f_cd: float = 0.0            # 받아치기 F 쿨타임(0.5s) — 연타 방지
+var _f_cd: float = 0.0            # 받아치기 F 쿨타임(0.15s) — 연타 방지(창보다 짧게)
+# 룬 충전/전도 연출 — 활성 룬 위=오라 차오름(강화), 그 상태로 받아치기=룬→나→보스 기운 방출(전도). 전부 순수 표시.
+var _rune_aura: Sprite2D = null   # 로컬 플레이어 자식 — 차오르는 청록 오라
+var _rune_charge: float = 0.0     # 0→1 충전량(룬 위=차오름, 밖=사그라듦)
+var _charge_particles: GPUParticles2D = null   # 룬→플레이어로 빨려 올라가는 기운 입자
 
 
 func _ready() -> void:
@@ -133,6 +152,7 @@ func _setup() -> void:
 	_setup_vision()           # 조준 방향 시야 콘 (로컬 플레이어)
 	_setup_counter()          # 카운터 약점(F 표식) — 테스트: 플레이어 쪽에 상시
 	_setup_runes()            # 룬 자물쇠 3개 (시야로 활성화, 안에서 패링=파훼)
+	_setup_rune_charge()      # 룬 충전 입자 (활성 룬에서 위로 빨려 올라감)
 	_setup_camera()           # 방 카메라 (클램프+스냅)
 	_setup_lighting()         # 2D 라이팅 — 어두운 성역 + 발광 지점(맵 퀄업)
 	_apply_boss_rim()         # 보스 밝은 림(뒤 실루엣) — 청록 배경에서 또렷하게
@@ -289,7 +309,7 @@ func _setup_overlay() -> void:
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://assets/shaders/system_overlay.gdshader")
 	# 🔴 uniform 전부 명시 심기 (기본값 의존 금지 — 웹 Compatibility 검정 렌더 함정, boss/hit_flash 규율)
-	mat.set_shader_parameter(&"vignette_strength", 0.55)
+	mat.set_shader_parameter(&"vignette_strength", 0.38)
 	mat.set_shader_parameter(&"vignette_start", 0.35)
 	mat.set_shader_parameter(&"vignette_end", 0.95)
 	mat.set_shader_parameter(&"vignette_color", Color(0.02, 0.03, 0.05))
@@ -537,7 +557,7 @@ func _animate_lights(delta: float) -> void:
 
 func _setup_lighting() -> void:
 	var cm := CanvasModulate.new()
-	cm.color = Color(0.10, 0.10, 0.15)   # 씬 더 어둡게 → 집중광이 튄다
+	cm.color = Color(0.18, 0.18, 0.23)   # 살짝 밝게 (공격 가독성 — 너무 어두우면 FX가 묻힌다)
 	get_parent().add_child(cm)
 	# 성역 발광 지점 — 청록이 아니라 차분한 남색으로(에너지↓) → 보스의 청록만 유일하게 밝은 청록이 됨.
 	# ② 각 빛을 참조로 잡아 숨쉬게(맥동)+깜빡이게(_animate_lights). base_energy·위상·주기를 달리해 제각각 뛴다.
@@ -653,8 +673,11 @@ func _setup_runes() -> void:
 	_runes.clear()
 	for i in RUNE_POS.size():
 		var made := _make_rune_lock(RUNE_POS[i])
-		_runes.append({"holder": made["holder"], "label": made["label"], "pos": RUNE_POS[i], "num": i + 1})
-	_active_rune = randi() % _runes.size()   # 활성 룬 무작위
+		_runes.append({"holder": made["holder"], "label": made["label"], "pos": RUNE_POS[i], "num": i + 1,
+			"shackle": made["shackle"], "shackle_pos0": (made["shackle"] as Node2D).position, "unlocking": false})
+	_active_rune = -1        # 활성 룬 = 플레이어가 올라선 룬(동적) — 매 프레임 _update_runes가 갱신
+	_broken_count = 0
+	_setup_rune_diamond()
 
 
 func _make_rune_lock(pos: Vector2) -> Dictionary:
@@ -696,29 +719,29 @@ func _make_rune_lock(pos: Vector2) -> Dictionary:
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	get_parent().add_child(lbl)
 	lbl.global_position = pos + Vector2(-18.0, -44.0)
-	return {"holder": holder, "label": lbl}
+	return {"holder": holder, "label": lbl, "shackle": shackle}
 
 
 # 매 프레임 — 활성 룬이 시야 콘 안이면 강렬한 금색 "격파!", 나머지·시야밖은 회색 "룬 N". (호출: _process)
 func _update_runes(lp: PlayerActor) -> void:
+	_active_rune = _current_rune(lp)   # 활성 = 플레이어가 올라선 룬(동적)
 	for i in _runes.size():
+		if _runes[i].get("unlocking", false):
+			continue   # 깨진(사라진) 룬 — 덮지 않는다
 		var holder := _runes[i]["holder"] as Node2D
 		var lbl := _runes[i]["label"] as Label
 		if holder == null or not is_instance_valid(holder):
 			continue
-		var revealed: bool = (i == _active_rune) and _rune_in_vision(lp, _runes[i]["pos"])
-		if revealed:
-			holder.scale = Vector2.ONE * (1.2 + 0.18 * sin(_counter_t * TAU * 3.5))
-			holder.modulate = Color(2.2, 1.9, 0.5, 1.0)   # 강렬한 금색
-			lbl.text = "★ 격파 ★"
-			lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.3))
-			lbl.add_theme_font_size_override("font_size", 16)
+		if i == _active_rune:
+			holder.scale = Vector2.ONE * (1.15 + 0.08 * sin(_counter_t * TAU * 1.5))
+			holder.modulate = Color(2.2, 1.9, 0.5, 1.0)   # 올라선 룬 = 타겟 금색
+			lbl.text = ""   # "N번째"는 위의 다이아몬드가 표시 (중복 방지)
 		else:
 			holder.scale = Vector2.ONE
-			holder.modulate = Color(0.55, 0.55, 0.55, 0.5)   # 회색(구분 안 됨)
-			lbl.text = "룬 %d" % int(_runes[i]["num"])
-			lbl.add_theme_color_override("font_color", Color(0.8, 0.85, 0.85))
-			lbl.add_theme_font_size_override("font_size", 12)
+			holder.modulate = Color(0.5, 0.55, 0.55, 0.45)   # 안 깨진 대기 룬(회색)
+			lbl.text = "룬"
+			lbl.add_theme_color_override("font_color", Color(0.75, 0.8, 0.8))
+			lbl.add_theme_font_size_override("font_size", 11)
 
 
 func _rune_in_vision(lp: PlayerActor, rune_pos: Vector2) -> bool:
@@ -729,11 +752,422 @@ func _rune_in_vision(lp: PlayerActor, rune_pos: Vector2) -> bool:
 	return absf(wrapf(to_r.angle() - aim, -PI, PI)) <= VISION_HALF
 
 
-func _player_in_active_rune(lp: PlayerActor) -> bool:
-	if _active_rune < 0 or _active_rune >= _runes.size():
+# 보스가 플레이어 시야 콘(~90°) 안에 있나 — 받아치기 성공의 전제(보스를 조준해야 카운터가 먹힌다).
+func _boss_in_vision(lp: PlayerActor) -> bool:
+	if _boss == null:
 		return false
-	var rp: Vector2 = _runes[_active_rune]["pos"]
-	return lp.global_position.distance_to(rp) <= RUNE_RADIUS
+	var to_b: Vector2 = _boss.global_position - lp.global_position
+	var aim: float = float(lp.get("_aim_angle"))
+	return absf(wrapf(to_b.angle() - aim, -PI, PI)) <= VISION_HALF
+
+
+# 플레이어가 올라선 '안 깨진' 룬의 인덱스 (없으면 -1). 어느 룬이든 가면 그게 활성이 된다.
+func _current_rune(lp: PlayerActor) -> int:
+	var best := -1
+	var best_d := RUNE_RADIUS
+	for i in _runes.size():
+		if _runes[i].get("unlocking", false):
+			continue   # 이미 깨진(사라진) 룬 제외
+		var d := lp.global_position.distance_to(_runes[i]["pos"])
+		if d <= best_d:
+			best_d = d
+			best = i
+	return best
+
+
+func _player_in_active_rune(lp: PlayerActor) -> bool:
+	return _current_rune(lp) >= 0
+
+
+# 현재 타겟 룬 위에 뜨는 금색 다이아몬드 마커 + "N번째". 플레이어가 올라선 룬을 따라 이동.
+func _setup_rune_diamond() -> void:
+	var d := Node2D.new()
+	d.name = "RuneDiamond"
+	d.z_index = 9
+	d.visible = false
+	get_parent().add_child(d)
+	var poly := Polygon2D.new()
+	var s := 11.0
+	poly.polygon = PackedVector2Array([Vector2(0, -s), Vector2(s, 0), Vector2(0, s), Vector2(-s, 0)])
+	poly.color = Color(1.0, 0.85, 0.35, 0.9)
+	var pm := CanvasItemMaterial.new()
+	pm.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	poly.material = pm
+	d.add_child(poly)
+	var lbl := Label.new()
+	lbl.name = "Ord"
+	lbl.add_theme_font_size_override("font_size", 12)
+	lbl.add_theme_color_override("font_color", Color(1.0, 0.95, 0.6))
+	lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	lbl.add_theme_constant_override("outline_size", 3)
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lbl.position = Vector2(-16.0, -32.0)
+	d.add_child(lbl)
+	_rune_diamond = d
+	# 패턴 상태 라벨 (월드) — "돌진 M/5 · 룬 N/3"
+	var pl := Label.new()
+	pl.add_theme_font_size_override("font_size", 13)
+	pl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
+	pl.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	pl.add_theme_constant_override("outline_size", 4)
+	pl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pl.z_index = 12
+	pl.visible = false
+	get_parent().add_child(pl)
+	_pattern_label = pl
+
+
+# 다이아몬드를 현재 타겟 룬 위로 옮기고 "N번째" 표시. 보스 그로기/패턴 소진 시 숨김. (호출: _process)
+func _update_rune_diamond() -> void:
+	if _rune_diamond == null or not is_instance_valid(_rune_diamond):
+		return
+	var groggy: bool = _boss != null and float(_boss.get("groggy_left")) > 0.0
+	var vis: bool = _active_rune >= 0 and _active_rune < _runes.size() and not groggy and not _runes[_active_rune].get("unlocking", false)
+	_rune_diamond.visible = vis
+	if vis:
+		_rune_diamond.global_position = _runes[_active_rune]["pos"] + Vector2(0.0, -30.0)
+		_rune_diamond.scale = Vector2.ONE * (1.0 + 0.14 * sin(_counter_t * TAU * 1.2))
+		var lbl := _rune_diamond.get_node_or_null("Ord") as Label
+		if lbl != null:
+			lbl.text = "격파"   # 순서 무관 — "이 룬 깨라" 표식
+	# 패턴 상태 — "돌진 M/5 · 룬 N/3" (세트 진행 중만)
+	if _pattern_label != null and is_instance_valid(_pattern_label):
+		_pattern_label.visible = _pattern_active
+		if _pattern_active and _boss != null:
+			_pattern_label.text = "놓침 %d/%d · 룬 %d/3" % [_dash_count, MAX_DASHES, _broken_count]
+			_pattern_label.global_position = _boss.global_position + Vector2(-56.0, -104.0)
+
+
+func _setup_rune_charge() -> void:
+	# 룬 충전 입자 — 활성 룬에서 위로 빨려 올라가는 기운. 활성+플레이어 근접일 때만 방출.
+	var p := GPUParticles2D.new()
+	p.amount = 16
+	p.lifetime = 1.3
+	p.texture = _light_tex()
+	p.z_index = 7
+	p.emitting = false
+	p.modulate = Color(1.0, 0.85, 0.4, 0.42)   # 옅게
+	var m := ParticleProcessMaterial.new()
+	m.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	m.emission_sphere_radius = RUNE_RADIUS * 0.8
+	m.direction = Vector3(0.0, -1.0, 0.0)
+	m.spread = 12.0
+	m.gravity = Vector3(0.0, -28.0, 0.0)   # 위로 천천히
+	m.initial_velocity_min = 12.0
+	m.initial_velocity_max = 30.0
+	m.scale_min = 0.02
+	m.scale_max = 0.07
+	p.process_material = m
+	var cm := CanvasItemMaterial.new()
+	cm.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	p.material = cm
+	get_parent().add_child(p)
+	_charge_particles = p
+
+
+# 충전 오라 — 로컬 플레이어 자식으로 붙는 청록 발광. 부활/재스폰으로 몸이 갈려도 자동 복구(시야 콘과 같은 패턴).
+func _ensure_rune_aura(lp: Node) -> void:
+	if lp == null:
+		return
+	var existing := lp.get_node_or_null("RuneAura")
+	if existing != null:
+		_rune_aura = existing as Sprite2D
+		return
+	var s := Sprite2D.new()
+	s.name = "RuneAura"
+	s.texture = _light_tex()
+	s.z_index = -1   # 몸(0) 뒤 — 캐릭터를 감싸는 발광
+	s.modulate = Color(1.0, 0.82, 0.35, 0.0)   # 금색 — 활성 룬(★격파★)과 같은 색 언어(보스 청록과 분리)
+	var cm := CanvasItemMaterial.new()
+	cm.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	s.material = cm
+	s.scale = Vector2.ONE * 0.5
+	lp.add_child(s)
+	_rune_aura = s
+
+
+# 활성 룬 위에서 오라가 차오르고(강화 affordance), 밖으로 나가면 사그라든다. 순수 표시(판정 무영향).
+# 호출: _process(_update_runes 다음 — 발밑 룬 강조를 반짝 위에 덧대기 위해).
+func _update_rune_charge(lp: PlayerActor, delta: float) -> void:
+	_ensure_rune_aura(lp)
+	var in_rune: bool = _player_in_active_rune(lp)
+	_rune_charge = move_toward(_rune_charge, 1.0 if in_rune else 0.0, delta / 0.45)   # 천천히 차오르고 사그라듦
+	# 오라 — 충전량에 비례해 밝고 크게 + 아주 느린 숨쉬기(요란하지 않게)
+	if _rune_aura != null and is_instance_valid(_rune_aura):
+		var pulse := 1.0 + 0.05 * sin(_counter_t * TAU * 0.8)
+		_rune_aura.modulate.a = _rune_charge * 0.55
+		_rune_aura.scale = Vector2.ONE * (0.30 + 0.28 * _rune_charge) * pulse
+	# 무기 발광 — 충전 시 청백으로 달아오름(무기 노드 있으면)
+	var wpn := lp.get_node_or_null("WeaponPivot/Weapon") as CanvasItem
+	if wpn != null:
+		wpn.self_modulate = Color(1, 1, 1).lerp(Color(2.1, 1.8, 1.1), _rune_charge)   # 금백으로 달아오름
+	# 룬 입자 — 활성 룬 위로, 서 있을 때만 방출
+	if _charge_particles != null and is_instance_valid(_charge_particles):
+		if _active_rune >= 0 and _active_rune < _runes.size():
+			_charge_particles.global_position = _runes[_active_rune]["pos"]
+		_charge_particles.emitting = in_rune
+	# 발밑 활성 룬을 충전 중 더 밝게 (반짝 연출 위에 덧댐)
+	if in_rune and _active_rune >= 0 and _active_rune < _runes.size() and not _runes[_active_rune].get("unlocking", false):
+		var holder := _runes[_active_rune]["holder"] as Node2D
+		if holder != null and is_instance_valid(holder):
+			holder.scale = Vector2.ONE * (1.15 + 0.08 * sin(_counter_t * TAU * 1.2))   # 느리고 작은 맥동
+			holder.modulate = Color(2.6, 2.2, 0.7, 1.0)
+
+
+# 파훼 방출 — 활성 룬에서 금색 봉인 기둥이 솟구치고 확산 링이 퍼진다(+ 보스로 짧은 방향 볼트).
+# 🔴 파훼 순간엔 룬·플레이어·보스가 한 곳에 뭉쳐 있어 "룬→보스 빔"은 짧아 안 읽힌다 →
+#    룬 중심의 방출(기둥+링)로 "이 자리가 힘을 터뜨렸다 → 보스 그로기"를 보여준다.
+func _conduit_beam(idx: int) -> void:
+	if _boss == null or idx < 0 or idx >= _runes.size():
+		return
+	var from: Vector2 = _runes[idx]["pos"]
+	var cm := CanvasItemMaterial.new()
+	cm.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	# 은은한 금색 봉인 해제 파문 — 룬에서 천천히 부드럽게 퍼진다(요란하지 않게). 주역은 자물쇠 풀림 애니.
+	var ring := Sprite2D.new()
+	ring.texture = _ring_tex()
+	ring.modulate = Color(1.0, 0.85, 0.45, 0.5)
+	ring.material = cm
+	ring.z_index = 12
+	ring.scale = Vector2.ONE * 0.4
+	get_parent().add_child(ring)
+	ring.global_position = from
+	var rt := create_tween()
+	rt.parallel().tween_property(ring, "scale", Vector2.ONE * 1.7, 0.7).set_ease(Tween.EASE_OUT)
+	rt.parallel().tween_property(ring, "modulate:a", 0.0, 0.7)
+	rt.chain().tween_callback(ring.queue_free)
+
+
+# 파훼 성공 — 봉인(룬)이 깨진다: 금빛으로 확 밝아졌다가 커지며 사라지고, 금색 조각 6개가 사방으로 튄다.
+# 자물쇠 글리프가 작아 "고리가 열림"은 안 읽혀서(어색) → "봉인이 깨짐"(파훼)으로. 그로기 동안 사라졌다 재생성.
+func _unlock_rune(idx: int) -> void:
+	if idx < 0 or idx >= _runes.size():
+		return
+	var r: Dictionary = _runes[idx]
+	var holder := r["holder"] as Node2D
+	if holder == null or not is_instance_valid(holder):
+		return
+	r["unlocking"] = true   # _update_runes/_update_rune_charge가 이 룬을 덮지 않게
+	var center: Vector2 = r["pos"]
+	# 봉인이 확 밝아졌다가 커지며 흩어져 사라짐
+	holder.scale = Vector2.ONE * 1.4
+	holder.modulate = Color(3.0, 2.8, 1.7, 1.0)
+	var ht := create_tween()
+	ht.parallel().tween_property(holder, "scale", Vector2.ONE * 2.0, 0.35).set_ease(Tween.EASE_OUT)
+	ht.parallel().tween_property(holder, "modulate:a", 0.0, 0.4)
+	# 금빛 조각 6개 — 방사 방향 짧은 섬광이 튀며 흩어짐
+	var cm := CanvasItemMaterial.new()
+	cm.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	for k in 6:
+		var ang: float = TAU * float(k) / 6.0 + 0.35
+		var dir := Vector2(cos(ang), sin(ang))
+		var shard := Line2D.new()
+		shard.points = PackedVector2Array([Vector2(4.0, 0.0), Vector2(16.0, 0.0)])
+		shard.rotation = ang
+		shard.width = 3.0
+		shard.default_color = Color(1.0, 0.9, 0.5, 0.95)
+		shard.z_index = 12
+		shard.material = cm
+		get_parent().add_child(shard)
+		shard.global_position = center
+		var dist: float = 36.0 + float(k % 3) * 9.0   # 살짝 불규칙
+		var stw := create_tween()
+		stw.parallel().tween_property(shard, "global_position", center + dir * dist, 0.5).set_ease(Tween.EASE_OUT)
+		stw.parallel().tween_property(shard, "modulate:a", 0.0, 0.5)
+		stw.chain().tween_callback(shard.queue_free)
+
+
+# 패턴 소진(3개 다 깸) 후 재설정 — 전부 재잠금 + 카운트 0. 테스트 랩에서 반복 테스트용.
+func _reset_runes() -> void:
+	for i in _runes.size():
+		_runes[i]["unlocking"] = false
+		var h := _runes[i]["holder"] as Node2D
+		if h != null and is_instance_valid(h):
+			h.scale = Vector2.ONE
+			h.modulate = Color(0.5, 0.55, 0.55, 0.45)
+	_broken_count = 0
+
+
+# 5돌진 세트 시작 (패턴 랩 버튼) — 룬 3개 재생성 + 첫 돌진. 진행 중이거나 그로기 중이면 무시.
+func _start_pattern() -> void:
+	if _pattern_active:
+		return
+	if _boss != null and float(_boss.get("groggy_left")) > 0.0:
+		return
+	_reset_runes()          # 룬 3개 재생성 + broken_count 0
+	_dash_count = 0
+	_next_dash_cd = 0.0
+	_filler_pending = false
+	_pattern_active = true
+	_cstate = CS_GLINT      # 첫 돌진
+	_cstate_t = 0.0
+	_spawn_glint_converge()
+
+
+# 룬 파훼 등록(동기) — 그 룬 사라짐 + 카운트. 3/3이면 15초 그로기+성공, 아니면 3초 그로기(다음 룬 찾을 시간).
+func _register_break(idx: int) -> void:
+	if idx < 0 or idx >= _runes.size() or _runes[idx].get("unlocking", false):
+		return
+	_runes[idx]["unlocking"] = true   # 깨짐(사라짐)
+	_broken_count += 1
+	if _broken_count >= _runes.size():
+		# 3/3 성공! → 8초 그로기 + 세트 종료
+		if _boss != null:
+			_popup_text(_boss.global_position + Vector2(0.0, -80.0), "성공! 3/3 격파", Color(0.4, 1.0, 0.6))
+			if _boss.has_method("enter_groggy"):
+				_boss.enter_groggy(8.0)
+		_end_pattern(true)
+	elif _boss != null and _boss.has_method("enter_groggy"):
+		_boss.enter_groggy(3.0)   # 다음 룬 찾을 시간 = 3초 그로기
+
+
+# 한 돌진 종료(파훼/일반/실패 공통) — 돌진 수 +1, 5번 다 썼는데 <3이면 세트 종료. 다음 돌진은 CS_IDLE이 자동.
+func _dash_ended(consumed: bool) -> void:
+	if not _pattern_active:
+		return
+	if consumed:
+		_dash_count += 1   # 놓침만 5회 예산을 깎는다 (성공은 공짜)
+	if _broken_count >= _runes.size():
+		return   # 이미 3/3 성공 처리됨
+	if _dash_count >= MAX_DASHES:
+		_end_pattern(false)   # 5번 놓쳤는데 <3 → 종료
+	else:
+		_filler_pending = true   # 회복 뒤 틈새 공격 한 번 → 그다음 돌진 (CS_IDLE이 순서대로)
+		_next_dash_cd = DASH_GAP
+
+
+# 세트 종료 — 잠시 후 리셋(반복 테스트).
+func _end_pattern(success: bool) -> void:
+	_pattern_active = false
+	var t := create_tween()
+	t.tween_interval(4.0 if success else 1.5)
+	t.tween_callback(_reset_pattern)
+
+
+func _reset_pattern() -> void:
+	_reset_runes()
+	_dash_count = 0
+
+
+# 틈새 공격 — 번갈아: 장판 유도(룬 피해서) ↔ 원형 탄막. 돌진 실패 후 3초 틈에 발동해 룬으로 갈 시간을 준다.
+func _do_filler() -> void:
+	if _filler_alt:
+		_filler_zones()
+	else:
+		_filler_spray()
+	_filler_alt = not _filler_alt
+
+
+# 위험 장판 3개 — 룬을 피한 지점에 붉은 예고 원이 커졌다가 터진다. 안전지대가 곧 룬 근처 → 자연스럽게 룬으로.
+func _filler_zones() -> void:
+	for sp: Vector2 in _pick_zone_spots(3):
+		_spawn_danger_zone(sp, 62.0)
+
+
+func _pick_zone_spots(n: int) -> Array:
+	var out: Array = []
+	var tries := 0
+	while out.size() < n and tries < 40:
+		tries += 1
+		var p := Vector2(randf_range(ROOM2.position.x + 80.0, ROOM2.end.x - 80.0),
+			randf_range(ROOM2.position.y + 60.0, ROOM2.end.y - 60.0))
+		var ok := true
+		for r: Vector2 in RUNE_POS:
+			if p.distance_to(r) < 95.0:   # 룬 근처는 안전지대로 비운다
+				ok = false
+				break
+		if ok:
+			for q: Vector2 in out:
+				if p.distance_to(q) < 110.0:
+					ok = false
+					break
+		if ok:
+			out.append(p)
+	return out
+
+
+# 위험 장판 — ① 위치 링(즉시 예고) ② 안쪽 게이지가 0→가득 차오름 ③ 위에서 떨어지는 착탄(피해).
+func _spawn_danger_zone(pos: Vector2, radius: float) -> void:
+	var cm := CanvasItemMaterial.new()
+	cm.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	# ① 위치 링 — 어디에 떨어질지 미리 보여준다
+	var ring := Sprite2D.new()
+	ring.texture = _ring_tex()
+	ring.modulate = Color(1.0, 0.35, 0.28, 0.95)   # 또렷한 붉은 테두리
+	ring.material = cm
+	ring.z_index = 10
+	ring.scale = Vector2.ONE * (radius * 2.0 / 128.0)
+	get_parent().add_child(ring)
+	ring.global_position = pos
+	# ② 게이지 — 안쪽 붉은 원이 차오른다(위험 임박)
+	var fill := Sprite2D.new()
+	fill.texture = _light_tex()
+	fill.modulate = Color(1.0, 0.3, 0.22, 0.8)   # 진한 붉은 게이지
+	fill.material = cm
+	fill.z_index = 10
+	fill.scale = Vector2.ZERO
+	get_parent().add_child(fill)
+	fill.global_position = pos
+	var gt := create_tween()
+	gt.tween_property(fill, "scale", Vector2.ONE * (radius / 128.0), 1.2).set_ease(Tween.EASE_IN)
+	gt.tween_callback(_zone_drop.bind(pos, radius, ring, fill))
+
+
+# 게이지 다 참 → 위에서 무언가 떨어지는 모션.
+func _zone_drop(pos: Vector2, radius: float, ring: Sprite2D, fill: Sprite2D) -> void:
+	var cm := CanvasItemMaterial.new()
+	cm.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	var drop := Sprite2D.new()
+	drop.texture = _light_tex()
+	drop.modulate = Color(1.0, 0.55, 0.45, 0.95)
+	drop.material = cm
+	drop.z_index = 11
+	drop.scale = Vector2.ONE * (radius * 0.7 / 128.0)
+	get_parent().add_child(drop)
+	drop.global_position = pos + Vector2(0.0, -130.0)
+	var dt := create_tween()
+	dt.tween_property(drop, "global_position", pos, 0.22).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	dt.tween_callback(_zone_impact.bind(pos, radius, ring, fill, drop))
+
+
+# 착탄 — 플래시 + (플레이어가 안이면) 피해(무적 존중). 예고물 정리.
+func _zone_impact(pos: Vector2, radius: float, ring: Sprite2D, fill: Sprite2D, drop: Sprite2D) -> void:
+	_clash_fx(pos)
+	var lp := _local_player()
+	if lp != null and lp.global_position.distance_to(pos) <= radius:
+		var ph := lp.get_node_or_null("Health") as HealthComponent
+		if ph != null:
+			ph.apply_damage(5, false)   # 무적이면 무시
+	for nd: Node in [ring, fill, drop]:
+		if is_instance_valid(nd):
+			var ft := create_tween()
+			ft.tween_property(nd, "modulate:a", 0.0, 0.2)
+			ft.tween_callback(nd.queue_free)
+
+
+# 원형 탄막 — 보스에서 사방으로 느린 보라 탄. 위빙하며 룬으로 이동(테스트 랩 = 표시 위주).
+func _filler_spray() -> void:
+	if _boss == null:
+		return
+	var origin: Vector2 = _boss.global_position
+	var count := 10
+	for k in count:
+		var ang: float = TAU * float(k) / float(count)
+		var dir := Vector2(cos(ang), sin(ang))
+		var orb := Sprite2D.new()
+		orb.texture = _light_tex()
+		orb.modulate = Color(0.9, 0.5, 1.0, 0.95)   # 보라 탄
+		var cm := CanvasItemMaterial.new()
+		cm.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+		orb.material = cm
+		orb.scale = Vector2.ONE * 0.17
+		orb.z_index = 10
+		get_parent().add_child(orb)
+		orb.global_position = origin
+		var tw := create_tween()
+		tw.parallel().tween_property(orb, "global_position", origin + dir * 260.0, 2.0)
+		tw.tween_property(orb, "modulate:a", 0.0, 0.5)
+		tw.tween_callback(orb.queue_free)
 
 
 # 카운터 약점(F 표식) — 다이아몬드(가산 청록 맥동) + "F". _process가 플레이어 쪽 보스 가장자리로 옮긴다.
@@ -762,30 +1196,149 @@ func _setup_counter() -> void:
 	holder.add_child(lbl)
 	_counter_label = lbl
 	_counter_marker = holder
-	# 눈 반짝(예고) — 보스 눈 위치에 밝은 두 점. GLINT 국면에만 보임.
+	# 눈 예고 — 각 눈 = 헤일로(바깥 글로우) + 핫 코어(중심). GLINT 동안 dim→hot 램프 + 입자 수렴 + 끝 스냅.
 	var glint := Node2D.new()
 	glint.name = "EyeGlint"
 	glint.z_index = 8
 	glint.visible = false
 	get_parent().add_child(glint)
+	_eye_cores.clear()
+	_eye_halos.clear()
 	for dx: float in [-8.0, 8.0]:
-		var eye := Sprite2D.new()
-		eye.texture = _light_tex()
-		eye.scale = Vector2.ONE * 0.12
-		eye.modulate = Color(0.85, 1.0, 0.95, 1.0)
-		var em := CanvasItemMaterial.new()
-		em.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
-		eye.material = em
-		eye.position = Vector2(dx, 0.0)
-		glint.add_child(eye)
+		var halo := Sprite2D.new()
+		halo.texture = _light_tex()
+		halo.material = _add_mat()
+		halo.position = Vector2(dx, 0.0)
+		glint.add_child(halo)
+		_eye_halos.append(halo)
+		var core := Sprite2D.new()
+		core.texture = _light_tex()
+		core.material = _add_mat()
+		core.position = Vector2(dx, 0.0)
+		glint.add_child(core)
+		_eye_cores.append(core)
 	_eye_glint = glint
+	# 돌진 위험선 — 보스에서 돌진 방향으로 뻗다가 끝으로 갈수록 가늘어지며 투명해지는(자연스러운) 경로.
+	# 튀지 않게: 바닥 텔레그래프 층(z=-1, 캐릭터 아래) · 폭 테이퍼 · 색 페이드아웃 · 뮤트 주황 · 느린 맥동.
+	var dl := Line2D.new()
+	dl.name = "DashLine"
+	dl.width = 7.0
+	dl.z_index = -1   # UI처럼 안 튀고 '바닥에 그은 길'로 읽힘 (캐릭터 아래)
+	dl.visible = false
+	dl.begin_cap_mode = Line2D.LINE_CAP_ROUND
+	dl.end_cap_mode = Line2D.LINE_CAP_ROUND
+	var wc := Curve.new()
+	wc.add_point(Vector2(0.0, 1.0))
+	wc.add_point(Vector2(1.0, 0.12))   # 끝으로 갈수록 가늘게
+	dl.width_curve = wc
+	var g := Gradient.new()
+	g.set_color(0, Color(1.0, 0.45, 0.25, 0.7))
+	g.set_color(1, Color(1.0, 0.4, 0.2, 0.0))   # 끝은 투명 → 자연스럽게 흩어짐
+	dl.gradient = g
+	var dm := CanvasItemMaterial.new()
+	dm.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	dl.material = dm
+	get_parent().add_child(dl)
+	_dash_line = dl
 
 
-# 카운터 상태머신(호출: _process): IDLE(5초) → GLINT(눈 반짝) → AIM(바라봄+줄) → DASH(돌진, 도중 F=카운터).
+func _add_mat() -> CanvasItemMaterial:
+	var m := CanvasItemMaterial.new()
+	m.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	return m
+
+
+# 충전 수렴 — GLINT 진입 시 1회. 붉은 입자가 링에서 눈(핵)으로 빨려 들어온다(예비동작).
+func _spawn_glint_converge() -> void:
+	if _boss == null:
+		return
+	var center: Vector2 = _boss.global_position + EYE_OFFSET
+	for k in 12:
+		var ang: float = TAU * float(k) / 12.0 + randf() * 0.4
+		var r: float = 34.0 + randf() * 18.0
+		var mote := Sprite2D.new()
+		mote.texture = _light_tex()
+		mote.scale = Vector2.ONE * (0.035 + randf() * 0.025)
+		mote.modulate = Color(1.0, 0.35, 0.25, 0.0)
+		mote.material = _add_mat()
+		mote.z_index = 8
+		get_parent().add_child(mote)
+		mote.global_position = center + Vector2(cos(ang), sin(ang)) * r
+		var dur: float = 0.3 + randf() * 0.16
+		var tw := create_tween()
+		tw.parallel().tween_property(mote, "global_position", center, dur).set_ease(Tween.EASE_IN)
+		tw.parallel().tween_property(mote, "modulate:a", 0.9, dur * 0.5)
+		tw.parallel().tween_property(mote, "scale", Vector2.ONE * 0.012, dur)
+		tw.chain().tween_callback(mote.queue_free)
+
+
+# 충전 완료 스냅 — 밝은 코어 플래시 + 작은 확산 링(눈 번쩍).
+func _glint_snap() -> void:
+	if _boss == null:
+		return
+	var center: Vector2 = _boss.global_position + EYE_OFFSET
+	var flash := Sprite2D.new()
+	flash.texture = _light_tex()
+	flash.scale = Vector2.ONE * 0.05
+	flash.modulate = Color(1.9, 1.5, 1.2, 1.0)
+	flash.material = _add_mat()
+	flash.z_index = 9
+	get_parent().add_child(flash)
+	flash.global_position = center
+	var tw := create_tween()
+	tw.parallel().tween_property(flash, "scale", Vector2.ONE * 0.5, 0.18).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(flash, "modulate:a", 0.0, 0.18)
+	tw.chain().tween_callback(flash.queue_free)
+
+
+# 돌진 위험선 — 보스에서 돌진 방향으로 뻗는 굵고 밝은 경고선. AIM/DASH 동안만.
+func _show_dash_line() -> void:
+	if _dash_line == null or not is_instance_valid(_dash_line) or _boss == null:
+		return
+	_dash_line.visible = true
+	var from: Vector2 = _boss.global_position
+	var dir: Vector2 = _charge_dir
+	# 🔴 예고선 = 실제 돌진 경로 = 직선("맞는 곳=보이는 곳"). 파동 안 넣음.
+	#    길이 = 보스→플레이어(돌진 대상) + 약간의 팔로스루 — 대상까지만 뻗게(너무 길지 않게).
+	var length: float = 200.0
+	var lp := _local_player()
+	if lp != null:
+		length = clampf(from.distance_to(lp.global_position) + 70.0, 70.0, 280.0)
+	_dash_line.points = PackedVector2Array([from, from + dir * length])
+	_dash_line.modulate.a = 0.26 + 0.1 * absf(sin(_counter_t * TAU * 2.2))   # 줄 자체는 옅게 — 흐르는 모트가 주역
+	# 흐르는 느낌 — 줄을 따라 빛 알갱이가 촘촘히 흘러간다(경로는 직선 유지)
+	if _counter_t - _soul_mote_last > 0.045:
+		_soul_mote_last = _counter_t
+		_spawn_soul_mote(from, dir, length)
+
+
+# 영혼 모트 — 줄을 따라 보스에서 앞으로 흐르는 빛 알갱이(밝아졌다 사라짐). "영혼이 줄을 타고 흐르는" 느낌.
+func _spawn_soul_mote(from: Vector2, dir: Vector2, length: float) -> void:
+	var perp: Vector2 = Vector2(-dir.y, dir.x)
+	var drift: Vector2 = perp * randf_range(-7.0, 7.0)   # 살짝 옆으로(영혼) — 코어 경로는 직선
+	var mote := Sprite2D.new()
+	mote.texture = _light_tex()
+	mote.scale = Vector2.ONE * (0.035 + randf() * 0.03)
+	mote.modulate = Color(1.0, 0.6, 0.32, 0.0)
+	mote.material = _add_mat()
+	mote.z_index = 0
+	get_parent().add_child(mote)
+	mote.global_position = from + drift * 0.4
+	var travel: float = 0.4 + randf() * 0.25
+	var tw := create_tween()
+	tw.tween_property(mote, "modulate:a", 0.8, 0.1)
+	tw.parallel().tween_property(mote, "global_position", from + dir * maxf(length - 20.0, 20.0) + drift, travel).set_ease(Tween.EASE_IN)
+	tw.chain().tween_property(mote, "modulate:a", 0.0, 0.14)
+	tw.tween_callback(mote.queue_free)
+
+
+# 카운터 상태머신(호출: _process): IDLE → GLINT(눈 반짝) → AIM(위험선) → DASH(돌진, 도중 F=카운터).
 func _update_counter(lp: PlayerActor, delta: float) -> void:
 	if _counter_marker == null or not is_instance_valid(_counter_marker) or _boss == null:
 		return
 	_counter_t += delta
+	if _next_dash_cd > 0.0:
+		_next_dash_cd -= delta   # 그로기 중에도 흐른다 → 성공 3초 그로기와 겹쳐 총 3초, 실패도 3초
 	lp.roll_suppressed = (_cstate != CS_IDLE) or _clashing   # 카운터 시퀀스+클래시 내내 구르기 억제(연타 F 튀어나감 방지)
 	var h := _boss.get_node_or_null("Health") as HealthComponent
 	if h == null or h.hp <= 0:   # 죽으면 전부 끔
@@ -796,22 +1349,40 @@ func _update_counter(lp: PlayerActor, delta: float) -> void:
 			_reset_counter()
 		return
 	_cstate_t += delta
+	if _dash_line != null and is_instance_valid(_dash_line):
+		_dash_line.visible = false   # 기본 숨김 — AIM/DASH만 켠다
 	match _cstate:
 		CS_IDLE:
+			# 버튼으로 5돌진 세트 시작. 세트 진행 중이면 (그로기 끝난 뒤) 간격 두고 다음 돌진 자동.
 			_counter_marker.visible = false
 			_eye_glint.visible = false
 			_boss.counter_ready = false
-			if _cstate_t >= COUNTER_INTERVAL:
-				_cstate = CS_GLINT
-				_cstate_t = 0.0
+			if _pattern_active and _dash_count < MAX_DASHES and _broken_count < _runes.size() and _next_dash_cd <= 0.0:
+				if _filler_pending:
+					_do_filler()               # 회복 끝 → 틈새 공격 한 번
+					_filler_pending = false
+					_next_dash_cd = FILLER_LEAD   # 틈새 공격이 끝나야 다음 돌진
+				else:
+					_cstate = CS_GLINT         # 틈새 공격 끝 → 다음 돌진
+					_cstate_t = 0.0
+					_spawn_glint_converge()
 		CS_GLINT:
 			# 눈 반짝(예고). 아직 조준·돌진 전.
 			_counter_marker.visible = false
 			_boss.counter_ready = false
 			_eye_glint.visible = true
 			_eye_glint.global_position = _boss.global_position + EYE_OFFSET
-			_eye_glint.scale = Vector2.ONE * (0.5 + 0.7 * absf(sin(_cstate_t * TAU * 5.0)))
+			_eye_glint.scale = Vector2.ONE
+			var ct: float = clampf(_cstate_t / COUNTER_GLINT, 0.0, 1.0)   # 충전 진행 0→1
+			var hot: Color = Color(0.9, 0.2, 0.15).lerp(Color(1.8, 1.5, 1.3), ct)   # 어두운 빨강 → 뜨거운 백색
+			for hnode: Sprite2D in _eye_halos:
+				hnode.modulate = Color(hot.r, hot.g * 0.55 + 0.1, hot.b * 0.45 + 0.1, 0.25 + 0.55 * ct)
+				hnode.scale = Vector2.ONE * (0.20 + 0.16 * ct)
+			for cnode: Sprite2D in _eye_cores:
+				cnode.modulate = Color(hot.r, hot.g, hot.b, 0.45 + 0.55 * ct)
+				cnode.scale = Vector2.ONE * (0.06 + 0.06 * ct)
 			if _cstate_t >= COUNTER_GLINT:
+				_glint_snap()   # 충전 완료 스냅 플래시(눈 번쩍)
 				# 조준 개시 — 돌진 방향 고정(현재 플레이어 향) + 보스가 바라봄
 				_cstate = CS_AIM
 				_cstate_t = 0.0
@@ -827,11 +1398,15 @@ func _update_counter(lp: PlayerActor, delta: float) -> void:
 			_eye_glint.visible = false
 			_boss.counter_ready = true
 			_show_counter_marker_on_boss(lp)
+			_show_dash_line()        # 돌진 방향 경고선(굵고 밝게)
 			if _cstate_t >= CHARGE_AIM:
 				_cstate = CS_DASH
 				_cstate_t = 0.0
 				_parry_open_t = -1.0     # 받아치기 창 초기화
 				_parry_used = false
+				_in_rune_window = false  # 새 돌진 시작 — 룬 창 래치 초기화
+				_break_rune = -1
+				_dash_speed = CHARGE_SPEED
 				EventBus.screen_shake.emit(4.0)
 		CS_DASH:
 			# 돌진 — 고정 방향으로 직진. 근접(내 앞)하면 창 열림, 그 안 F만 성공.
@@ -844,19 +1419,29 @@ func _update_counter(lp: PlayerActor, delta: float) -> void:
 				_parry_open_t = PARRY_WINDOW   # 앞에서 근접 → 창 열림
 			if _parry_open_t >= 0.0:
 				_parry_open_t -= delta
+				var cr_win := _current_rune(lp)
+				if cr_win >= 0:
+					_in_rune_window = true   # 창이 열린 동안 룬 위 → F 순간 살짝 벗어나도 파훼 인정
+					_break_rune = cr_win     # 어느 룬이든 그 룬을 깬다
 			_show_counter_marker_on_boss(lp)
-			# 이동(고정 방향 직진, 🔴 맵 클램프 — 벽 뚫고 날아가지 않게)
-			var step := CHARGE_SPEED * delta
-			_boss.global_position = _clamp_arena(_boss.global_position + _charge_dir * step)
-			_charge_traveled += step
-			# 종료: 뒤를 지나간 순간(이동 후 재판정) = 실패(잠금이면 빨간 ✕ 잠깐 유지) · 안전 상한도
+			_show_dash_line()        # 돌진 중에도 경로 표시
+			# 🔴 이동 — 지나치기 전엔 풀스피드, 플레이어를 지나치면 감속(팔로스루)해 스르륵 멈춘다.
+			#    (급정지=끊김 / 무한이동=오버슈트, 둘 다 피함. 창은 지나쳐도 유지 → 늦은 F도 성공.)
 			var passed: bool = (_boss.global_position - lp.global_position).dot(_charge_dir) > 0.0
-			if passed or _charge_traveled > 550.0:
+			if passed:
+				_dash_speed = move_toward(_dash_speed, 0.0, DASH_DECEL * delta)
+			if _dash_speed > 1.0 and _charge_traveled <= 640.0:
+				var step := _dash_speed * delta
+				_boss.global_position = _clamp_arena(_boss.global_position + _charge_dir * step)
+				_charge_traveled += step
+			# 종료 — 창 닫힌 뒤 + (거의 멈춤 or 상한)
+			if _parry_open_t < 0.0 and (_dash_speed <= 1.0 or _charge_traveled > 640.0):
 				if _parry_used and _lock_linger > 0.0:
-					_lock_linger -= delta
+					_lock_linger -= delta   # 이른 F 잠금 = ✕ 잠깐 더 (보스는 감속해 멈춤)
 				else:
-					_charge_hit(lp)        # 내 뒤를 지나감 = 실패
+					_charge_hit(lp)        # 지나침 = 실패
 					_reset_counter()
+					_dash_ended(true)      # 놓침 = 돌진 예산 −1 (5회)
 
 
 # F 표식을 보스 앞(대상 쪽)에 배치 + 맥동. 받아치기 창이 열리면 "지금!" 강조(흰노랑·크게).
@@ -889,11 +1474,14 @@ func _reset_counter() -> void:
 	_cstate_t = 0.0
 	_parry_open_t = -1.0
 	_parry_used = false
+	_in_rune_window = false
 	_lock_linger = 0.0
 	if _counter_marker != null:
 		_counter_marker.visible = false
 	if _eye_glint != null:
 		_eye_glint.visible = false
+	if _dash_line != null:
+		_dash_line.visible = false
 	if _boss != null:
 		_boss.counter_ready = false
 	var lp := _local_player()
@@ -909,9 +1497,21 @@ func _try_counter() -> void:
 	if lp == null:
 		return
 	if _parry_open_t >= 0.0:
-		_parry_in_rune = _player_in_active_rune(lp)   # 활성 룬 안에서 쳤나 → 파훼 판정
-		_reset_counter()      # 창 안 — 카운터 성공
+		if not _boss_in_vision(lp):
+			# 🔴 보스를 시야 콘(~90°)에 두지 않고 받아침 = 실패(이번 돌진 잠금, 빨간 ✕)
+			_parry_used = true
+			_lock_linger = 0.5
+			return
+		# 파훼 판정 = 창 동안 룬 위 OR F 순간 룬 위. 깰 룬 = 그 룬(래치 우선, 없으면 지금 룬).
+		var cr := _current_rune(lp)
+		if cr >= 0:
+			_break_rune = cr
+		_parry_in_rune = _break_rune >= 0 and (_in_rune_window or cr >= 0)
+		_reset_counter()      # 창 안 + 보스 조준 — 카운터 성공
 		_counter_strike(lp)
+		if _parry_in_rune:
+			_register_break(_break_rune)   # 그 룬 깸 + 그로기(3초, 3/3이면 15초)
+		_dash_ended(false)     # 파훼/일반 성공 = 돌진 예산 소진 안 함
 	else:
 		_parry_used = true    # 이른 F — 헛침, 이번 돌진은 더 못 받아침(빨간 ✕)
 		_lock_linger = 0.5
@@ -971,15 +1571,15 @@ func _clash_impact(pos: Vector2) -> void:
 		_boss.counter_stagger()
 	_clash_fx(pos)
 	if _parry_in_rune:
-		# 격파 — 화려하게: 추가 스파크 + 큰 흔들림 + 보스 그로기 10초
+		# 격파 — 화려하게: 추가 스파크 + 큰 흔들림 (그로기는 _register_break가 3초/15초로 처리)
 		EventBus.screen_shake.emit(13.0)
 		_clash_fx(_boss.global_position)
 		_popup_text(pos + Vector2(0.0, -50.0), "파훼!", Color(1.0, 0.95, 0.4))
-		if _boss.has_method("enter_groggy"):
-			_boss.enter_groggy(10.0)
+		_conduit_beam(_break_rune)   # 깬 룬에서 은은한 봉인 해제 파문
+		_unlock_rune(_break_rune)    # 그 룬이 금색 조각으로 깨짐(봉인 파쇄)
 	else:
 		EventBus.screen_shake.emit(7.0)
-		_popup_text(pos + Vector2(0.0, -42.0), "성공!", Color(0.65, 1.0, 0.72))
+		_popup_text(pos + Vector2(0.0, -42.0), "성공!", Color(0.65, 1.0, 0.72))   # 룬 아닌 일반 부딪힘 = 그로기 없음
 
 
 # 돌진 명중(안 침/잠금) = 실패 — 흔들림 + "실패" 표시 + 플레이어 피해(무적 무시, 실패에 대가) + 넉백.
@@ -992,11 +1592,93 @@ func _charge_hit(lp: PlayerActor) -> void:
 	var ph := lp.get_node_or_null("Health") as HealthComponent
 	if ph != null:
 		ph.apply_damage(9, false, true)
-	# 🔴 플레이어 넉백 제거 — 위치 고정(사용자 요청). 대신 실패 후 보스를 플레이어 근처(±1m)로 텔포한다
-	#    (뒤로 스쳐 지나간 보스가 다음 사이클을 위해 다시 근접 위치로).
-	var ang: float = randf() * TAU
-	var dist: float = 40.0 + randf() * 18.0   # ~1m 내외
-	_boss.global_position = _clamp_arena(lp.global_position + Vector2(cos(ang), sin(ang)) * dist)
+	_player_hit_fx(lp.global_position)   # 붉은 피격 FX (플레이어가 돌진에 맞음)
+	# 🔴 텔포(렉처럼 튐) 대신 — 유령답게 빨려들어가듯 사라졌다가 새 위치에 다시 생긴다.
+	var back: Vector2 = _clamp_arena(lp.global_position - _charge_dir * 72.0)
+	_boss_vanish_reappear(back)
+
+
+# 붉은 피격 FX — 실패(돌진에 맞음) 시 플레이어 위치에 충격 플래시 + 확산 링.
+func _player_hit_fx(pos: Vector2) -> void:
+	var cm := _add_mat()
+	var flash := Sprite2D.new()
+	flash.texture = _light_tex()
+	flash.modulate = Color(1.7, 0.45, 0.4, 0.95)
+	flash.material = cm
+	flash.z_index = 11
+	flash.scale = Vector2.ONE * 0.1
+	get_parent().add_child(flash)
+	flash.global_position = pos
+	var ft := create_tween()
+	ft.parallel().tween_property(flash, "scale", Vector2.ONE * 0.42, 0.18).set_ease(Tween.EASE_OUT)
+	ft.parallel().tween_property(flash, "modulate:a", 0.0, 0.18)
+	ft.chain().tween_callback(flash.queue_free)
+	var ring := Sprite2D.new()
+	ring.texture = _ring_tex()
+	ring.modulate = Color(1.5, 0.4, 0.35, 0.9)
+	ring.material = cm
+	ring.z_index = 11
+	ring.scale = Vector2.ONE * 0.15
+	get_parent().add_child(ring)
+	ring.global_position = pos
+	var rt := create_tween()
+	rt.parallel().tween_property(ring, "scale", Vector2.ONE * 0.7, 0.22).set_ease(Tween.EASE_OUT)
+	rt.parallel().tween_property(ring, "modulate:a", 0.0, 0.22)
+	rt.chain().tween_callback(ring.queue_free)
+
+
+# 유령 순간이동 — 빨려들어가듯 작아지며 사라졌다가(현 위치) 새 위치에서 커지며 다시 생긴다.
+func _boss_vanish_reappear(dest: Vector2) -> void:
+	if _boss == null or not is_instance_valid(_boss):
+		return
+	var base_scale: Vector2 = _boss.scale
+	_boss_implode_fx(_boss.global_position)   # 흡입 링(청록)
+	var tw := create_tween()
+	tw.tween_property(_boss, "modulate:a", 0.0, 0.1).set_ease(Tween.EASE_IN)
+	tw.parallel().tween_property(_boss, "scale", base_scale * 0.25, 0.1).set_ease(Tween.EASE_IN)
+	tw.chain().tween_callback(_boss_reappear_at.bind(dest, base_scale))
+
+
+func _boss_reappear_at(dest: Vector2, base_scale: Vector2) -> void:
+	if _boss == null or not is_instance_valid(_boss):
+		return
+	_boss.global_position = dest
+	_boss_materialize_fx(dest)   # 나타남 버스트
+	var tw := create_tween()
+	tw.tween_property(_boss, "modulate:a", 1.0, 0.14).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(_boss, "scale", base_scale, 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+# 흡입 링 — 청록 링이 점으로 수축(빨려들어감).
+func _boss_implode_fx(pos: Vector2) -> void:
+	var s := Sprite2D.new()
+	s.texture = _ring_tex()
+	s.modulate = Color(0.5, 1.0, 0.85, 0.9)
+	s.material = _add_mat()
+	s.z_index = 6
+	s.scale = Vector2.ONE * 1.4
+	get_parent().add_child(s)
+	s.global_position = pos
+	var tw := create_tween()
+	tw.parallel().tween_property(s, "scale", Vector2.ONE * 0.05, 0.13).set_ease(Tween.EASE_IN)
+	tw.parallel().tween_property(s, "modulate:a", 0.0, 0.13)
+	tw.chain().tween_callback(s.queue_free)
+
+
+# 나타남 버스트 — 청록 링이 퍼지며 재생성.
+func _boss_materialize_fx(pos: Vector2) -> void:
+	var s := Sprite2D.new()
+	s.texture = _ring_tex()
+	s.modulate = Color(0.5, 1.0, 0.85, 0.85)
+	s.material = _add_mat()
+	s.z_index = 6
+	s.scale = Vector2.ONE * 0.2
+	get_parent().add_child(s)
+	s.global_position = pos
+	var tw := create_tween()
+	tw.parallel().tween_property(s, "scale", Vector2.ONE * 1.5, 0.3).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(s, "modulate:a", 0.0, 0.3)
+	tw.chain().tween_callback(s.queue_free)
 
 
 # 클래시 스파크 — 밝은 흰 확산 링 + 방사 스파크 선.
@@ -1241,16 +1923,11 @@ func _build_panel() -> void:
 	var g_cnt := _grid(vb, 2)
 	_add_btn(g_cnt, "눈반짝", _on_force_glint)   # 전체: 눈 반짝 → 조준 → 돌진
 	_add_btn(g_cnt, "돌진", _on_force_charge)     # 눈 반짝 건너뛰고 바로 조준→돌진
-	_add_title(vb, "· 코옵")
-	var g_coop := _grid(vb, 2)
-	for e: Array in COOP_BTNS:
-		_add_btn(g_coop, str(e[0]), _on_coop.bind(int(e[1])))
 
 	vb.add_child(HSeparator.new())
 	var g_chk := _grid(vb, 2)
 	_cb_invin = _add_check(g_chk, "무적", _invincible, _on_invin)
 	_cb_boss = _add_check(g_chk, "보스정지", true, _on_boss_hold)
-	_cb_coop = _add_check(g_chk, "코옵정지", true, _on_coop_hold)
 	_cb_npc = _add_check(g_chk, "NPC", _npc_on, _on_npc_toggle)
 	_add_check(g_chk, "오염P2", false, _on_corrupt_toggle)   # ⑤ 페이즈2 환경 오염 미리보기
 	_add_btn(vb, "새 보스", _on_new_boss)   # 스테이지 재진입 = 새 보스 (마을 안 감, main의 TestMode 게이트)
@@ -1301,18 +1978,11 @@ func _add_check(parent: Node, txt: String, on: bool, cb: Callable) -> CheckBox:
 
 # ── 버튼 핸들러 ──
 func _on_force_glint() -> void:
-	_cstate = CS_GLINT      # 전체 시퀀스: 눈 반짝 → 조준 → 돌진
-	_cstate_t = 0.0
+	_start_pattern()   # 버튼 1번 = 보스 5돌진 세트 시작 (그 안에 룬 3개 깨면 성공)
 
 
 func _on_force_charge() -> void:
-	_cstate = CS_GLINT      # 눈 반짝 건너뛰고 즉시 조준(AIM)으로
-	_cstate_t = COUNTER_GLINT
-
-
-func _on_coop(idx: int) -> void:
-	if _coop != null and _coop.has_method("debug_force_mech"):
-		_coop.debug_force_mech(idx)
+	_start_pattern()
 
 
 func _on_invin(on: bool) -> void:
@@ -1333,11 +2003,6 @@ func _on_new_boss() -> void:
 func _on_boss_hold(on: bool) -> void:
 	if _boss != null:
 		_boss.debug_hold = on
-
-
-func _on_coop_hold(on: bool) -> void:
-	if _coop != null:
-		_coop.debug_hold = on
 
 
 func _on_npc_toggle(on: bool) -> void:
@@ -1385,7 +2050,9 @@ func _process(_delta: float) -> void:
 	if _vision != null and is_instance_valid(_vision):
 		_vision.rotation = float(lp.get("_aim_angle"))
 	_update_counter(lp, _delta)   # 카운터 약점 배치·맥동·재무장
-	_update_runes(lp)             # 룬 자물쇠 — 활성이 시야 안이면 색 드러남, 밖/비활성은 회색
+	_update_runes(lp)             # 룬 — 플레이어가 올라선 룬 = 타겟(금색), 나머지 회색, 깨진 것 숨김
+	_update_rune_diamond()        # 타겟 룬 위 다이아몬드 + "N번째"
+	_update_rune_charge(lp, _delta)   # 룬 위 충전 오라/입자/무기 발광 (강화 affordance)
 	# 보스 그로기 라벨 — "그로기중... N"
 	if _groggy_label != null and _boss != null:
 		var g: float = float(_boss.get("groggy_left"))
@@ -1418,7 +2085,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			_panel_layer.visible = not _panel_layer.visible
 		get_viewport().set_input_as_handled()
 	elif ke.physical_keycode == KEY_F:
-		if _f_cd <= 0.0:      # 0.5s 쿨타임 — 연타 방지
-			_f_cd = 0.5
+		if _f_cd <= 0.0:      # 0.15s 쿨타임 — 창(0.28s)보다 짧게 → 창 직전 탭이 창 F를 안 씹게
+			_f_cd = 0.15
 			_try_counter()
 		get_viewport().set_input_as_handled()

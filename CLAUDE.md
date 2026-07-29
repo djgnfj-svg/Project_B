@@ -6,6 +6,8 @@
 >
 > **곁문서 (정본 아님 — 갱신 책임이 다르다):** `docs/CHANGELOG.md` 변경 이력 전문(새 변경은 **여기에** 전문으로 쓴다) · `docs/TUNING.md` 미정 수치(증상 → 파일 → 현재값 → 선택지, 사용자가 조인다) · `docs/archive/` 갱신이 멈춘 옛 작업 문서(참고용) · `docs/superpowers/specs/` 설계 초안(협동 보스 패턴 — ⚠ **초안은 남아 있지만 구현은 끝났다**: `src/stage/coop_authority.gd` + `stage_boss.tscn`의 `CoopAuthority` 노드 + `fx/coop_*` 9장 전부 배선됨).
 
+> 🔴 **진행 중 작업을 이어받는 세션이면 먼저 `docs/handoff_boss_counter.md`를 읽어라** — 보스 콘텐츠 재구축(돌진 받아치기 카운터 + 룬 자물쇠 격파 + 그로기, 브랜치 `feat/MonsterAnima`)의 현황·파일 지도·다음 작업·함정이 거기 있다. 상세 맥락은 아래 「진행 중」 줄.
+
 - **정체:** 2D **픽셀아트 웹 게임** (코드네임 Project_B) — Godot 4.7.1, **Web(HTML5/WASM) 익스포트 타깃**, 렌더러 Compatibility(웹 필수). ⚠ 이 사실(플랫폼·엔진·렌더러·아트 스타일)은 `docs/GDD.md` §3과 **미러**다 — 한쪽을 고치면 다른 쪽도 같이 고친다.
 - 🔴 **네트워크 리뷰는 항상 필요하다.** 웹 게임이라 네트워크(WebRTC/WebSocket·동기화·권한·지연/재접속 처리)가 코어다. 네트워크에 닿는 코드는 예외 없이 **`projectb-netreview`** 를 거친다(2026-07-26에 reviewer에서 전용 에이전트로 분리 — 점검 축이 7개로 깊어 일반 품질 리뷰에 끼우면 둘 다 얕아진다). 브라우저는 ENet(UDP)을 못 쓰므로 전송 경로가 맞는지, 신뢰 경계·권한 검증이 있는지 매번 본다.
 - **엔진 실행 파일:** 루트의 `Godot_v4.7.1-stable_win64.exe`.
