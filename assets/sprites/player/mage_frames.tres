@@ -1,6 +1,6 @@
-[gd_resource type="SpriteFrames" load_steps=14 format=3]
+[gd_resource type="SpriteFrames" format=3 uid="uid://dea1rl46gia74"]
 
-[ext_resource type="Texture2D" path="res://assets/sprites/player/mage_anim.png" id="1"]
+[ext_resource type="Texture2D" uid="uid://rasuemkcl3ey" path="res://assets/sprites/player/mage_anim.png" id="1"]
 
 [sub_resource type="AtlasTexture" id="f0"]
 atlas = ExtResource("1")
@@ -18,22 +18,6 @@ region = Rect2(64, 0, 32, 32)
 atlas = ExtResource("1")
 region = Rect2(96, 0, 32, 32)
 
-[sub_resource type="AtlasTexture" id="f4"]
-atlas = ExtResource("1")
-region = Rect2(128, 0, 32, 32)
-
-[sub_resource type="AtlasTexture" id="f5"]
-atlas = ExtResource("1")
-region = Rect2(160, 0, 32, 32)
-
-[sub_resource type="AtlasTexture" id="f6"]
-atlas = ExtResource("1")
-region = Rect2(192, 0, 32, 32)
-
-[sub_resource type="AtlasTexture" id="f7"]
-atlas = ExtResource("1")
-region = Rect2(224, 0, 32, 32)
-
 [sub_resource type="AtlasTexture" id="f8"]
 atlas = ExtResource("1")
 region = Rect2(256, 0, 32, 32)
@@ -50,6 +34,22 @@ region = Rect2(320, 0, 32, 32)
 atlas = ExtResource("1")
 region = Rect2(352, 0, 32, 32)
 
+[sub_resource type="AtlasTexture" id="f4"]
+atlas = ExtResource("1")
+region = Rect2(128, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="f5"]
+atlas = ExtResource("1")
+region = Rect2(160, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="f6"]
+atlas = ExtResource("1")
+region = Rect2(192, 0, 32, 32)
+
+[sub_resource type="AtlasTexture" id="f7"]
+atlas = ExtResource("1")
+region = Rect2(224, 0, 32, 32)
+
 [resource]
 animations = [{
 "frames": [{
@@ -65,26 +65,9 @@ animations = [{
 "duration": 1.0,
 "texture": SubResource("f3")
 }],
-"loop": true,
+"loop": 1,
 "name": &"idle",
 "speed": 6.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": SubResource("f4")
-}, {
-"duration": 1.0,
-"texture": SubResource("f5")
-}, {
-"duration": 1.0,
-"texture": SubResource("f6")
-}, {
-"duration": 1.0,
-"texture": SubResource("f7")
-}],
-"loop": true,
-"name": &"run",
-"speed": 9.0
 }, {
 "frames": [{
 "duration": 1.0,
@@ -99,7 +82,24 @@ animations = [{
 "duration": 1.0,
 "texture": SubResource("f11")
 }],
-"loop": false,
+"loop": 0,
 "name": &"roll",
 "speed": 16.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("f4")
+}, {
+"duration": 1.0,
+"texture": SubResource("f5")
+}, {
+"duration": 1.0,
+"texture": SubResource("f6")
+}, {
+"duration": 1.0,
+"texture": SubResource("f7")
+}],
+"loop": 1,
+"name": &"run",
+"speed": 9.0
 }]
