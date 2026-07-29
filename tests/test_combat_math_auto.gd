@@ -973,6 +973,12 @@ func _initialize() -> void:
 	failures += _check(dash_worst_ratio <= 1.0,
 		"★대시 속도 전수: 최대 haste에서도 원격 위치 clamp 하한 이내 (최악 %s = %.1f%%)"
 			% ["없음" if dash_worst_id.is_empty() else dash_worst_id, dash_worst_ratio * 100.0])
+	# 🔴 **0건 침묵 통과 가드** (리뷰 A-2). 위 단정은 `combo_dash > 0`인 무기가 **하나도 없으면**
+	#   `0 ≤ 1.0`으로 조용히 통과한다 — 즉 누가 `combo_dash`를 지우면 트립와이어가 **신호 없이 죽는다.**
+	#   ⚠ 가상이 아니다: 방금 `combo_finish_arc`를 두 무기에서 지웠고(리뷰 I-4·I-5), 같은 일이
+	#     `combo_dash`에 일어나면 위 줄은 계속 초록이다. `combo_scanned > 0`과 같은 관용구다.
+	failures += _check(not dash_worst_id.is_empty(),
+		"★대시 무기가 최소 1종 존재한다 (0건이면 위 속도 단정이 침묵 통과한다)")
 	failures += _check(dash_clamp_ok,
 		"★대시 거리 상한 clamp가 살아 있다 (데이터가 상한에 딱 붙어 있어 합성값으로만 잡힌다)")
 	failures += _check(grace_ok,

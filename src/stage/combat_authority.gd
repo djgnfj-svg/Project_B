@@ -585,6 +585,13 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			#   신뢰 대가·순서 의존은 `_melee_claim` 선언부 주석이 정본이다.
 			# ⚠ **데미지는 아래에서 여전히 `req_combo`(min)를 쓴다 — 그 줄을 주장으로 바꾸지 마라.**
 			#   각은 표시가 있어 주장 기준으로 정렬해야 하지만, 데미지는 그려지는 것이 없어 min이 안전하다.
+			# 🔴🔴 **`req_finish` 항은 수학적으로 중복이다 — 그래도 지우지 마라. 위험은 반대쪽이다.**
+			#   증명(리뷰 B-1): `_melee_combo = min(clamp(claim, atk_w), counted) ≤ clamp(claim, atk_w)
+			#   = _melee_claim`이고 읽기 쪽 `clamp_combo_index`도 단조, `is_combo_finish`도 index에
+			#   단조이므로 **`req_finish ⟹ claim_finish`**. 즉 `or`의 값은 항상 `claim_finish`와 같다.
+			#   ⚠ **"중복이니 정리한다"며 `claim_finish`를 지우고 `req_finish`만 남기면 C-1이 그대로
+			#   재발한다**(정당한 마무리 타가 무음 거부된다). 지울 쪽은 `req_finish`이고, 그것도
+			#   방어적 중복으로 남겨 두는 것이 옳다 — 부등식이 깨지는 변경이 오면 `or`가 받아 준다.
 			var claim_finish := CombatMath.is_combo_finish(melee_weapon,
 				CombatMath.clamp_combo_index(int(_melee_claim.get(from_id, 0)), melee_weapon))
 			var hit_half := CombatMath.melee_half_angle(melee_weapon, req_finish or claim_finish) \
