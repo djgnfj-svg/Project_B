@@ -134,7 +134,8 @@ const SLOT_ARMOR := 1
 #   ⑴ 판정 순간까지 velocity가 살아 있어야 lead 외삽이 덮는다(판정 전에 멈추면
 #      `net_anchor_lead == net_anchor`가 되어 오차 = 대시 거리 **전체**가 남는다 = 최악)
 #   ⑵ 구간이 짧으면 속도가 `player._max_move_speed`(전사 260px/s)를 넘어 **원격 clamp가 정당한
-#      대시를 깎는다.** 전 구간(창 0.135s)이면 27px에서 200px/s로 그 안에 든다.
+#      대시를 깎는다.** 전 구간(창 0.135s)이면 20px에서 148px/s(haste 0) · 최대 haste에서 222px/s로
+#      그 안에 든다(여유 14.5%).
 # ⚠ 상한 = `CombatMath.MAX_COMBO_DASH` — haste 상한에서도 clamp를 안 넘도록 유도된 값이다.
 #   더 크게 하려면 `LAG_MAX_LEAD_DIST`와 clamp 3곳을 함께 재유도해야 한다(`roll_dist` 선례).
 @export var combo_dash: float = 0.0

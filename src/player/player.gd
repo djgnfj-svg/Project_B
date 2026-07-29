@@ -592,6 +592,15 @@ func _apply_weapon_feel(equip: EquipDef) -> void:
 	# ⚠ `_last_shot_msec`은 여기서도 안 지운다(그쪽 규율과 같은 이유 — 호스트는 자기 기록을 안 지운다).
 	_combo_index = 0
 	_combo_left = 0.0
+	# 🔴 **비행 중 스윙도 끊는다 — `_swing_is_finish`가 래치된 채 남으면 판정이 새 무기 기준으로
+	#   넓어진다** (리뷰 Minor, 2026-07-29). 예: 낡은 대검 마무리(표시 2.55)로 휘두르는 중에 도끼로
+	#   교체하면 `_resolve_swing_hit`이 도끼의 마무리 각 기준으로 물어 **판정이 표시보다 0.35 rad
+	#   넓어진다**(= 안 보이는데 맞는다, §3 금지 방향). 도달성은 극히 낮지만(모달을 열고 0.24~0.36s
+	#   안에 장착 + `in_chapter` 가드) 한 줄로 닫힌다.
+	# ⚠ `_cancel_swing`이 `_swing_hit_armed`·`_dash_speed`까지 함께 내리므로 **대시도 같이 멎는다** —
+	#   그게 맞는 방향이다(무기가 바뀌었으니 그 무기의 이동을 계속할 근거가 없다).
+	if _swing_hit_armed:
+		_cancel_swing()
 	_auto_firing = false  # 무기가 바뀌면 홀드 연사도 끊는다 — 새 무기가 shoot가 아닐 수 있다
 	_refresh_growth_derived()  # 무기 교체도 파생 입력 — 새 base에 현재 haste를 다시 곱한다
 	if is_node_ready():
@@ -868,8 +877,21 @@ func _tick_timers(delta: float) -> void:
 # 🔴 **판정이 스윕 완료 시점인 것이 "안 보이는데 맞는다"를 원천 차단한다.** 그 순간 그려진 각 창은
 #   `[_swing_from, _swing_to]`이고 이건 판정 부채꼴 `±melee_half_angle(equip, is_finish)`과 **같거나
 #   넓다** — 표시는 같은 `is_finish`로 `melee_show_half_angle`을 지나 `COMBO_FINISH_SHOW_MARGIN`만큼
-#   넓기 때문이다(= 안전한 방향, v2.2). 찌르기는 각 창이 처음부터 부채꼴
-#   전체이고 **도달**이 자라며, 완료 시 `reach_ratio = 1`이라 판정 반경과 정확히 일치한다.
+#   넓기 때문이다(= 안전한 방향, v2.2). 완료 시 `reach_ratio = 1`이라 판정 반경과 정확히 일치한다.
+# 🔴🔴 **⚠ 찌르기(thrust)에서는 이 논거가 성립하지 않는다 — 2026-07-29 리뷰가 잡았다.**
+#   `_begin_swing`의 thrust 분기가 `_swing_to = 0.0`이라 각 창이 `[_swing_from, 0]` = **조준선 한쪽뿐**
+#   인데(패리티에 따라 좌 또는 우) 판정은 `is_angle_in_cone`으로 **양쪽** ±half_angle이다. 즉 반대쪽
+#   절반은 리본도 잔상도 **절대 지나가지 않으면서 판정에 든다** — 창 반각 0.3 · 도달 80px에서
+#   조준선 옆 **23.6px**, 적 `body_radius` 8을 더하면 **31px**(캐릭터 32px 한 마리 폭)이다.
+#   ⚠ **이것은 v2.2가 만든 것이 아니라 찌르기 도입(07-28)부터 있던 선재 결함**이고, v2.2는 창에
+#   `combo_finish_arc`를 **주지 않기로** 해서 증분을 0으로 뒀다 — 그 값을 주면 이 띠가 정확히 그
+#   배수로 벌어진다(0.6을 주면 45px, 적 반경까지 51px).
+#   ⚠ **옛 서술("찌르기는 각 창이 처음부터 부채꼴 전체")은 부채꼴 셰이더 시절의 것**이고 07-29 리본
+#   전환으로 거짓이 됐다. 고치려면 마무리 찌르기만 `_swing_to`를 반대쪽으로 넘겨야 한다(= 「휘둘러
+#   찌르기」) — 모션 성격 변경이라 실기 판단이 선행한다.
+#   🔴 **트립와이어가 이 축을 못 잡는다** — `melee_show_half_angle > melee_half_angle`(반각 비교)이
+#   「표시 ⊇ 판정」(집합 포함)과 동치인 것은 **양쪽으로 훑는 모션에서만**이고, thrust에서는 공허하게
+#   통과한다. 즉 그 단정의 초록불을 찌르기의 근거로 쓰지 마라.
 func _tick_swing_motion(delta: float) -> void:
 	if _attack_anim_left > 0.0:
 		# 🔴 **굳힌 시간 축에서만 파생한다** — 살아 있는 `_swing_time`을 쓰면 스윙 도중 무기 교체·

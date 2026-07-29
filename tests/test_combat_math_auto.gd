@@ -806,7 +806,7 @@ func _initialize() -> void:
 	# ✅ **예산은 이제 코드가 쥔다 — `CombatMath.COMBO_CYCLE_DPS_MAX`** (2026-07-29 리드 반영).
 	#   전엔 GDD §6의 1.3을 여기 **복제**했고, 그러면 예산을 고칠 때 문서와 테스트가 갈라진다
 	#   (하네스의 지배 고장 모드). 이제 숫자는 한 곳에만 산다 — 이 줄에 상수를 다시 쓰지 마라.
-	var COMBO_DPS_BUDGET := CombatMath.COMBO_CYCLE_DPS_MAX
+	const COMBO_DPS_BUDGET := CombatMath.COMBO_CYCLE_DPS_MAX
 	var melee_has_range := ""     # ⑴ 근접에 combo_range_mult가 실렸는가
 	var combo_raw_ok := true      # ⑵ 타별 배율이 조용히 clamp되지 않았는가(= 함수가 데이터를 실제로 읽는가)
 	var finish_show_ok := true    # ⑶ 마무리 타: 판정 반각 < 표시 반각
@@ -817,6 +817,10 @@ func _initialize() -> void:
 	var dps_worst_id := ""
 	var dash_worst_ratio := 0.0   # ⑸ 대시 속도 ÷ 원격 위치 clamp 하한 (netreview I-1)
 	var dash_worst_id := ""
+	var dash_clamp_ok := true     # ⑹ combo_dash_dist의 상한 clamp가 살아 있는가 (리뷰 I-1)
+	var grace_ok := true          # ⑺ combo_grace_s가 무기 값을 읽는가 (리뷰 I-1)
+	var grace_roll_bad := ""      #    + 구르기 1회보다 긴가 (리뷰 I-2)
+	var clamp_probe_done := false
 	var melee_combo_seen := 0
 	var combo_scanned := 0
 	for cf: String in DirAccess.get_files_at("res://data/equipment"):
@@ -857,16 +861,54 @@ func _initialize() -> void:
 			#      (`roll_dist`가 붙으면 상한이 올라가 여유가 늘어난다 — 관대한 쪽으로 틀리는 것이 안전하다).
 			var dash_px := CombatMath.combo_dash_dist(cw)
 			if dash_px > 0.0:
-				var dj := load("res://data/jobs/%s.tres" % cw.job_id) as JobDef
-				if dj != null:
+				# 🔴 **착용 가능한 직업 중 `move_speed`가 가장 낮은 것**으로 잰다 — clamp 하한이 그것이다.
+				#    ⚠ 귀속 무기는 그 직업 하나지만 **범용 무기(`job_id`가 빈)는 전 직업이 들 수 있다**
+				#      (법사 90 < 전사 100). 그 갈래를 `job_id`로만 리졸브해 skip하면 반례가 조용히
+				#      통과한다(리뷰 I-3): `combo_dash 20` + `swing_time 0.2` + 구간합 0.5인 범용 무기는
+				#      300px/s인데 법사 clamp는 234라 66px/s가 깎여 외삽이 과소평가된다.
+				var slowest := 0.0
+				for djf: String in DirAccess.get_files_at("res://data/jobs"):
+					var djb := djf.trim_suffix(".remap")
+					if djb.get_extension() != "tres":
+						continue
+					var djd := load("res://data/jobs/%s" % djb) as JobDef
+					if djd == null or (not cw.job_id.is_empty() and cw.job_id != djd.id):
+						continue
+					if slowest <= 0.0 or djd.move_speed < slowest:
+						slowest = djd.move_speed
+				if slowest > 0.0:
 					var dph := CombatMath.motion_phases(cw)
 					var t_min: float = cw.swing_time * (dph.x + dph.y) \
 						* CombatMath.haste_scale(float(CombatMath.LEVEL_STAT_MAX.get("haste", 0.0)))
 					var dratio := (dash_px / maxf(t_min, 0.0001)) \
-						/ maxf(CombatMath.effective_roll_speed(dj.move_speed, 0.0), 0.0001)
+						/ maxf(CombatMath.effective_roll_speed(slowest, 0.0), 0.0001)
 					if dratio > dash_worst_ratio:
 						dash_worst_ratio = dratio
 						dash_worst_id = cw.id
+			# 🔴 **`combo_dash_dist`의 상한 clamp가 살아 있는가** (리뷰 I-1 — 검출력이 **정확히 0**이었다).
+			#    데이터 20.0이 `MAX_COMBO_DASH` 20.0에 **딱 붙어 있어** `minf`를 지워도 어떤 단정도 안
+			#    깨진다. 그러면 다음 사람이 25를 적었을 때 조용히 절삭된다. 합성 초과값으로 확인한다
+			#    (⑶의 `over_arc` 관용구 그대로 — 상한 숫자를 테스트에 복제하지 않는다).
+			if not clamp_probe_done:
+				clamp_probe_done = true
+				var probe := EquipDef.new()
+				probe.combo_dash = CombatMath.MAX_COMBO_DASH * 1.5
+				dash_clamp_ok = is_equal_approx(
+					CombatMath.combo_dash_dist(probe), CombatMath.MAX_COMBO_DASH)
+				probe.combo_grace = 0.0
+				grace_ok = is_equal_approx(CombatMath.combo_grace_s(probe), CombatMath.COMBO_GRACE_S)
+			# 🔴 **`combo_grace_s`가 무기 값을 실제로 읽는가 + 구르기 1회보다 긴가** (리뷰 I-1·I-2).
+			#    ⑴ 상수 0.8로 못 박아도 스위트가 초록이었다 — 창을 쓰는 단정이 전부 활(값 미기재 = 0.8
+			#      폴백)만 넘겼기 때문이다. 깨지면 근접 콤보가 안 끊겨 **마무리 타가 상시화**된다(예산 잠식).
+			#    ⑵ `ROLL_TIME_S`보다 짧아지면 **한 번만 굴러도 콤보가 반드시 끊겨** 마무리 타에 영영 못
+			#      닿는다. 기존 단정은 상수 0.8만 봐서 근접 0.4(여유 0.15s)를 안 봤고, TUNING §14 D-4가
+			#      "너무 쉽게 유지되면 내려라"로 안내하므로 내려질 것이 **예정돼** 있다.
+			var raw_grace: float = cw.combo_grace
+			var want_grace: float = raw_grace if raw_grace > 0.0 else CombatMath.COMBO_GRACE_S
+			if not is_equal_approx(CombatMath.combo_grace_s(cw), want_grace):
+				grace_ok = false
+			if CombatMath.combo_grace_s(cw) <= CombatMath.ROLL_TIME_S:
+				grace_roll_bad += "%s " % cw.id
 			# ⑶ 🔴 **마무리 타의 판정 각 < 표시 각** — 표시 = 판정이 되면 *"판정 안인데 궤적이 안 지나간
 			#    자리"* 를 눈으로 검사할 수단이 사라지고, 그것이 궤적 결손(TUNING §13 A-2)의 **유일한
 			#    관측 경로**다. 여유는 `COMBO_FINISH_SHOW_MARGIN`이 코드로 쥐므로 부호가 구조로 고정되지만,
@@ -881,6 +923,11 @@ func _initialize() -> void:
 			#    닫았다(`combat_authority`의 `_melee_claim`). 즉 이 단정이 지키는 것은 「로컬 ≤ 호스트」가
 			#    아니라 **기획 요구**(GDD §6: 마무리는 더 넓게 친다)이고, 어기면 광역이 조용히 사라진다.
 			#    ⚠ 옛 논거를 근거로 이 부등호를 **뒤집지 마라** — 뒤집으면 마무리가 평타보다 좁아진다.
+			#    🔴🔴 **이 단정은 `motion_type == "thrust"`에서 공허하다 — 초록불을 근거로 쓰지 마라.**
+			#      반각 비교가 「표시 ⊇ 판정」(집합 포함)과 동치인 것은 **양쪽으로 훑는 모션에서만**이다.
+			#      찌르기는 `_swing_to = 0`이라 각 창이 조준선 한쪽뿐인데 판정은 양쪽 ±half_angle이라,
+			#      반각이 아무리 넓어도 **반대쪽 절반은 안 그려진 채 판정에 든다**(`player._tick_swing_motion`
+			#      주석이 실측과 함께 정본). 창에 `combo_finish_arc`를 주지 않는 이유가 이것이다.
 			if CombatMath.melee_half_angle(cw, true) < CombatMath.melee_half_angle(cw, false) - 0.000001:
 				finish_wider_ok = false
 			# 🔴 **적은 마무리 각이 그대로 쓰이는가**(clamped == raw). 상한
@@ -926,6 +973,12 @@ func _initialize() -> void:
 	failures += _check(dash_worst_ratio <= 1.0,
 		"★대시 속도 전수: 최대 haste에서도 원격 위치 clamp 하한 이내 (최악 %s = %.1f%%)"
 			% ["없음" if dash_worst_id.is_empty() else dash_worst_id, dash_worst_ratio * 100.0])
+	failures += _check(dash_clamp_ok,
+		"★대시 거리 상한 clamp가 살아 있다 (데이터가 상한에 딱 붙어 있어 합성값으로만 잡힌다)")
+	failures += _check(grace_ok,
+		"★콤보 창이 무기 값을 실제로 읽는다 (0 = COMBO_GRACE_S 항등 폴백)")
+	failures += _check(grace_roll_bad.is_empty(),
+		"★콤보 창 > 구르기 1회(ROLL_TIME_S) — 한 번 굴러도 마무리 타에 닿을 수 있다: %s" % grace_roll_bad)
 	failures += _check(combo_raw_ok,
 		"★근접 콤보 전수 ⑵: combo_damage_mult_at == .tres 원본 전수 (조용한 clamp·상수화 검출)")
 	failures += _check(finish_show_ok and finish_wider_ok and finish_clamp_ok,
