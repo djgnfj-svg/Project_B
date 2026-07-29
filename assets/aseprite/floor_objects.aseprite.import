@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://bn0hffnp5eqac"
+path="res://.godot/imported/floor_objects.aseprite-9872a0b32d410d46767d41f50a50010a.res"
+
+[deps]
+
+source_file="res://assets/aseprite/floor_objects.aseprite"
+dest_files=["res://.godot/imported/floor_objects.aseprite-9872a0b32d410d46767d41f50a50010a.res"]
+
+[params]
+

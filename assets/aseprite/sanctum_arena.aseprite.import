@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://vq36364gqiui"
+path="res://.godot/imported/sanctum_arena.aseprite-90be557f593c45a132e88ce1f41f8c50.res"
+
+[deps]
+
+source_file="res://assets/aseprite/sanctum_arena.aseprite"
+dest_files=["res://.godot/imported/sanctum_arena.aseprite-90be557f593c45a132e88ce1f41f8c50.res"]
+
+[params]
+
