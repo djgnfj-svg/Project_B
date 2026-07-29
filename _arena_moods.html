@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><title>좌→우 신전 회랑 레이아웃</title>
+<style>body{background:#0f1216;color:#dfe6ee;font-family:'Segoe UI',sans-serif;margin:0;padding:24px}
+h1{font-size:19px;margin:0 0 6px}.sub{color:#8b96a5;font-size:13px;margin-bottom:14px;line-height:1.6}
+canvas{display:block;width:100%;max-width:900px;image-rendering:pixelated;background:#000;border:1px solid #2b323c;border-radius:6px}
+.lg{font-size:12px;color:#9aa6b4;margin-top:10px}.lg span{margin-right:16px}</style></head>
+<body>
+<h1>「부패한 성역」 — 좌→우 회랑(nave) 레이아웃 (탑뷰)</h1>
+<div class="sub">왼쪽 입구로 진입 → 열주 늘어선 회랑을 걸어 → 오른쪽 제단의 <b>보스</b>와 만남. 맵이 건축으로 채워지고, 중앙 통로는 어둡게 비워 패턴 FX가 삼.</div>
+<canvas id="c" width="300" height="150"></canvas>
+<div class="lg"><span>🟦 플레이어(왼쪽 진입)</span><span>🟢 보스(오른쪽 제단)</span><span>🔴 예고</span><span>⬛ 열주/잔해</span></div>
+<script>
+const cv=document.getElementById('c'),x=cv.getContext('2d'),W=300,H=150; x.imageSmoothingEnabled=false;
+// 바닥 (어두운 석재 회랑)
+x.fillStyle="#1a2027"; x.fillRect(0,0,W,H);
+x.fillStyle="#14181e"; x.fillRect(28,26,250,98); // 회랑 안쪽(더 어두운 통로)
+x.strokeStyle="#232c33"; for(let i=28;i<278;i+=14)x.strokeRect(i,26,14,98);
+// 왼쪽 입구 — 부서진 문/계단
+x.fillStyle="#39393a"; x.fillRect(6,50,16,50); x.fillStyle="#54524c"; x.fillRect(6,50,16,4);
+for(let s=0;s<3;s++){x.strokeStyle="#2a3038";x.strokeRect(22+s*4,44+s*2,40,62-s*4);}
+x.fillStyle="#7ef0d0"; x.font="7px sans-serif"; x.fillText("입구",8,120);
+// 열주 — 위/아래 두 줄(선 기둥 + 쓰러진 기둥)
+function drum(cx,cy){x.fillStyle="#30393f";x.beginPath();x.arc(cx,cy,6,0,7);x.fill();x.fillStyle="#6e695e";x.beginPath();x.arc(cx,cy,4,0,7);x.fill();x.fillStyle="#868072";x.beginPath();x.arc(cx,cy,2,0,7);x.fill();}
+function fallen(cx,cy){x.fillStyle="#39393a";x.fillRect(cx-14,cy-3,28,6);x.fillStyle="#54524c";x.fillRect(cx-14,cy-3,28,2);x.fillStyle="#30393f";x.beginPath();x.arc(cx-14,cy,3,0,7);x.fill();}
+for(let i=0;i<6;i++){ const px=70+i*32; drum(px,34); (i%2? fallen(px,116): drum(px,116)); }
+// 오른쪽 — 제단 단(계단) + 룬 서클 + 보스
+x.strokeStyle="#54524c"; x.lineWidth=1;
+for(let r=44;r>=24;r-=8){x.beginPath();x.ellipse(238,75,r,r*0.7,0,0,7);x.stroke();} // 제단 계단(동심)
+x.strokeStyle="#4fd6a8"; for(let a=0;a<10;a++){x.beginPath();x.arc(238,75,26,a*0.63,a*0.63+0.4);x.stroke();} // 룬
+// 화로 잔해(사방)
+x.fillStyle="#6e2c24"; for(const[fx,fy]of[[238,34],[238,116],[290,75]]){x.beginPath();x.arc(fx,fy,3,0,7);x.fill();}
+// 장식 보더
+x.strokeStyle="#2a3038"; x.setLineDash([4,3]); x.strokeRect(28,26,250,98); x.setLineDash([]);
+// FX 샘플 — 보스가 왼쪽(플레이어)로 부채꼴 예고
+x.fillStyle="rgba(226,70,42,.42)"; x.strokeStyle="rgba(255,120,60,.85)";
+x.beginPath(); x.moveTo(238,75); x.arc(238,75,60,Math.PI*0.8,Math.PI*1.2); x.closePath(); x.fill(); x.stroke();
+// 보스(오른쪽 제단)
+x.fillStyle="rgba(79,214,168,.16)";x.beginPath();x.arc(238,75,13,0,7);x.fill();
+x.fillStyle="#0d1f24";x.beginPath();x.arc(238,75,8,0,7);x.fill();
+x.fillStyle="#eaff6b";x.fillRect(235,73,2,2);x.fillRect(240,73,2,2);
+// 플레이어(왼쪽 진입)
+x.fillStyle="#6ab0ff"; x.beginPath(); x.arc(80,80,4,0,7); x.fill();
+</script></body></html>
