@@ -21,7 +21,7 @@ const TEX := preload("res://assets/sprites/fx/hit_spark.png")
 const HFRAMES := 5
 
 const LIFE := 0.20          # 한 번 터지고 사라지기까지(초) — 짧아야 다음 타격과 안 겹친다
-const BASE_SCALE := 0.85    # 48px 원본 기준 배율 (캐릭터 32px에 비해 과하지 않게)
+const BASE_SCALE := 1.80    # 48px 원본 기준 배율 → 화면 86px (캐릭터 32px의 약 2.7배)
 const CRIT_SCALE := 1.45    # 치명타는 크게 — 굴림은 호스트가 이미 확정했다(여기서 다시 굴리지 않는다)
 # 🔴 시트는 **중립 그레이스케일**이라 색을 여기서 입힌다(`blast.png`와 같은 관례). 무기 원소색이
 #   생기면 그때 `EquipDef.swing_color`를 태우면 되고, 그 자리는 이 딕셔너리 하나다.
