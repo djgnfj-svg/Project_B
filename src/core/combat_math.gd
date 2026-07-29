@@ -194,20 +194,52 @@ const MAX_MELEE_RANGE := 130.0
 #   숫자가 둘이 되어, 도끼를 넓게 튜닝했을 때 궤적만 넓어지고 판정은 그대로인(또는 반대인) 갈라짐이
 #   생긴다 — 보스 콘 텔레그래프가 "각이 픽셀에 박혀 데이터와 갈라진" 그 실패 형태와 같다(§3).
 #   하나로 두면 "넓게 휘두르는 무기가 넓게 맞는다"가 **구조로** 보장된다.
-# ⚠ 콤보 마무리 타의 `COMBO_FINISH_ARC` 배율은 **판정에 넣지 않는다** — 표시가 판정보다 넓은 것은
-#   안전한 방향(보이는데 안 맞을 수는 있어도 안 보이는데 맞지는 않는다)이고, 넣으려면 호스트가
-#   콤보 타수를 알아야 해서 신뢰 경계가 는다.
+# 🔴 **마무리 타는 v2.2(2026-07-29)부터 판정도 넓어진다 — 이 주석이 한 번 뒤집힌 자리다.**
+#   전에는 *"`COMBO_FINISH_ARC` 배율은 판정에 넣지 않는다 — 넣으려면 호스트가 콤보 타수를 알아야
+#   해서 신뢰 경계가 는다"* 였다. 그 근거가 해소됐다: 호스트는 이제 `G_ATK`(매 스윙·헛침 포함·safe
+#   채널)를 직접 세고 클라 주장은 `min` 상한으로만 쓴다(`authoritative_combo` — 활 경로와 같다).
+#   **새 네트워크 메시지 0개**이므로 표면이 넓어진 것이 아니라 이미 오던 메시지의 쓰임이 바뀐 것이다.
+# 🔴 **그러나 배율이 아니라 절대값으로 받는다** (`EquipDef.combo_finish_arc`). 배율은 포화 문턱이
+#   `π ÷ swing_arc`라 무기마다 다르고, 균일 1.25는 도끼(문턱 1.122)만 전방위로 만들어 **무기 구별을
+#   없앤다** = 07-28에 없앤 "등 뒤도 맞는다"의 마무리 타 한정 복귀. 판정용 각을 신설하는 것이 아니라
+#   **`swing_arc`가 그 타에서 갈아입는 값**이라는 점에서 §3 「반각 = 휘두르는 각 그 자체」는 유지된다.
 const MELEE_FULL_ARC := PI  # 전방위(각 검사 없음) = 무기 미착용·미지정의 기본 = 도입 전과 항등
 # 🔴 엡실론은 float 반올림으로 "전방위"가 각 분기로 새는 것을 막는다 (보스 셰이더의 같은 가드와 미러).
 const MELEE_FULL_ARC_EPS := 0.01
 const HIT_REACH_SLACK := 2.0  # 호스트 사거리 여유 배율 — 지연 동안 벌어진 거리를 수용(정직한 타격 거부 방지)
+# 🔴 **마무리 타에서 표시가 판정보다 넓은 여유(rad) — 데이터가 아니라 코드가 쥔다.**
+#   여유를 `.tres` 두 필드(판정용·표시용)로 두면 데이터 한 줄로 **표시 < 판정**(= 안 보이는데 맞는다)이
+#   열린다. 하나만 받고 여유를 코드가 더하면 그 부호가 **구조로** 고정된다.
+# ⚠ 이것이 지키는 것은 손맛이 아니라 **관측 가능성**이다: 표시 = 판정이면 *"판정 안인데 궤적이 안
+#   지나간 자리"* 를 눈으로 잡을 수 없고, 그게 궤적 결손(`docs/TUNING.md` §13 A-2)의 유일한 검사법이다.
+# ⚠ 비마무리 타에는 적용하지 않는다 — 거기 표시·판정은 `swing_arc` 하나이고 **도입 전과 항등**이어야 한다.
+const COMBO_FINISH_SHOW_MARGIN := 0.15
 
 
 # 그 무기의 근접 판정 반각. 미착용/미지정 = 전방위(PI) = **도입 전과 완전 항등**.
-static func melee_half_angle(equip: EquipDef) -> float:
+# is_finish = 그 타가 콤보 **마무리 타**인가(호출부가 `combo_len − 1`과 대조해 넘긴다).
+# 🔴 **`half_angle` 인자에 넘길 수 있는 값은 여전히 둘뿐이다** — 이 함수의 반환값 또는
+#   `MELEE_FULL_ARC`(각 생략). `is_finish`가 는 것은 **이 함수 안의 분기**이고, 호출부가 제3의
+#   값(튜닝 상수·배율)을 만들 자유도는 늘지 않았다(§3 계약 유지).
+static func melee_half_angle(equip: EquipDef, is_finish: bool = false) -> float:
 	if equip == null:
 		return MELEE_FULL_ARC
+	if is_finish and is_finite(equip.combo_finish_arc) and equip.combo_finish_arc > 0.0:
+		# 🔴 상한에서 여유를 **미리** 뺀다 — 판정을 먼저 좁혀야 표시(판정 + 여유)가 포화하지 않는다.
+		#   표시가 전방위로 새면 궤적 진행 게이트가 꺼져 부채꼴이 한 번에 번쩍인다(개편 전 그림).
+		return clampf(equip.combo_finish_arc, 0.0,
+			MELEE_FULL_ARC - MELEE_FULL_ARC_EPS - COMBO_FINISH_SHOW_MARGIN)
 	return clampf(equip.swing_arc, 0.0, MELEE_FULL_ARC)
+
+
+# 그 타의 **표시**(궤적·잔상) 반각 — 판정 반각에 마무리 타 여유를 더한 값.
+# 🔴 표시를 그리는 쪽은 반드시 이 함수를 지난다. `melee_half_angle`을 직접 읽어 그리면 마무리 타에서
+#   표시 = 판정이 되어 위 관측 경로가 사라지고, 거기에 자체 배율을 곱하면 §3이 금지한 제3의 값이 된다.
+static func melee_show_half_angle(equip: EquipDef, is_finish: bool = false) -> float:
+	var a := melee_half_angle(equip, is_finish)
+	if not is_finish or a >= MELEE_FULL_ARC - MELEE_FULL_ARC_EPS:
+		return a  # 비마무리 = 항등 · 전방위는 넓힐 곳이 없다
+	return minf(a + COMBO_FINISH_SHOW_MARGIN, MELEE_FULL_ARC - MELEE_FULL_ARC_EPS)
 
 
 # 호스트의 적중 요청 검증 — 공격자 위치 기준 **부채꼴** 안인가 (지연 감안 여유 배율).
@@ -511,15 +543,37 @@ static func effective_projectile_range(base_range: float, proj_range: float = 0.
 #   리졸브한다. 차지 레벨(G_SHOOT "c")과 정확히 같은 철학이다: 수치를 전송하면 그게 곧 스푸핑 표면.
 const MAX_COMBO_LEN := 8        # 콤보 길이 상한 — 데이터 실수(거대 배열)가 인덱스 산술을 오염시키지 않게
 const MAX_COMBO_MULT := 4.0     # 타별 배율 하드 상한 — 데이터 오타(100.0)가 100배 데미지가 되지 않게
-# 그 타를 치고 다음 타로 **이어지는** 여유(s). 이보다 더 쉬면 콤보가 처음으로 돌아간다.
-# 🔴 유도 = **전사 근접 콤보와 같은 총 창**(2026-07-27 netreview M3). 전사는 쿨다운 0.4 +
-#   `player.COMBO_WINDOW` 0.55 = **0.95s** 안에 다시 치면 이어진다. 궁수도 0.15 + 0.8 = **0.95s**.
-#   🔴 첫 값(0.45)은 총 0.60s라 훨씬 좁았고, **활은 홀드 연사가 아니라 클릭 1회 = 1발**이라
+# 그 타를 치고 다음 타로 **이어지는** 여유(s) — **기본값이고, 무기가 `combo_grace`로 덮는다**(v2.2).
+# 🔴 첫 값(0.45)은 총 0.60s라 훨씬 좁았고, **활은 홀드 연사가 아니라 클릭 1회 = 1발**이라
 #   조준하거나 굴렀다가 다시 쏘는 흔한 페이스(0.7s+)에서 콤보가 매번 리셋돼 **"쭉"이 영영 안 나왔다.**
-#   두 무기의 창이 갈라질 이유가 없다 — 리듬 느낌은 뜸(`combo_delay`)이 만들지 창이 만들지 않는다.
+#   그래서 0.8이다 — 이 값은 **활의 것**이다.
+# 🔴 **옛 유도("전사 근접과 같은 총 창 0.95s")는 틀렸다 — 2026-07-29에 실측으로 정정했다.**
+#   근접 창은 쿨다운이 아니라 **클릭 시점**부터 `player._swing_time + COMBO_WINDOW(0.55)`를 재므로
+#   **0.79~0.91s**(무기별)였다. 즉 "둘을 0.95s로 맞춰 뒀다"는 근거는 성립한 적이 없고 최대 160ms
+#   어긋나 있었다. 두 창이 **갈라질 이유가 없다**는 결론도 함께 뒤집혔다: 활은 한 발 쏘고 조준하는
+#   페이스를 수용해야 하고, 근접은 촘촘히 이어 치는 리듬 자체가 재미다 — **그래서 무기 데이터다.**
 # ⚠ 손맛값(§0 예외 — 사용자가 조인다)이지만 **호스트 판정에도 쓰인다**(로컬·호스트가 같은 창을 봐야
-#   타수가 안 갈라진다). 그래서 player.gd의 근접 COMBO_WINDOW와 달리 여기 산다.
+#   타수가 안 갈라진다). 그래서 근접 창도 v2.2부터 여기서 나온다 — `player.COMBO_WINDOW`는 **삭제됐다**
+#   (그 상수를 노브로 안내하는 문서가 있으면 `EquipDef.combo_grace`로 고쳐라).
 const COMBO_GRACE_S := 0.8
+# 데이터 오타 방어 — 창이 몇십 초가 되면 콤보가 사실상 영영 리셋되지 않아 마무리 타가 상시가 된다.
+const MAX_COMBO_GRACE_S := 2.0
+# 🔴 마무리 타 대시 거리 상한(px). **유도 = 기존 clamp를 건드리지 않는 최대치**:
+#   최저 `player._max_roll_speed`(전사 `move_speed` 100 × `ROLL_SPEED_MULT` 2.6 = **260px/s**,
+#   이속·`roll_dist` 특성 0일 때) × 최단 대시 구간(= `swing_time × (windup + strike) ×
+#   haste_scale(0.5)` ≈ 0.09s) ≈ 23px → **여유를 두어 20px.**
+# ⚠ **clamp 함수 이름을 헷갈리지 마라** — 걷기 상한 `_max_move_speed()`는 100px/s이고, 대시가 걸리는
+#   것은 **구르기 상한** `_max_roll_speed()`(260)다. 이 유도가 처음엔 전자로 잘못 적혀 있었다(숫자는 맞고
+#   이름이 틀렸다 — 2026-07-29 dev 보고 ⑵-5).
+# 🔴 **23이 아니라 20인 이유 = 여유 1.7%는 너무 얇다.** 23px면 최대 haste에서 255.6px/s로 상한 260에
+#   **1.7%**까지 붙어, 프레임 지터나 부동소수 오차 한 번에 `limit_length`가 **정당한 대시를 깎는다**
+#   (그러면 원격 외삽이 과소평가되고 "피했는데 맞았다"가 부분 재발한다). 20px면 222px/s = **14.6% 여유**.
+# 🔴 **이 값을 올리면 `LAG_MAX_LEAD_DIST`와 clamp 3곳**(`_max_move_speed` · 원격 속도 clamp ·
+#   원격 변위 clamp)**을 함께 재유도해야 한다** — `roll_dist` 특성이 밟은 그 자리다(rules §2 게이트).
+#   안 하면 정당한 대시가 원격에서 깎여 외삽이 과소평가되고 "피했는데 맞았다"가 부분 재발한다.
+# ✅ 반대로 **이 상한 안에서는 재유도가 불필요하다** — `LAG_MAX_LEAD_DIST`의 유도가 이미 최대
+#   483px/s(143 × 3.38)를 상정하므로 200~300px/s짜리 대시는 외삽 상한을 못 넘긴다(2026-07-29 검산).
+const MAX_COMBO_DASH := 20.0
 
 
 # 그 무기의 콤보 길이 — 세 배열 중 **가장 긴 것**. 전부 비면 1(= 콤보 없음, 항등).
@@ -534,6 +588,39 @@ static func combo_len(equip: EquipDef) -> int:
 
 static func clamp_combo_index(index: int, equip: EquipDef) -> int:
 	return clampi(index, 0, combo_len(equip) - 1)
+
+
+# 그 타수가 **마무리 타**인가 — 데미지 배율·판정 각·표시 각·카메라 킥이 전부 이 술어로 갈린다.
+# 🔴 **표시(player)와 판정(combat_authority)이 반드시 같은 함수를 지나야 한다** (v2.2 리뷰 요청으로
+#   신설 — 그전엔 두 파일에 한 줄짜리 사본이 있었다). 갈라지면 **"판정만 마무리"** = 판정 각이 넓은데
+#   궤적은 평타 = *"안 보이는데 맞는다"* 가 되고, 그건 §3이 구조로 막아 온 바로 그 방향이다.
+# 🔴 **`n > 1` 가드가 항등을 지킨다** — 콤보 배열이 없는 무기(길이 1)는 index 0이 곧 마지막이라
+#   가드가 없으면 **매 타가 마무리로 읽혀** 표시 각이 여유만큼 넓어지고 킥·내지르기가 상시 발동한다
+#   (= 콤보 도입 전과 다른 동작). `advance_combo`의 "n ≤ 1 → 항상 0"과 같은 부호다.
+static func is_combo_finish(equip: EquipDef, index: int) -> bool:
+	var n := combo_len(equip)
+	return n > 1 and index >= n - 1
+
+
+# 이번 타를 **반대 방향으로** 휘두르는가(왕복). true = 우→좌, false = 좌→우.
+# 🔴 **패리티(`index % 2`)여야 한다 — 절대 위치(`index == 1`)로 두면 타수마다 다르게 깨진다.**
+#   옛 규칙은 반전을 `== 1`(절대), 마무리를 `len − 1`(끝)로 봐서 **두 축이 서로 달랐다**:
+#     · 도끼(2타) → 반전 타와 마무리 타가 **같은 타**(index 1) = "반전된 마무리"밖에 못 만든다
+#     · 창(4타)   → index 2가 index 0과 같은 방향·크기 = **네 타 중 둘이 같은 궤적**
+#   패리티는 타수와 무관하게 왕복을 유지하고 마무리 조건과 **절대 겹치지 않는다.**
+# 🔴 **이 함수가 `player.gd`가 아니라 여기 사는 이유는 검출력이다** — 씬 글루는 `-s` preload가 안 돼
+#   테스트가 겨눌 수 없고, 실제로 이 규칙을 `== 1`로 되돌리는 뮤테이션에서 **스위트가 9/9 초록**이었다
+#   (2026-07-29 dev 보고 ④). 데이터·규칙이 만족해야 하는 것은 core에 둔다(리뷰 J-1·J-2와 같은 처방).
+static func is_combo_swing_reversed(index: int) -> bool:
+	return index % 2 != 0
+
+
+# 🔴 GDD §6 예산표의 「콤보 축(사이클 DPS 비) ≤ 1.3배」 — **코드가 쥔 정본이다.**
+#   문서에만 두면 테스트가 값을 **복제**해야 하고, 그러면 예산을 고칠 때 두 곳이 갈라진다(하네스의
+#   지배 고장 모드 — DECISIONS 2026-07-26). 트립와이어는 이 상수를 참조해 `data/equipment` 전수를 잰다.
+# ⚠ **단위는 「사이클 DPS 비」다 — 타별 배율이 아니다.** 도끼의 타별 배율 2.2는 이 값과 비교할 수 없고
+#   (사이클로 환산하면 1.219), 타별 배율의 상한은 `MAX_COMBO_MULT`(4.0)가 따로 잡는다.
+const COMBO_CYCLE_DPS_MAX := 1.3
 
 
 # 배율 clamp — 비유한/0 이하는 **1.0(항등)** 으로 떨어뜨린다. "데이터가 비었다"와 "데이터가 깨졌다"를
@@ -556,6 +643,16 @@ static func _combo_arr_at(arr: PackedFloat32Array, index: int) -> float:
 	if index < 0 or index >= arr.size():
 		return 1.0  # 배열이 짧으면(한 축만 채운 무기) 그 타는 항등
 	return clamp_combo_mult(arr[index])
+
+
+# 마무리 타에 몸이 앞으로 나가는 거리(px). 0 = 없음 = **도입 전과 항등**.
+# 🔴 이동은 지연 보상의 입력이다 — 상한(`MAX_COMBO_DASH`)의 유도와 재유도 조건은 그 상수 주석이 정본이다.
+# 🔴 부르는 쪽은 이 거리를 **`velocity`로** 흘려야 한다(`position` 대입 금지 — G_POS `vx/vy`가 0이면
+#   호스트 lead 외삽이 변위를 못 덮어 마무리 타가 게스트에서 무음 거부된다).
+static func combo_dash_dist(equip: EquipDef) -> float:
+	if equip == null or not is_finite(equip.combo_dash) or equip.combo_dash <= 0.0:
+		return 0.0
+	return minf(equip.combo_dash, MAX_COMBO_DASH)
 
 
 # 그 타 **직전**의 추가 뜸(s). 배열 밖·비유한·음수는 0(뜸 없음).
@@ -582,7 +679,17 @@ static func combo_gap_s(job: JobDef, equip: EquipDef, index: int, haste: float =
 #   "너무 빨라서 리셋"과 "너무 쉬어서 리셋" 두 조건이 겹치지 않는다. 겹치면 어떤 데이터에서는
 #   정직한 발사가 **어느 쪽으로도 콤보를 못 잇는** 죽은 구간이 생긴다(에러 없이 3타가 영영 안 나온다).
 static func combo_window_s(job: JobDef, equip: EquipDef, index: int, haste: float = 0.0) -> float:
-	return combo_gap_s(job, equip, index, haste) + COMBO_GRACE_S
+	return combo_gap_s(job, equip, index, haste) + combo_grace_s(equip)
+
+
+# 그 무기의 콤보 이어짐 여유(s) — 0/비유한/음수는 `COMBO_GRACE_S`(활 기본)로 떨어진다 = 항등 폴백.
+# 🔴 창을 읽는 곳은 `combo_window_s` 하나이고 그것이 로컬·호스트 공용이다 — 이 함수를 우회해
+#   `COMBO_GRACE_S`를 직접 더하면 근접 무기에서 **클라와 호스트의 창이 갈라진다**(내 화면은 3타인데
+#   판정은 평타 = `min`이 0을 택한다).
+static func combo_grace_s(equip: EquipDef) -> float:
+	if equip == null or not is_finite(equip.combo_grace) or equip.combo_grace <= 0.0:
+		return COMBO_GRACE_S
+	return minf(equip.combo_grace, MAX_COMBO_GRACE_S)
 
 
 # 🔴 호스트가 그 타를 **인정하는 최소 간격**(s) — `combo_gap_s`(클라가 실제로 내는 간격)보다 관대하다.

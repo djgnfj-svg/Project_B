@@ -29,6 +29,33 @@ var _last_shot_msec: Dictionary = {}  # peer_id -> 마지막 발사 msec (호스
 #   근접 콤보(G_ATK "cb")가 궤적만 정해 "조작돼도 화면만 달라진다"였던 것과 성격이 다르다.
 #   그래서 호스트가 **자기 수신 간격으로 직접 세고**(CombatMath.authoritative_combo) 주장은 상한으로만 쓴다.
 var _shot_combo: Dictionary = {}
+# peer_id -> 호스트가 그 피어에게 **마지막으로 인정한** 근접 콤보 타수 (호스트 전용, v2.2 2026-07-29).
+# 🔴 `_shot_combo`의 **미러**다 — 규칙 함수(`CombatMath.authoritative_combo`)·정리(`peer_left`)·
+#   "주장은 상한으로만"이 전부 같다. 갈리는 것은 무엇을 고르는가뿐이다(이쪽 = 데미지 배율 + 마무리 각).
+# 🔴 **세는 소스는 `G_ATK`뿐이다 — `G_HIT_REQ`로 세지 마라.** 그쪽은 **맞았을 때만** 오므로 헛친 스윙이
+#   누락돼 `min`이 정직한 마무리 타를 깎는다. 근접은 헛치는 것이 흔하고 GDD §6이 "헛쳐도 콤보는
+#   전진한다"로 못박았다. G_ATK는 매 스윙 1회 + safe 채널(유실 없음)이라 유일하게 옳은 소스다.
+# 🔴 **호스트 자신의 항목은 영원히 없다**(Net 루프백 없음) — 자기 콤보는 로컬 아바타에서 읽는다
+#   (`_on_attack_hit` → `player.melee_combo_mult()`). `_shot_combo`가 같은 자리에서 같은 판단을 한다.
+var _melee_combo: Dictionary = {}
+var _last_atk_msec: Dictionary = {}  # peer_id -> 마지막 G_ATK 수신 msec (콤보 간격 측정 전용 — `_last_shot_msec` 미러)
+# peer_id -> 그 피어가 **주장한** 마지막 타수. 🔴 **각 축 전용이고 데미지에는 절대 쓰지 마라.**
+# 🔴 **두 축을 왜 가르는가** (netreview C-1, 2026-07-29): 각을 `_melee_combo`(min된 타수)로 세우면
+#   데이터가 `combo_finish_arc ≥ swing_arc`를 강제하므로 주장과 계수가 어긋난 순간 **호스트 콘이 로컬
+#   콘의 진부분집합**이 되어 §3 「로컬 ≤ 호스트」가 깨진다 — 로컬은 그 띠의 적에게 `G_HIT_REQ`를
+#   보내는데 호스트가 거부하고, 증상은 **스윙·궤적·타격음·킥이 다 나오고 적 HP만 안 깎이는 것**이다
+#   (거부 띠 실측: 창 17.2° = 마무리 콘의 절반 · 대검 2종 28.6° · 도끼 5.7°). 도달성도 낮지 않다 —
+#   클라와 호스트가 `combo_window_s` **같은 함수**를 쓰므로 창 경계 근처에서 이어 치면 양수 지터
+#   아무거나 호스트를 리셋시킨다(상한 여유 0).
+# 🔴 **「판정 ≤ 표시」는 이래도 유지된다 — 표시도 주장 타수로 그려지기 때문이다.** 각·표시·로컬 질의
+#   셋이 전부 주장 기준으로 정렬되고, `min`은 **데미지에만** 남는다(데미지는 그려지는 것이 없으므로
+#   낮은 쪽으로 눌러도 화면과 어긋날 수 없다).
+# 🔴 **신뢰 대가 ≈ 0** — 주장으로 넓힐 수 있는 각의 상한은 `melee_half_angle`이 쥔 `PI − EPS − MARGIN`
+#   (2.98)인데, 변조 클라는 `dx`/`dy`를 **빼기만 하면** 이미 전방위(π)를 공짜로 얻는다(`net_schema`가
+#   *"부채꼴은 안티치트가 아니라 게임 정합 장치"* 라고 명시). 즉 새로 열리는 표면이 없다.
+# ⚠ 순서 의존: G_ATK(클릭 시점)와 G_HIT_REQ(판정 시점)가 **같은 ordered 채널**(`RTC_CH_SAFE`/릴레이 TCP)
+#   이라 같은 스윙의 G_ATK가 항상 먼저 도착한다. G_ATK를 fast로 내리면 이 기록이 조용히 낡는다(§3 불변식).
+var _melee_claim: Dictionary = {}
 var _rng := RandomNumberGenerator.new()  # 치명타 굴림 — 호스트만 (DropAuthority._rng 관용구). 게스트는 굴리지 않는다(§1)
 var _leech_frac: Dictionary = {}  # peer_id -> 피흡 소수 잔량(호스트 전용). 데미지가 4~34 정수라 매 타격 절삭하면 6% 흡혈이 0이 된다 → 1 이상 쌓이면 회복(§3)
 
@@ -55,6 +82,9 @@ func _ready() -> void:
 		_roll_grant_msec.erase(peer_id)
 		_last_shot_msec.erase(peer_id)  # 발사율 게이트 기록 정리 (_last_hit_msec 대칭)
 		_shot_combo.erase(peer_id)  # 콤보 타수 기록도 대칭 정리 — 남겨 두면 재접속 id가 남의 마무리 타를 물려받는다
+		_melee_combo.erase(peer_id)  # 근접 콤보도 같은 이유로 (v2.2 — 이쪽은 데미지 배율·마무리 각을 고른다)
+		_last_atk_msec.erase(peer_id)  # 근접 콤보 간격 기준점 (_last_shot_msec 대칭)
+		_melee_claim.erase(peer_id)  # 주장 타수(각 축)도 대칭 정리 — 안 지우면 재접속 id가 남의 넓은 마무리 각을 물려받는다
 		_leech_frac.erase(peer_id)  # 피흡 잔량도 대칭 정리 (이탈 피어 잔류 방지)
 		_pending_php.erase(peer_id)
 		_boss_strike_frame.erase(peer_id)  # 보스 STRIKE dedup 기록도 대칭 정리 (유한하나 정리 일관성)
@@ -107,7 +137,15 @@ func _on_attack_hit(enemy: Node, job: JobDef, dir: Vector2) -> void:
 	if entry_v == null:
 		return
 	if Net.is_host():
-		_confirm_damage((entry_v as Dictionary)["health"] as HealthComponent, job, Net.my_id)
+		# 🔴 **호스트 자신의 콤보는 로컬 아바타가 유일한 소스다** (v2.2) — Net에 루프백이 없어 자기
+		#   G_ATK를 받지 않으므로 `_melee_combo`엔 자기 항목이 **영원히** 없다. 그걸 읽으면 항상 0타 =
+		#   "내 마무리 타만 안 아프다"가 되고, 그건 2026-07-25 공속 Critical과 **같은 함정**이다
+		#   (`_on_player_shoot`이 이미 같은 관용구로 자기 발사의 타수를 아바타에서 받는다).
+		# ⚠ 재계수하지 않는다 — 호스트 자신에게는 지연도 사칭 동기도 없고, 재계수하면 자기 화면 표시
+		#   (같은 값을 쓰는 궤적·킥)와 자기 판정이 갈라질 수 있다.
+		var me := _peer_sync.player(Net.my_id)
+		_confirm_damage((entry_v as Dictionary)["health"] as HealthComponent, job, Net.my_id,
+			me.melee_combo_mult() if me != null else 1.0)
 	else:
 		Net.send_game({NetSchema.KEY_KIND: NetSchema.G_HIT_REQ, "eid": str(eid_v),
 			"dx": dir.x, "dy": dir.y})
@@ -115,7 +153,11 @@ func _on_attack_hit(enemy: Node, job: JobDef, dir: Vector2) -> void:
 
 # 호스트 전용 — 데미지 확정 (rules §3 하드 계약: 계산·검증은 CombatMath만 쓴다)
 # 쿨다운 게이트: 같은 스윙(SAME_SWING_MS)의 다중 타격은 허용, 스윙 간격은 공격자 job 쿨다운 강제.
-func _confirm_damage(health: HealthComponent, job: JobDef, attacker_id: int) -> void:
+# combo_mult = 근접 콤보 타별 데미지 배율(v2.2). 🔴 **호출부가 이미 확정한 값**을 받는다 — 여기서
+#   리졸브하면 근거가 둘이 된다(호스트 자기 타격 = 로컬 아바타 / 게스트 = `_melee_combo` 계수분).
+#   1.0 = 콤보 없는 무기 = **도입 전과 완전 항등**. 곱셈은 `confirm_damage` 안 = 반올림 여전히 1회.
+func _confirm_damage(health: HealthComponent, job: JobDef, attacker_id: int,
+		combo_mult: float = 1.0) -> void:
 	var now := Time.get_ticks_msec()
 	var last := int(_last_hit_msec.get(attacker_id, -1000000000))
 	# 🔴 공속 반영 — 공격자 아바타의 level_stats에서 읽는다. **치명·피흡(_apply_confirmed)과 같은 소스**여야 한다:
@@ -130,7 +172,7 @@ func _confirm_damage(health: HealthComponent, job: JobDef, attacker_id: int) -> 
 		return
 	if now - last > CombatMath.SAME_SWING_MS:
 		_last_hit_msec[attacker_id] = now  # 새 스윙 앵커 — 매 확정마다 갱신하면 창이 미끄러진다
-	_apply_confirmed(health, job, attacker_id, 0)  # 데미지 산출·치명·피흡은 공용 경로(아래) — 3경로 공통
+	_apply_confirmed(health, job, attacker_id, 0, combo_mult)  # 데미지 산출·치명·피흡은 공용 경로(아래) — 3경로 공통
 
 
 # 🔴 호스트 전용 — 데미지 확정의 **단일 경로** (근접·투사체·폭발 공통, rules §3).
@@ -138,8 +180,9 @@ func _confirm_damage(health: HealthComponent, job: JobDef, attacker_id: int) -> 
 # 상황에서 데미지가 달라진다 — charge_damage가 이미 round를 하므로 치명을 밖에서 곱하면 이중 반올림).
 # 여기서 얹는 것은 ⑴ 공격자 보너스·레벨 스탯 조회 ⑵ 피흡 적립뿐이다.
 # 치명 굴림 단위 = 데미지 인스턴스 1회 — 폭발이 3마리를 때리면 이 함수가 3번 불려 각각 굴린다(사용자 확정).
-# combo_mult = 평타 콤보 타별 데미지 배율(투사체 경로만 실어 준다. 근접은 1.0 = 항등 — 전사 콤보는
-# 여전히 **연출 전용**이고 데미지를 안 바꾼다). 곱셈은 confirm_damage 안에서 = 반올림 여전히 1회.
+# combo_mult = 평타 콤보 타별 데미지 배율. 🔴 **v2.2(2026-07-29)부터 근접도 실어 준다** — 전사 콤보가
+# "연출 전용"이라던 옛 서술은 거짓이 됐다(GDD §6 「공격 리듬」). 곱셈은 confirm_damage 안에서 =
+# 반올림 여전히 1회. 콤보 배열이 없는 무기는 1.0 = 도입 전과 완전 항등.
 func _apply_confirmed(health: HealthComponent, job: JobDef, attacker_id: int, charge_level: int,
 		combo_mult: float = 1.0) -> void:
 	var atk_p := _peer_sync.player(attacker_id)
@@ -446,6 +489,13 @@ func _check_wipe() -> void:
 	EventBus.stage_wiped.emit()  # 마을 귀환 전환은 ChapterFlow(호스트)가 결정
 
 
+# 그 타수가 마무리 타인가 — ✅ **사본을 없앴다: 판단은 `CombatMath.is_combo_finish` 하나다**
+#   (2026-07-29 리드 반영). 표시(`player`)와 판정(여기)이 **같은 함수**를 지나므로 "판정만 마무리"
+#   (= 안 보이는데 맞는다, §3 금지 방향)가 원리적으로 불가능하다. `n > 1` 가드의 근거는 그 함수 주석이 정본.
+func _is_melee_finish(equip: EquipDef, index: int) -> bool:
+	return CombatMath.is_combo_finish(equip, index)
+
+
 func _on_net_msg(from_id: int, data: Dictionary) -> void:
 	match str(data.get(NetSchema.KEY_KIND, "")):
 		NetSchema.G_HIT_REQ:
@@ -497,6 +547,16 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			#   ⚠ 판정 규칙은 클라의 착용 규칙과 **같은 함수**(can_job_equip)를 지난다 — 사본 금지.
 			if not GameState.can_job_equip(_peer_sync.peer_job_id(from_id), melee_weapon):
 				melee_weapon = null
+			# 🔴 **근접 콤보 타수 — 아래 G_ATK 분기가 이미 센 값이다. 여기서 다시 세지 마라.**
+			#   근거가 둘이 되면 갈라지고, 이 타수는 데미지 배율과 판정 각을 **동시에** 고르므로
+			#   갈라짐이 곧 "맞는 곳 ≠ 보이는 곳"이 된다(§3).
+			# ⚠ 무기가 바뀌었으면 기록된 인덱스가 새 무기의 길이를 넘을 수 있다 → 그 무기 기준으로
+			#   다시 clamp한다(`authoritative_combo` 안과 **같은 함수** — 사본이 아니다).
+			# ⚠ G_STATS 미도착 창이면 `melee_weapon == null`이라 `combo_len` 1 → 타수 0 = 평타 =
+			#   배율 1.0 · 각 = 직업 기본. **관대한 쪽이 아니라 안전한 쪽**으로 떨어진다.
+			var req_combo := CombatMath.clamp_combo_index(
+				int(_melee_combo.get(from_id, 0)), melee_weapon)
+			var req_finish := _is_melee_finish(melee_weapon, req_combo)
 			var reach_def := entry["def"] as EnemyDef
 			var reach_radius := reach_def.body_radius if reach_def != null else 0.0
 			# 🔴 특성(검기 파형)의 사거리 보너스도 **공격자 아바타에서** 읽는다 — 공속·치명·피흡과
@@ -515,8 +575,20 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			#   `weapon_def == null`을 거부하지 않는 것과 같은 판단).
 			var hit_dir := Vector2(float(data.get("dx", 0.0)), float(data.get("dy", 0.0)))
 			var has_dir := hit_dir.is_finite() and hit_dir.length_squared() > 0.000001
-			var hit_half := CombatMath.melee_half_angle(melee_weapon) if has_dir \
-				else CombatMath.MELEE_FULL_ARC
+			# 🔴 **마무리 타면 각이 넓어진다**(v2.2) — `EquipDef.combo_finish_arc`(절대값)를 지난다.
+			#   배율이 아니라 절대값이고 상한을 `melee_half_angle`이 쥐므로 넓은 무기가 조용히 전방위가
+			#   되지 않는다.
+			# 🔴🔴 **각은 「주장 타수」로, 데미지는 「센 타수」로 — 두 축을 갈라야 한다** (netreview C-1
+			#   2026-07-29). `req_finish`(min된 것)만 쓰면 주장과 계수가 어긋난 창에서 **호스트 콘이 로컬
+			#   콘의 진부분집합**이 되어 §3 「로컬 ≤ 호스트」가 깨진다 — 로컬이 보낸 정당한 타격을 호스트가
+			#   거부하고, 화면에는 **적 HP만 안 깎이는 것**으로만 나타난다. `or`로 넓은 쪽을 택하는 이유·
+			#   신뢰 대가·순서 의존은 `_melee_claim` 선언부 주석이 정본이다.
+			# ⚠ **데미지는 아래에서 여전히 `req_combo`(min)를 쓴다 — 그 줄을 주장으로 바꾸지 마라.**
+			#   각은 표시가 있어 주장 기준으로 정렬해야 하지만, 데미지는 그려지는 것이 없어 min이 안전하다.
+			var claim_finish := CombatMath.is_combo_finish(melee_weapon,
+				CombatMath.clamp_combo_index(int(_melee_claim.get(from_id, 0)), melee_weapon))
+			var hit_half := CombatMath.melee_half_angle(melee_weapon, req_finish or claim_finish) \
+				if has_dir else CombatMath.MELEE_FULL_ARC
 			# 🔴 **각 축의 지연 보상**(netreview C-1) — apex가 `net_anchor()`(낡은 좌표)라 이동 중인
 			#   게스트는 각이 통째로 틀어진다. 거리는 anchor 하나로 묶어 두고(신뢰 경계 불변) **각만**
 			#   외삽 좌표와 둘 중 하나가 맞으면 통과시킨다. §3 방어자 우대와 반대 부호인 이유는
@@ -531,7 +603,43 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 					(entry["root"] as Node2D).global_position, attacker.job,
 					reach_radius, attacker.trait_value("reach"), melee_weapon,
 					hit_dir.angle(), hit_half, mob_lag):
-				_confirm_damage(entry["health"] as HealthComponent, attacker.job, from_id)
+				# 🔴 데미지 배율도 **확정 타수**에서 온다 — 각과 같은 인덱스라 "세게 때리는 타 = 넓게
+				#   치는 타"가 데이터 한 장에서 함께 온다(`_register_arrow`의 같은 규약).
+				_confirm_damage(entry["health"] as HealthComponent, attacker.job, from_id,
+					CombatMath.combo_damage_mult_at(melee_weapon, req_combo))
+		NetSchema.G_ATK:
+			# 🔴 **근접 콤보 타수 계수 — 호스트 전용** (v2.2 2026-07-29). 표시 중계는 `PeerSync`가 따로
+			#   한다(그쪽은 연출, 여기는 **판정 입력**). 세는 소스가 G_ATK인 근거는 `_melee_combo` 주석.
+			# 🔴 **새 네트워크 메시지 0개다** — 이미 매 스윙 오던 메시지의 쓰임이 바뀐 것뿐이다.
+			if not Net.is_host() or _stage_over:
+				return
+			var atk_p := _peer_sync.player(from_id)
+			if atk_p == null or not atk_p.is_alive() or atk_p.job == null:
+				return  # 사망(관전 고스트)·무스폰 피어 — G_HIT_REQ·G_SHOOT 거부와 같은 규율 (rules §3)
+			# 🔴🔴 **거부 게이트가 먼저, 관대한 폴백이 나중** (rules §3 · 2026-07-28 M-1이 실제로 밟은
+			#   자리). 순서를 뒤집으면 `can_job_equip` 널링이 아래 발사형 거부를 **항상 꺼 버린다**.
+			var atk_w := GameState.equip_def(_peer_sync.peer_weapon_id(from_id))
+			if atk_w != null and CombatMath.is_projectile_weapon(atk_w):
+				# 발사형을 공지한 피어의 G_ATK로는 근접 콤보를 세지 않는다 — G_HIT_REQ 근접 거부의 대칭.
+				# ⚠ 안 막으면 활(3타)로 타수를 쌓아 두고 대검을 공지해 그 인덱스를 물려받는 경로가 열린다.
+				return
+			if not GameState.can_job_equip(_peer_sync.peer_job_id(from_id), atk_w):
+				atk_w = null  # 기하·리듬 폴백(= 콤보 길이 1 = 항상 평타) — 거부가 아니다
+			var now_atk := Time.get_ticks_msec()
+			var last_atk := int(_last_atk_msec.get(from_id, -1000000000))
+			# 🔴 규칙은 클라 로컬(`player._swing_attack`이 심는 창·간격)과 **같은 함수**를 지난다(§3) —
+			#   사본 조건문을 두면 다음 리듬 튜닝에서 "내 화면은 마무리인데 판정은 평타"가 된다.
+			# ⚠ 너무 빠른 스윙은 **거부가 아니라 콤보 리셋**이다(`advance_combo` 주석) — 거부로 만들면
+			#   창 경계 지터에서 정당한 타격이 통째로 사라진다. 리셋이면 최악이 "이번 타는 평타"다.
+			# ⚠ 공속은 **공격자 아바타**에서 읽는다(`_confirm_damage`·`_register_arrow`와 같은 소스) —
+			#   `peer_level_stats`류는 호스트 자신 항목이 없다.
+			_melee_combo[from_id] = CombatMath.authoritative_combo(int(data.get("cb", 0)),
+				int(_melee_combo.get(from_id, 0)), float(now_atk - last_atk) / 1000.0,
+				atk_p.job, atk_w, float(atk_p.level_stats.get("haste", 0.0)))
+			_last_atk_msec[from_id] = now_atk
+			# 🔴 **주장 타수는 따로 보관한다 — 각 축 전용**(netreview C-1). 선언부 주석이 근거 정본이다.
+			#   여기서 `clamp_combo_index`를 지나므로 배열 밖·거대값·음수는 그 무기의 범위로 접힌다.
+			_melee_claim[from_id] = CombatMath.clamp_combo_index(int(data.get("cb", 0)), atk_w)
 		NetSchema.G_SHOOT:
 			if not Net.is_host() or _stage_over:
 				return  # 화살 등록 권한은 호스트만 (게스트도 릴레이 도달하나 무시)

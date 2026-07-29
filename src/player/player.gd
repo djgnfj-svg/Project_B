@@ -62,9 +62,10 @@ const SWING_WINDUP_ARC_MULT := 1.5
 #   ⚠ 되살릴 거면 파형을 **칼 궤도 위에서** 뻗게 해야 한다(옛 코드처럼 직선으로 날리면 같은 신고가 돈다).
 # ⚠ 미러(rules §3): 스윙 창은 모든 JobDef.attack_cooldown보다 짧아야 한다 (전사 0.4s) —
 #   원격 창-잠금 가드(play_attack_fx)가 정당한 연속 공격의 스윙을 무시하지 않으려면.
-#   이 3상수는 무장 해제/폴백 기본값이고, 무기별 실값은 EquipDef.swing_time/arc/lunge(→ _swing_*).
+#   아래 두 상수는 무장 해제/폴백 기본값이고, 무기별 실값은 EquipDef.swing_time/lunge(→ _swing_*).
 const ATTACK_ANIM_TIME := 0.25       # 스윙 창 기본값(폴백) — 무기별은 EquipDef.swing_time
-const SWING_HALF_ARC := 1.9          # 스윙 호 반각(rad) 기본값(폴백) — 무기별은 EquipDef.swing_arc
+# ⚠ 스윙 호 반각의 폴백 상수는 **없다** — 표시 각은 `CombatMath.melee_show_half_angle(equip, is_finish)`
+#   하나에서만 나온다(v2.2). 사본을 두면 마무리 타에서 표시와 판정이 갈라진다(§3).
 # --- 공격 타이밍 = 선딜 / 스윕 / 후딜 (무기 모션 개편 2026-07-28) ---
 # 🔴 **곡선의 "모양"은 표시 전용이지만 구간 "길이"는 판정 시점을 정한다** (netreview m-3 정정 —
 #   이 자리에 "판정은 이 곡선을 전혀 보지 않는다 / 클릭 프레임에 끝난다"고 적어 뒀던 것은 선딜 축
@@ -144,16 +145,29 @@ const IDLE_SWAY_SPEED := 2.6
 const RUN_SWAY_AMP := 0.15      # 이동 중 흔들림 — 걸음에 맞춰 크게
 const RUN_SWAY_SPEED := 7.5
 const STANCE_LERP := 9.0        # 스탠스↔조준 전환 부드러움
-# --- 평타 콤보 (연출 전용, 사용자 확정 2026-07-26) ---
-# 🔴 **데미지·쿨다운·스윙 창은 콤보와 무관하다** — 3타째가 더 아프면 GDD §6 화력 예산 변경이라
-#   planner 승인이 필요하다(그래서 안 했다). 바뀌는 건 휘두르는 궤적의 방향/크기뿐이다.
+# --- 평타 콤보 (v2.2 2026-07-29 — 연출 전용이었던 것이 판정·화력으로 승격됐다) ---
+# 🔴 **더 이상 연출 전용이 아니다.** 타수·타별 데미지·뜸·마무리 각·돌진이 전부 **무기 데이터**
+#   (`EquipDef.combo_*`)에서 오고 호스트가 G_ATK 간격으로 타수를 직접 센다(GDD §6 「공격 리듬」).
+#   여기 남은 것은 **연출 배율 둘뿐**이고 나머지는 전부 `CombatMath` 단일 소스를 지난다(§3):
+#     타수 = `combo_len` · 창 = `combo_window_s` · 뜸 포함 쿨다운 = `combo_gap_s`
+#     판정 각 = `melee_half_angle(equip, is_finish)` · 표시 각 = `melee_show_half_angle(...)`
+#     데미지 = `combo_damage_mult_at` · 돌진 = `combo_dash_dist`
+# 🔴 **`COMBO_MAX`·`COMBO_WINDOW`·`COMBO_FINISH_ARC` 셋은 삭제했다 — 되살리지 마라.**
+#   ⑴ `COMBO_MAX`(3 하드코딩)는 "타수를 무기가 정한다"와 정면으로 어긋난다(도끼 2 · 대검 3 · 창 4).
+#   ⑵ `COMBO_WINDOW`는 클릭 시점부터 `_swing_time + 0.55`를 재서 호스트 창(`combo_window_s`)과
+#      최대 160ms 어긋나 있었다 — 두 창이 갈라지면 "내 화면은 3타인데 판정은 평타"가 된다.
+#   ⑶ `COMBO_FINISH_ARC`(균일 1.25 배율)는 포화 문턱(`π ÷ 반각`)이 무기마다 달라 **넓은 무기만
+#      전방위로 만든다.** 도끼(2.8)에서 span이 401°(= TAU 초과)라 실제로 "한 바퀴 넘게" 휘둘렀고
+#      어깨걸치기 `cap`은 기본 span을 안 줄인다. 절대값(`EquipDef.combo_finish_arc`) + **코드가 쥔**
+#      여유(`COMBO_FINISH_SHOW_MARGIN`)로 오면 그 방향이 구조로 닫힌다.
 # ⚠ _swing_time을 콤보로 늘리지 마라: 스윙 창 < attack_cooldown 미러 계약(§3)이 깨지면 원격
 #   창-잠금 가드가 정당한 연속 공격의 연출을 삼킨다.
-const COMBO_MAX := 3            # 콤보 길이(0→1→2→0)
-const COMBO_WINDOW := 0.55      # 스윙 창이 끝난 뒤 이 시간 안에 다시 치면 다음 타로 이어진다(s)
-const COMBO_FINISH_ARC := 1.25  # 마무리 타의 호 배율 — 크게 휘둘러 "끝났다"가 읽히게
-const COMBO_FINISH_LUNGE := 1.7 # 마무리 타의 내지르기 배율
-const COMBO_FINISH_KICK := 2.6  # 마무리 타의 카메라 반동
+const COMBO_FINISH_LUNGE := 1.7 # 마무리 타의 내지르기 배율 (연출 — 무기 스프라이트만 움직인다)
+const COMBO_FINISH_KICK := 2.6  # 마무리 타의 카메라 반동 (연출)
+# `job`이 없는 비정상 상태에서 `_swing_attack`이 돌려주는 쿨다운(s). 🔴 **0을 돌려주면 안 된다** —
+#   쿨다운이 사라져 클라가 매 물리 프레임 reliable 채널로 `G_ATK`를 쏜다(netreview m-4). 값 자체는
+#   중요하지 않고 "0이 아닐 것"만 중요하다(그 상태에선 스윙을 시작하지 않는다).
+const NO_JOB_SWING_CD_S := 0.4
 const HIT_KICK := 1.7           # 근접 적중 시 때린 방향 반동 — 셰이크(무작위)와 달리 "밀어냈다"가 읽힌다
 const SHOOT_KICK := 1.5         # 발사 시 **반대** 방향 반동 (총·활의 반동)
 
@@ -188,7 +202,9 @@ var _swing_sfx: String = "swing"               # 스윙(휘두름) 효과음 id
 var _hit_sfx: String = ""                       # 적중 시 무기 고유 타격음 id (비면 무음)
 var _hit_shake: float = 1.5                     # 적중 시 스크린셰이크 강도
 # 스윙 모션(무기별) — 기본값 = 대검 기준(폴백). ⚠ _swing_time < job.attack_cooldown 유지 (rules §3)
-var _swing_arc: float = SWING_HALF_ARC
+# ⚠ **호 반각 사본(`_swing_arc`)은 v2.2에서 없앴다** — 각은 `_begin_swing`이 `melee_show_half_angle`에서
+#   직접 받는다. 멤버로 들고 있으면 마무리 타 분기가 그 값에 배율을 곱하고 싶어지고, 그 순간 표시가
+#   판정과 갈라진다(옛 `COMBO_FINISH_ARC`가 정확히 그랬다).
 var _swing_time: float = ATTACK_ANIM_TIME
 var _swing_time_base: float = ATTACK_ANIM_TIME  # 무기가 준 원본 스윙 창 — _swing_time은 여기에 haste 배율을 곱해 파생한다
 var _swing_lunge: float = LUNGE_DIST
@@ -252,8 +268,28 @@ var _stance_sway: float = 0.0       # 현재 적용 중인 무기 스탠스 각(
 #   lerp로 흘려보내면 프레임률에 따라 잔량이 달라져 "칼만 몇 도 기울어진 채 궤적이 시작"된다.
 var _stance_enter_sway: float = 0.0
 var _sway_phase: float = 0.0        # 흔들림 위상 — delta로 누적(Time 전역 대신, 일시정지·씬 전환에 안전)
-var _combo_index: int = 0           # 근접 스윙 콤보 타수(0..COMBO_MAX-1) — 표시 전용
-var _combo_left: float = 0.0        # 근접 콤보가 이어지는 남은 시간(s)
+# 근접 스윙 콤보 타수(0..`CombatMath.combo_len(무기) − 1`). 🔴 **v2.2부터 표시 전용이 아니다** —
+#   G_ATK "cb"로 나가 호스트의 데미지 배율·판정 각을 고른다(상한으로만 — `authoritative_combo`).
+var _combo_index: int = 0
+var _combo_left: float = 0.0        # 근접 콤보가 이어지는 남은 시간(s) — 창은 CombatMath.combo_window_s
+# 🔴 **이 스윙이 마무리 타인가 — `_begin_swing`이 굳힌다.** 판정 각(`_resolve_swing_hit`)과 표시 각
+#   (`_begin_swing`의 `arc`)이 **같은 판단**을 봐야 「표시 ⊇ 판정」이 유지되므로, 스윙 도중 무기 교체·
+#   레벨업이 둘을 갈라놓지 못하게 시간 축(`_swing_win_total`)과 같은 자리에서 래치한다(netreview M-1 미러).
+var _swing_is_finish: bool = false
+# 🔴 **마무리 타 돌진**(`EquipDef.combo_dash` — 창) — px/s. 0 = 이번 스윙은 대시 아님.
+#   ⑴ **`velocity`로만 흘린다. `position` 대입 금지** — G_POS의 `vx/vy`가 0이면 호스트 lead 외삽이 그
+#      변위를 **원리적으로 못 덮어** 마무리 타가 게스트에서 통째로 무음 거부된다(각 오차 =
+#      `asin(변위 ÷ 도달)`가 반각을 넘는다).
+#   ⑵ **끝나는 조건이 판정과 같은 플래그(`_swing_hit_armed`)다 — 별도 타이머를 두지 마라.** 판정 전에
+#      멈추면 `net_anchor_lead == net_anchor`가 되어 오차 = 대시 거리 **전체**가 남는다(최악).
+#      `_physics_process`가 `_tick_timers`(감산) → `_local_move`(velocity) → `_tick_swing_motion`(발화)
+#      순서라, 같은 플래그를 보면 **판정 프레임의 velocity가 반드시 살아 있다**.
+#   ⑶ 속도를 「선딜 시작 → 판정」 **전 구간**으로 나눈다(스윕에만 몰면 `_max_move_speed` 260px/s를 넘어
+#      원격 clamp가 정당한 대시를 깎는다). 나누는 값이 `_swing_hit_left`(스로틀 반영된 **실제** 판정
+#      시각)이라 스로틀로 미뤄져도 **이동 거리는 데이터 그대로**다.
+# ⚠ 로컬 전용이다 — 원격 아바타의 좌표는 G_POS lerp가 구동하므로 여기서 밀면 수신 좌표와 싸운다.
+var _dash_speed: float = 0.0
+var _dash_dir: Vector2 = Vector2.RIGHT
 # 원거리(shoot/charge) 평타 콤보 — 궁수 "평·평·쭉". 🔴 **근접 콤보와 상태를 공유하지 않는다**:
 #   근접은 궤적만 정하는 표시값이지만 이쪽은 사거리·데미지를 바꿔 신뢰 경계가 걸려 있고, 규칙도
 #   호스트와 미러여야 한다(CombatMath.advance_combo). 섞으면 근접 손맛 튜닝이 원거리 판정을 움직인다.
@@ -535,7 +571,6 @@ func _apply_weapon_feel(equip: EquipDef) -> void:
 	_hit_sfx = equip.hit_sfx if equip != null else ""
 	_hit_shake = equip.hit_shake if equip != null else 1.5
 	# 스윙 모션 — 무기 지정값, 미착용이면 대검 기본. swing_time은 §3 미러(< attack_cooldown) 유지.
-	_swing_arc = equip.swing_arc if equip != null else SWING_HALF_ARC
 	_swing_time_base = equip.swing_time if equip != null else ATTACK_ANIM_TIME
 	_swing_lunge = equip.swing_lunge if equip != null else LUNGE_DIST
 	_swing_ease = equip.swing_ease if equip != null else "smooth"
@@ -551,6 +586,12 @@ func _apply_weapon_feel(equip: EquipDef) -> void:
 	# 무기가 바뀌면 콤보도 처음부터 — 리듬은 무기가 정하므로 옛 무기의 타수를 이어받으면 새 무기의
 	# 배율 배열에 엉뚱한 칸이 걸린다(호스트는 자기 간격으로 세니 표시만 어긋난다).
 	_shot_combo_index = 0
+	# 🔴 근접도 같이 리셋한다(v2.2) — 근접 타수가 이제 **데미지와 판정 각**을 고르므로, 옛 무기의
+	#   타수를 새 무기에 물려주면 그 배열의 엉뚱한 칸이 판정에 걸린다. 방향은 **안전한 쪽**이다:
+	#   0으로 떨어뜨리면 `authoritative_combo`의 `min`이 그 주장을 상한으로 써 판정도 평타가 된다.
+	# ⚠ `_last_shot_msec`은 여기서도 안 지운다(그쪽 규율과 같은 이유 — 호스트는 자기 기록을 안 지운다).
+	_combo_index = 0
+	_combo_left = 0.0
 	_auto_firing = false  # 무기가 바뀌면 홀드 연사도 끊는다 — 새 무기가 shoot가 아닐 수 있다
 	_refresh_growth_derived()  # 무기 교체도 파생 입력 — 새 base에 현재 haste를 다시 곱한다
 	if is_node_ready():
@@ -825,8 +866,9 @@ func _tick_timers(delta: float) -> void:
 #           → 스윕 완료 = 🔴 **판정 확정 순간** → **후딜**(칼을 회수) → 쿨다운 종료
 #
 # 🔴 **판정이 스윕 완료 시점인 것이 "안 보이는데 맞는다"를 원천 차단한다.** 그 순간 그려진 각 창은
-#   `[_swing_from, _swing_to]`이고 이건 판정 부채꼴 `±melee_half_angle`과 **같거나 넓다**
-#   (마무리 타는 `COMBO_FINISH_ARC`만큼 넓다 = 안전한 방향). 찌르기는 각 창이 처음부터 부채꼴
+#   `[_swing_from, _swing_to]`이고 이건 판정 부채꼴 `±melee_half_angle(equip, is_finish)`과 **같거나
+#   넓다** — 표시는 같은 `is_finish`로 `melee_show_half_angle`을 지나 `COMBO_FINISH_SHOW_MARGIN`만큼
+#   넓기 때문이다(= 안전한 방향, v2.2). 찌르기는 각 창이 처음부터 부채꼴
 #   전체이고 **도달**이 자라며, 완료 시 `reach_ratio = 1`이라 판정 반경과 정확히 일치한다.
 func _tick_swing_motion(delta: float) -> void:
 	if _attack_anim_left > 0.0:
@@ -852,7 +894,7 @@ func _tick_swing_motion(delta: float) -> void:
 				EventBus.player_swing.emit(global_position, _swing_sfx)
 				# ⚠ 카메라 킥은 **로컬만** — EventBus는 전역이라 원격 아바타가 emit하면 남이 휘두를
 				#   때 내 화면이 밀린다(event_bus.gd가 명시한 함정).
-				if is_local and _combo_index == COMBO_MAX - 1:
+				if is_local and _swing_is_finish:
 					EventBus.camera_kick.emit(_swing_dir, COMBO_FINISH_KICK * _weapon_weight())
 			# 궤적 마무리 = 스윕 완료 순간. 판정은 아래 카운트다운이 따로 낸다.
 			if p >= 1.0:
@@ -1076,9 +1118,23 @@ func _local_move(delta: float) -> void:
 		_roll_time_left -= delta
 		velocity = _roll_dir * _roll_speed()  # 구르기는 늪 슬로우 예외(이속·roll_dist가 거리를 늘린다, GDD §6)
 	else:
-		# 걷기만 늪 배율 적용. 기 모으는 중(charge 무기)이면 추가로 느려진다 — 모으는 대가(사용자 확정)
-		var charge_mult := CHARGE_MOVE_MULT if _charging else 1.0
-		velocity = dir * _move_speed() * _swamp_mult() * charge_mult
+		if _dash_speed > 0.0 and _swing_hit_armed:
+			# 🔴 **마무리 타 돌진** (창 — `EquipDef.combo_dash`, 멤버 주석이 근거).
+			#   ⑴ **이동 입력을 대체한다 — 합산하지 마라.** 합산하면 `_max_move_speed`(전사 260px/s)를 넘어
+			#      원격 속도·변위 clamp가 **정당한 대시를 깎고**, 그러면 호스트 외삽이 과소평가돼 마무리
+			#      타가 게스트에서 무음 거부된다(§3 이동속도 계약).
+			#   ⑵ **끝나는 조건이 `_swing_hit_armed`다** — 판정 프레임까지 velocity가 살아 있어야 lead
+			#      외삽이 변위를 덮는다(`_physics_process`의 호출 순서가 그것을 보장한다).
+			#   ⑶ 늪 배율은 **안 곱한다** — 구르기와 같은 취급이다(커밋한 이동 동작). 곱해도 부호는
+			#      안전하지만(속도가 줄 뿐) 대시 거리가 늪에서만 달라져 각 예산이 늪에서만 흔들린다.
+			velocity = _dash_dir * _dash_speed
+		else:
+			# 걷기만 늪 배율 적용. 기 모으는 중(charge 무기)이면 추가로 느려진다 — 모으는 대가(사용자 확정)
+			var charge_mult := CHARGE_MOVE_MULT if _charging else 1.0
+			velocity = dir * _move_speed() * _swamp_mult() * charge_mult
+		# 🔴 **구르기 입력 검사는 대시·걷기 공용이다 — 갈래 안에 두지 마라.** 돌진 중에 구르기가 안 먹으면
+		#   "법사는 차지를 빼는데 전사는 돌진을 못 뺀다"가 되고, `_cancel_swing`이 스윙과 돌진을 **함께**
+		#   끊는다는 계약이 도달 불가능해진다(그 함수 주석이 근거).
 		if _alive and Input.is_action_just_pressed("roll") and _roll_cd_left <= 0.0:
 			_roll_dir = dir if dir != Vector2.ZERO else _aim_dir()
 			_roll_time_left = CombatMath.ROLL_TIME_S
@@ -1162,8 +1218,12 @@ func _local_combat(delta: float) -> void:
 				_auto_firing = CombatMath.is_trait_on("auto_fire", trait_value("auto_fire"))
 			_fire_projectile(dir, 0)
 		else:
-			_attack_cd_left = CombatMath.effective_cooldown(job, _haste())
-			_swing_attack(dir)
+			# 🔴 **쿨다운을 콤보가 정한다 — 원거리(`_advance_shot_combo`)와 같은 자리다**(v2.2).
+			#   다음 타에 뜸(`combo_delay`)이 붙어 있으면 그만큼 길어진다. ⚠ 이 반환을 무시하고
+			#   `effective_cooldown`으로 되돌리면 **정직한 빠른 클릭이 마무리 타를 영영 못 얻는다**
+			#   (호스트 인정 하한이 뜸을 포함하는데 클라 간격이 안 하면 `advance_combo`가 리셋한다).
+			#   콤보 배열이 없는 무기는 두 식이 **완전 항등**이다.
+			_attack_cd_left = _swing_attack(dir)
 
 
 # 차지 발사(charge 무기) — 누른 순간 모으기 시작, 단계는 홀드 시간에서 리졸브(CombatMath 단일 소스),
@@ -1240,19 +1300,58 @@ func _advance_shot_combo() -> float:
 	return CombatMath.combo_gap_s(job, _weapon_override, nxt, haste)
 
 
-# 이번 스윙의 궤적을 콤보 타수로 결정한다 — **연출 전용**이다(데미지·쿨다운·스윙 창은 안 바뀐다).
-# 0타 = 우→좌 · 1타 = 좌→우(되돌려 베기) · 2타(마무리) = 같은 방향으로 더 크게 + 깊이 내지른다.
+# 이 아바타의 콤보 길이 — **무기 데이터가 정한다**(도끼 2 · 대검 3 · 창 4).
+# 🔴 `CombatMath.combo_len` 단일 소스이고 **호스트도 같은 함수**를 지난다(§3) — 여기에 상수를 두면
+#   (옛 `COMBO_MAX = 3`) 도끼가 3타로 돌고 창이 4타째를 영영 못 낸다.
+func _combo_len() -> int:
+	return CombatMath.combo_len(_weapon_override)
+
+
+# 그 타수가 마무리 타인가 — ✅ **사본을 없앴다: 판단은 `CombatMath.is_combo_finish` 하나다**
+#   (2026-07-29 리드 반영). 표시(여기)와 판정(`combat_authority`)이 **같은 함수**를 지나므로
+#   "판정만 마무리"(= 판정 각은 넓은데 궤적은 평타 = 안 보이는데 맞는다)가 원리적으로 불가능하다.
+#   `n > 1` 가드와 그 근거도 그 함수의 주석이 정본이다 — 여기 복제하지 마라.
+func _is_combo_finish(index: int) -> bool:
+	return CombatMath.is_combo_finish(_weapon_override, index)
+
+
+# 콤보가 다음 타로 이어지는 창(s) — 🔴 **호스트와 같은 함수**(`CombatMath.combo_window_s`)를 지난다(§3).
+#   인자는 **다음 타의 인덱스**다(그 타의 뜸이 창에 들어간다 — `advance_combo`가 같은 규약으로 잰다).
+# ⚠ 우회해 `COMBO_GRACE_S`를 직접 더하지 마라 — 근접 무기는 `combo_grace`로 그 기본값을 덮으므로
+#   창이 갈라지고, 갈라지면 `min`이 0을 택해 "내 화면은 마무리인데 판정은 평타"가 된다.
+func _combo_window_s(next_index: int) -> float:
+	if job == null:
+		return 0.0
+	return CombatMath.combo_window_s(job, _weapon_override, next_index, _haste())
+
+
+# 이 아바타의 **근접 콤보 데미지 배율** — 🔴 호스트가 **자기** 근접 타격을 확정할 때 읽는다.
+#   Net에 루프백이 없어 호스트는 자기 G_ATK를 받지 않으므로(`combat_authority._melee_combo`에 자기
+#   항목이 **영원히** 없다) 자기 콤보의 유일한 소스가 로컬 아바타다 — `_on_player_shoot`이 같은 관용구다.
+# 🔴 배율 리졸브는 `CombatMath.combo_damage_mult_at` 단일 소스를 지난다(§3) — 여기서 계산하지 않는다.
+func melee_combo_mult() -> float:
+	return CombatMath.combo_damage_mult_at(_weapon_override, _combo_index)
+
+
+# 이번 스윙의 궤적·마무리 여부를 콤보 타수로 결정한다.
+# 🔴 **v2.2부터 연출 전용이 아니다** — 여기서 굳힌 `_swing_is_finish`가 판정 각(`_resolve_swing_hit`)까지
+#   고른다. 스윙 창·쿨다운은 여전히 콤보와 무관하다(§3 미러 계약).
+# 짝수 타 = 좌→우 · 홀수 타 = 우→좌(되돌려 베기) · 마무리 타 = 더 넓게 + 깊이 내지른다.
 # 로컬(입력)과 원격(G_ATK "cb") 공용이라 양쪽 화면이 같은 궤적을 그린다.
 func _begin_swing(combo: int) -> void:
-	_combo_index = clampi(combo, 0, COMBO_MAX - 1)
-	var arc := _swing_arc
-	_swing_lunge_mult = 1.0
-	if _combo_index == COMBO_MAX - 1:
-		arc *= COMBO_FINISH_ARC
-		_swing_lunge_mult = COMBO_FINISH_LUNGE
-	# 홀수 타만 반대로 — 매번 같은 방향으로 휘두르면 팔이 순간이동해 되돌아온 것처럼 보인다.
-	_swing_from = arc if _combo_index == 1 else -arc
-	_swing_to = -arc if _combo_index == 1 else arc
+	var n := _combo_len()
+	_combo_index = clampi(combo, 0, n - 1)
+	_swing_is_finish = _is_combo_finish(_combo_index)
+	# 🔴 **표시 각은 `melee_show_half_angle` 하나에서 온다 — 배율을 곱하지 마라**(v2.2, 상수 주석이 근거).
+	#   판정 각(`melee_half_angle`)보다 `COMBO_FINISH_SHOW_MARGIN`만큼 넓고 그 부호를 **코드가** 쥔다.
+	var arc := CombatMath.melee_show_half_angle(_weapon_override, _swing_is_finish)
+	_swing_lunge_mult = COMBO_FINISH_LUNGE if _swing_is_finish else 1.0
+	# 🔴 방향은 **패리티**(`index % 2`)다 — 절대 위치(`== 1`)로 두면 타수마다 다르게 깨진다:
+	#   2타(도끼)면 반전 타와 마무리 타가 **한 타에 겹치고**, 4타(창)면 index 0과 2가 같은 방향·크기가
+	#   되어 **두 타가 같은 궤적**이 된다. 패리티면 타수 무관하게 왕복이 유지된다.
+	var reverse := CombatMath.is_combo_swing_reversed(_combo_index)
+	_swing_from = arc if reverse else -arc
+	_swing_to = -arc if reverse else arc
 	if _weapon_motion() == "thrust":
 		# 찌르기는 좌우로 훑지 않는다 — 예비에 창끝을 젖혔다가 **겨눈 선(0)으로 모아** 내지른다.
 		# (타수마다 젖히는 쪽만 바뀌므로 손이 순간이동해 보이지 않는다 — 위 _swing_from 그대로 쓴다.)
@@ -1260,12 +1359,16 @@ func _begin_swing(combo: int) -> void:
 	else:
 		# 🔴 **어깨에 걸치기 — 시작각만 더 젖힌다**(위 const 주석이 정본). 끝각은 안 건드린다:
 		#   거긴 "궤적 선단이 판정 부채꼴을 덮는다"는 §3 불변식이 걸려 있다.
-		# 🔴 **상한을 무기 각에서 유도한다.** 셰이더의 궤적 진행 게이트는 `hi - lo < 2π-0.02`에서만
-		#   돌고, 넘으면 진행이 꺼져 부채꼴이 한 번에 번쩍인다(= 개편 전 그림, 사용자가 신고한 그것).
+		# 🔴 **상한을 무기 각에서 유도한다 — 총 span이 한 바퀴(2π)를 넘으면 안 된다.** 넘으면 칼이
+		#   같은 자리를 두 번 지나 궤적 리본이 자기 위에 겹치고, 화면에서는 "휘두르는 방향"이 안 읽힌다
+		#   (옛 부채꼴 셰이더에선 진행 게이트가 통째로 꺼져 한 번에 번쩍였다 — 사용자가 신고한 그것).
 		#   span = arc × (1 + 배율)이므로 배율 상한 = (2π-0.02)/arc − 1이다. 넓은 무기일수록 여유가
 		#   작아 자동으로 덜 젖혀진다(도끼 160° → 약 1.24배 · 낡은 대검 109° → 약 2.3배).
-		# ⚠ 마무리 타는 `COMBO_FINISH_ARC`로 arc가 이미 커서 상한이 1.0 밑으로 떨어질 수 있다 —
+		# ⚠ 마무리 타는 `combo_finish_arc`로 arc가 이미 커서 상한이 1.0 밑으로 떨어질 수 있다 —
 		#   그때는 `maxf`가 1.0(젖힘 없음)으로 떨어뜨린다. 마무리는 원래 크게 휘두르므로 맞는 결과다.
+		# 🔴 **이 `cap`은 기본 span(`arc` 자체)을 줄이지 못한다** — 그래서 마무리 각을 **절대값 + 코드
+		#   상한**(`melee_half_angle`)으로 받는 것이 필요했다. 옛 균일 배율 1.25에서는 도끼 기본 span이
+		#   이미 401°였고 `cap`은 젖힘만 껐을 뿐이라 아무것도 못 막았다.
 		var cap := (TAU - 0.02) / maxf(arc, 0.0001) - 1.0
 		_swing_from *= clampf(maxf(1.0, _windup_arc_mult), 1.0, maxf(1.0, cap))
 	# 🔴 스윙 창은 콤보와 무관하게 _swing_time 그대로 — §3 미러(swing_time < attack_cooldown) 보존.
@@ -1295,13 +1398,30 @@ func _begin_swing(combo: int) -> void:
 #   벤다**(화면에 이유가 안 드러나는 부류). 갱신형을 하려면 방향 갱신 메시지가 새로 필요하다 =
 #   신규 kind. 대신 커밋의 대가는 **구르기 취소**(`_cancel_swing`)로 돌려준다.
 #
-# ⚠ 쿨다운(`_attack_cd_left`)은 호출부에서 **클릭 시점에 이미 소비됐다** — 판정이 늦어져도 발사
-#   간격은 그대로다(DPS 불변). 취소해도 쿨은 돌아간 뒤라 취소 남용 유인이 없다.
-func _swing_attack(dir: Vector2) -> void:
+# ⚠ 쿨다운(`_attack_cd_left`)은 호출부가 **이 함수의 반환값으로** 클릭 시점에 소비한다 — 판정이
+#   늦어져도 발사 간격은 그대로다(DPS 불변). 취소해도 쿨은 돌아간 뒤라 취소 남용 유인이 없다.
+#
+# 🔴 **반환값 = 다음 타까지의 쿨다운(s) = `combo_gap_s`(뜸 포함)** — `_advance_shot_combo`의 미러다.
+#   ⚠ **이게 없으면 정직한 빠른 클릭이 마무리 타를 영영 못 얻는다.** 호스트 인정 하한
+#   (`combo_min_gap_s`)은 뜸을 포함하는데 클라 쿨다운이 안 하면 `elapsed < 하한`이 되어
+#   `advance_combo`가 리셋한다 — 화면엔 이유가 안 드러나고 "가끔 마무리가 안 나온다"로만 보인다.
+#   ⚠ 콤보 배열이 없는 무기는 `combo_gap_s`가 `effective_cooldown`과 **완전 항등**이다(뜸 0).
+func _swing_attack(dir: Vector2) -> float:
+	# 🔴 **가드가 맨 앞이어야 한다 — 뒤에 두면 쿨다운 0.0을 돌려주는 스팸 경로가 열린다**
+	#   (netreview m-4). 전에는 이 검사가 `G_ATK` 송신 **뒤**에 있어서, `job`이 없는 상태가 되면
+	#   쿨다운이 0이 되어 클라가 **매 물리 프레임(60Hz) reliable 채널로** G_ATK를 쏘았다. 호스트가
+	#   무시하니 판정 영향은 0이지만 릴레이 대역과 로그를 조용히 태운다(옛 코드는 같은 상태에서
+	#   시끄럽게 죽어 눈에 띄었다). 0이 아닌 폴백을 돌려 스윙 자체를 시작하지 않는다.
+	if job == null:
+		return NO_JOB_SWING_CD_S
 	_swing_dir = dir
-	# 콤보 이어가기: 직전 스윙 뒤 COMBO_WINDOW 안이면 다음 타, 아니면 처음부터.
-	_begin_swing((_combo_index + 1) % COMBO_MAX if _combo_left > 0.0 else 0)
-	_combo_left = _swing_time + COMBO_WINDOW
+	# 콤보 이어가기 — 창 안이면 다음 타, 아니면 처음부터. 🔴 창은 `CombatMath.combo_window_s`가 정한다
+	#   (로컬·호스트 공용 §3). 옛 `_swing_time + COMBO_WINDOW`는 호스트 창과 최대 160ms 어긋나 있었다.
+	var n := _combo_len()
+	var idx := ((_combo_index + 1) % n) if _combo_left > 0.0 else 0
+	_begin_swing(idx)
+	# 다음 타의 창 — 인덱스는 **그 다음 타**다(그 타의 뜸이 창에 들어간다, `advance_combo` 규약).
+	_combo_left = _combo_window_s((idx + 1) % n)
 	_arm_swing_trail()
 	# 🔴🔴 **자기 스로틀 — 판정을 호스트 게이트 아래로 내려보내지 않는다** (netreview M-1의 실제 결과).
 	#   호스트는 **판정 도착 간격**을 `쿨다운 × FIRE_RATE_SLACK`로 재는데, 클라의 발사 간격은
@@ -1343,8 +1463,23 @@ func _swing_attack(dir: Vector2) -> void:
 	_swing_hit_left = clampf(maxf(_swing_hit_at, earliest_s),
 		_swing_hit_at, _swing_hit_at + CombatMath.melee_throttle_max_s(_haste()))
 	_swing_hit_armed = true
-	# "cb" = 콤보 타수(표시 전용). 수신 측이 clamp하므로 조작해도 궤적만 달라진다 — 판정·데미지 무관.
+	# 🔴 **마무리 타 돌진** — 「선딜 시작 → 판정」 전 구간에 균일 속도로 흘린다(멤버 주석이 근거).
+	#   나누는 값이 `_swing_hit_left`(= 스로틀 반영된 **실제** 판정 시각)이라 스로틀로 미뤄져도
+	#   이동 거리는 데이터 그대로다 — `_swing_hit_at`으로 나누면 미뤄진 만큼 더 멀리 간다(각 예산 초과).
+	_dash_speed = 0.0
+	_dash_dir = dir
+	if _swing_is_finish:
+		var dash_px := CombatMath.combo_dash_dist(_weapon_override)
+		if dash_px > 0.0:
+			_dash_speed = dash_px / maxf(_swing_hit_left, 0.0001)
+	# 🔴 "cb" = 콤보 타수. **v2.2부터 판정 입력이다**(데미지 배율·마무리 각) — 호스트가 자기 G_ATK 수신
+	#   간격으로 직접 세고 이 주장은 `min` 상한으로만 쓴다(`authoritative_combo`, G_SHOOT "cb"와 같은 규약).
+	#   그래서 부풀려 주장해도 **내 화면만** 마무리로 그려지고 판정은 안 따라온다(판정 ≤ 표시, §3).
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ATK, "dx": dir.x, "dy": dir.y, "cb": _combo_index})
+	# (`job == null` 가드는 **함수 맨 앞**으로 옮겼다 — netreview m-4. 여기 두면 G_ATK가 이미 나간 뒤라
+	#  쿨다운 0.0이 매 프레임 재송신을 만든다.)
+	# 다음 타의 뜸까지 포함한 쿨다운 — 함수 주석의 "정직한 빠른 클릭" 논거가 이 한 줄에 걸려 있다.
+	return CombatMath.combo_gap_s(job, _weapon_override, (_combo_index + 1) % n, _haste())
 
 
 # 스윙 취소 — 🔴 **구르기가 선딜·스윕·후딜 어디서든 스윙을 끊는다.**
@@ -1366,6 +1501,10 @@ func _cancel_swing() -> void:
 	_swing_onset_pending = false
 	_swing_fx_armed = false
 	_swing_bite_left = 0.0
+	# 🔴 돌진도 같이 끊는다 — 구르기가 스윙을 취소하는데 몸이 계속 앞으로 밀리면 구르기 방향과 싸운다.
+	#   ⚠ `_swing_hit_armed = false`만으로도 `_local_move`의 대시 조건이 꺼지지만, 여기서 명시로 0을
+	#     넣어 **다음 스윙이 이 값을 물려받지 않게** 한다(플래그 하나에 두 하중을 걸지 않는다).
+	_dash_speed = 0.0
 	_motion_off = 0.0
 	_motion_lunge = 0.0
 	# 이미 그려진 부분 궤적은 지우지 말고 흩어지게 둔다(뚝 끊기면 화면이 튄다).
@@ -1387,7 +1526,15 @@ func _resolve_swing_hit() -> void:
 	# ⚠ 좌표는 **지금(스윕 완료 시점)의 것**이다 — 선딜 동안 나도 적도 움직였으므로 클릭 시점 좌표를
 	#   쓰면 화면과 어긋난다. 호스트가 보는 상대적 낡음은 그대로다(요청 송신 시점 기준이라 불변).
 	var reach_dist := CombatMath.effective_attack_range(job, trait_value("reach"), _weapon_override)
-	var half_arc := CombatMath.melee_half_angle(_weapon_override)
+	# 🔴 **판정 각도 콤보를 본다**(v2.2) — 마무리 타면 `EquipDef.combo_finish_arc`로 넓어진다.
+	#   ⚠ `_swing_is_finish`는 `_begin_swing`이 굳힌 값이라 **표시 각과 같은 판단**이다: 표시는 여기에
+	#     `COMBO_FINISH_SHOW_MARGIN`을 더한 값이므로 「표시 ⊇ 판정」이 구조로 유지된다.
+	#   🔴 **로컬이 호스트보다 엄격하면 안 된다**(§3) — 로컬 탈락은 `attack_hit` 미emit = G_HIT_REQ
+	#     미송신이라 타격이 호스트 검증 **이전에** 사라진다. 호스트는 `min(주장, 자기 계수)`를 쓰므로
+	#     확정 타수 ≤ 여기 주장 타수인데, 그것이 "호스트 각 ≤ 로컬 각"으로 넘어가려면
+	#     **`combo_finish_arc ≥ swing_arc`** 가 필요하다(마무리를 더 좁게 적으면 부호가 뒤집힌다).
+	#     데이터가 그것을 만족하는지는 `test_combat_math_auto`의 「★마무리 각 전수」가 전수로 지킨다.
+	var half_arc := CombatMath.melee_half_angle(_weapon_override, _swing_is_finish)
 	var facing := dir.angle()
 	var center := global_position + CombatMath.attack_center_offset(dir, job, trait_value("reach"),
 		_weapon_override)
@@ -1561,8 +1708,10 @@ func net_anchor_lead(one_way_ms: float) -> Vector2:
 	return CombatMath.extrapolate(_remote_target, _remote_vel, lead_s)
 
 
-# 원격 플레이어의 공격 연출 (stage가 G_ATK 수신 시 호출) — 표시 전용, 판정 아님.
-# combo = G_ATK "cb"(그 피어의 콤보 타수) — 궤적만 정하므로 조작돼도 화면이 달라질 뿐이다(clamp는 _begin_swing).
+# 원격 플레이어의 공격 연출 (peer_sync가 G_ATK 수신 시 호출) — **연출은** 표시 전용, 판정 아님.
+# combo = G_ATK "cb"(그 피어의 콤보 타수). 🔴 **v2.2부터 그 타수 자체는 판정 입력이다** — 다만 판정은
+#   호스트(`combat_authority`)가 자기 G_ATK 수신 간격으로 따로 세고 주장을 `min` 상한으로만 쓰므로,
+#   여기서 그리는 것은 여전히 "주장 그대로"이고 갈라짐은 항상 **표시 ⊇ 판정** 쪽으로만 떨어진다(§3).
 func play_attack_fx(dir: Vector2, combo: int = 0) -> void:
 	if not _alive or not _is_armed():
 		return  # 사망자·무장 해제 피어의 G_ATK로 FX가 뜨는 것 차단 (그 피어 무기 = set_weapon_visual 반영)
@@ -1588,6 +1737,14 @@ func play_attack_fx(dir: Vector2, combo: int = 0) -> void:
 	var gate_ms := 0
 	if job != null:  # 그 피어의 직업·공지 haste 기준 (원격 인스턴스가 자기 값을 들고 있다)
 		gate_ms = int(CombatMath.melee_fx_gate_s(job, _haste()) * 1000.0)
+	# 🔴🔴 **타수 갱신은 스팸 게이트 *밖*이다** (v2.2). 호스트는 G_ATK를 **하나도 안 떨구고** 세는데
+	#   여기서 게이트가 한 통을 삼키면 원격 표시 타수가 그만큼 밀려 **화면 타수 ≠ 판정 타수**가 된다
+	#   (마무리 타가 상대 화면에서 평타로 보이거나 그 반대 — 둘 다 「표시 = 판정」 계약 위반이다).
+	# ⚠ 게이트의 목적(애니 영구 잠금·진행 중 궤적 방향 갈아엎기 차단)은 안 해친다 — 인덱스 대입은
+	#   애니를 재시작하지도, `_swing_from`/`_swing_dir`을 건드리지도 않는다. 그것들은 게이트 안에 남는다.
+	# ⚠ 범위 밖 주장은 여기서 clamp한다(`_begin_swing`이 하던 것과 같은 값) — 게이트가 삼킨 통의
+	#   주장도 오염되지 않게.
+	_combo_index = clampi(combo, 0, _combo_len() - 1)
 	if now_ms - _last_atk_fx_msec >= gate_ms:
 		_last_atk_fx_msec = now_ms
 		# 재수신 무시 — G_ATK 스팸으로 애니를 영구 attack으로 잠그거나 진행 중인 궤적의 방향을
@@ -1598,7 +1755,7 @@ func play_attack_fx(dir: Vector2, combo: int = 0) -> void:
 		# ⚠ 원격도 **같은 선딜·스윕 비율**을 지나므로(그 피어의 무기 데이터) 두 화면의 타이밍이
 		#   자동으로 맞는다. 소리·파형은 `_tick_swing_motion`의 스윕 시작 지점에서 난다.
 		_swing_dir = dir  # 원격도 이 한 방향으로 무기·궤적을 그린다(로컬의 클릭 고정과 미러)
-		_begin_swing(combo)  # 그 피어의 무기 스윙 창 + 같은 콤보 궤적
+		_begin_swing(_combo_index)  # 그 피어의 무기 스윙 창 + 같은 콤보 궤적 (위에서 이미 clamp됐다)
 		_arm_swing_trail()
 
 

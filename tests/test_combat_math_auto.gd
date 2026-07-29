@@ -778,6 +778,197 @@ func _initialize() -> void:
 		if CombatMath.combo_range_mult_at(flipped, ci3) < CombatMath.combo_range_mult_at(flipped, ci3 - 1):
 			flip_caught = true
 	failures += _check(flip_caught, "★비감소 검사의 검출력: 뒤집힌 배열([2,1,1])을 실제로 잡는다")
+	# 🔴 **데미지 축의 검출력도 따로 본다** — 위 전수는 두 축을 같이 훑지만 검출력 확인은 사거리 축만
+	#   썼다. v2.2에서 **근접이 데미지 축만 채우므로**(사거리 배율 금지, 아래 ⑴) 이 축이 안 돌면
+	#   "뒤집힌 근접 배열"이 통째로 새어 나간다 — 그때 `min` 규약이 판정 > 표시를 만든다.
+	var flipped_dmg := EquipDef.new()
+	flipped_dmg.combo_damage_mult = PackedFloat32Array([2.0, 1.0])
+	var flip_dmg_caught := false
+	for ci6: int in range(1, CombatMath.combo_len(flipped_dmg)):
+		if CombatMath.combo_damage_mult_at(flipped_dmg, ci6) \
+				< CombatMath.combo_damage_mult_at(flipped_dmg, ci6 - 1):
+			flip_dmg_caught = true
+	failures += _check(flip_dmg_caught, "★비감소 검사의 검출력(데미지 축): 뒤집힌 배열([2,1])을 실제로 잡는다")
+
+	# ══ 🔴 스윙 방향 패리티 (v2.2) — 옛 `index == 1` 규칙과 갈리는 곳은 **index 3 하나뿐**이다 ══
+	# 옛 규칙(절대 위치)과 새 규칙(패리티)의 진리값: 0 → 둘 다 정방향 · 1 → 둘 다 반전 · 2 → 둘 다 정방향 ·
+	#   **3 → 옛 정방향 / 새 반전.** 즉 **창(4타)의 마지막 타만이 판별자**이고, 2타·3타 무기로는 이 회귀를
+	#   영원히 못 잡는다. 이 단정이 없으면 규칙을 되돌리는 뮤테이션에서 스위트가 **9/9 초록**이다(실측).
+	# ⚠ 그래서 이 술어는 `player.gd`가 아니라 `CombatMath`에 산다 — 씬 글루는 `-s` preload가 안 돼
+	#   테스트가 겨눌 수 없다(리뷰 J-1·J-2와 같은 처방).
+	failures += _check(not CombatMath.is_combo_swing_reversed(0), "패리티: 0타 = 정방향")
+	failures += _check(CombatMath.is_combo_swing_reversed(1), "패리티: 1타 = 반전")
+	failures += _check(not CombatMath.is_combo_swing_reversed(2), "패리티: 2타 = 정방향")
+	failures += _check(CombatMath.is_combo_swing_reversed(3),
+		"★패리티 유일 판별자: 3타 = 반전 (옛 `index == 1` 규칙이면 정방향이 되어 창 4타 중 둘이 같은 궤적)")
+
+	# ══ 🔴 근접 콤보 데이터 전수 (v2.2 2026-07-29) — 넷 다 **에러 없이 조용히 깨지는** 부류다 ══
+	# ✅ **예산은 이제 코드가 쥔다 — `CombatMath.COMBO_CYCLE_DPS_MAX`** (2026-07-29 리드 반영).
+	#   전엔 GDD §6의 1.3을 여기 **복제**했고, 그러면 예산을 고칠 때 문서와 테스트가 갈라진다
+	#   (하네스의 지배 고장 모드). 이제 숫자는 한 곳에만 산다 — 이 줄에 상수를 다시 쓰지 마라.
+	var COMBO_DPS_BUDGET := CombatMath.COMBO_CYCLE_DPS_MAX
+	var melee_has_range := ""     # ⑴ 근접에 combo_range_mult가 실렸는가
+	var combo_raw_ok := true      # ⑵ 타별 배율이 조용히 clamp되지 않았는가(= 함수가 데이터를 실제로 읽는가)
+	var finish_show_ok := true    # ⑶ 마무리 타: 판정 반각 < 표시 반각
+	var finish_wider_ok := true   #    + 마무리 각 ≥ 기본 각 (로컬 ≤ 호스트가 성립하는 조건)
+	var finish_clamp_ok := true   #    + 적은 마무리 각이 그대로 쓰이는가 (clamped == raw)
+	var dps_bad := ""             # ⑷ 사이클 DPS 비 ≤ 예산
+	var dps_worst := 0.0
+	var dps_worst_id := ""
+	var dash_worst_ratio := 0.0   # ⑸ 대시 속도 ÷ 원격 위치 clamp 하한 (netreview I-1)
+	var dash_worst_id := ""
+	var melee_combo_seen := 0
+	var combo_scanned := 0
+	for cf: String in DirAccess.get_files_at("res://data/equipment"):
+		var cbase := cf.trim_suffix(".remap")
+		if cbase.get_extension() != "tres":
+			continue
+		var cw := load("res://data/equipment/%s" % cbase) as EquipDef
+		if cw == null or cw.slot() != EquipDef.SLOT_WEAPON:
+			continue
+		combo_scanned += 1
+		# ⑵ 🔴 **`combo_damage_mult_at`이 데이터를 실제로 읽는가 + 조용히 clamp되지 않았는가.**
+		#    ⓐ 이 함수를 상수 1.0으로 못 박는 뮤테이션은 다른 어떤 단정도 못 잡는다(아래 DPS 비는
+		#      1.0 밑으로 내려가 예산을 통과하고, 비감소도 통과한다) — 여기가 유일한 표적이다.
+		#    ⓑ `MAX_COMBO_MULT` 초과값(4.5)은 clamp가 **조용히** 4.0으로 떨구므로, 적은 값이 안 쓰인
+		#      것을 아무도 모른다. 상한을 복제하지 않고 `clamped == raw`로 본다(J-1 관용구).
+		for ri: int in range(cw.combo_damage_mult.size()):
+			if not is_equal_approx(CombatMath.combo_damage_mult_at(cw, ri),
+					cw.combo_damage_mult[ri]):
+				combo_raw_ok = false
+		if not CombatMath.is_projectile_weapon(cw):
+			melee_combo_seen += 1
+			# ⑴ 🔴 **근접은 `combo_range_mult`를 쓰지 않는다.** 근접 사거리는 `effective_attack_range`가
+			#    정하고 그 함수엔 콤보 인자가 **아예 없다**. 그런데 `combo_len`이 세 배열의 **최대 크기**라,
+			#    실수로 적으면 **사거리는 안 바뀌고 타수와 마무리 타 위치만 조용히 옮겨간다**(도끼가
+			#    3타가 되고 마무리가 2타째에서 사라진다). `MAX_MELEE_RANGE`·「폴백 창」 트립와이어
+			#    **어느 것도 이 축을 안 본다.**
+			#    ⚠ 근접의 기준은 `is_projectile_weapon`의 부정이다(호스트 근접 거부 게이트와 **같은
+			#      함수**) — `motion_type == "swing"`으로 좁히면 찌르기(창)가 말없이 빠진다.
+			if cw.combo_range_mult.size() > 0:
+				melee_has_range += "%s " % cw.id
+			# ⑸ 🔴 **대시 속도 ≤ 원격 위치 clamp 하한** (netreview I-1). 넘으면 정당한 대시가 원격에서
+			#    깎여 외삽이 과소평가되고 **"피했는데 맞았다"가 부분 재발**한다(2026-07-24에 고친 버그).
+			#    유도는 `MAX_COMBO_DASH` 주석이 정본이고, 이 단정은 **그 유도의 입력이 바뀌는 것**을 잡는다:
+			#    `LEVEL_STAT_MAX["haste"]` 상향 · `ROLL_SPEED_MULT` 하향 · `move_speed`가 더 낮은 직업이
+			#    대시 무기 착용 · 구간(`swing_time × (windup+strike)`)이 더 짧은 대시 무기 추가 — 넷 다
+			#    코드·데이터 변경이라 여기서 빨개진다. 상한 숫자를 복제하지 않고 **비율로** 잰다(J-1 관용구).
+			#    ⚠ 분모가 `effective_roll_speed(..., 0.0)`인 것은 **특성 0인 최악**이 clamp 하한이기 때문이다
+			#      (`roll_dist`가 붙으면 상한이 올라가 여유가 늘어난다 — 관대한 쪽으로 틀리는 것이 안전하다).
+			var dash_px := CombatMath.combo_dash_dist(cw)
+			if dash_px > 0.0:
+				var dj := load("res://data/jobs/%s.tres" % cw.job_id) as JobDef
+				if dj != null:
+					var dph := CombatMath.motion_phases(cw)
+					var t_min: float = cw.swing_time * (dph.x + dph.y) \
+						* CombatMath.haste_scale(float(CombatMath.LEVEL_STAT_MAX.get("haste", 0.0)))
+					var dratio := (dash_px / maxf(t_min, 0.0001)) \
+						/ maxf(CombatMath.effective_roll_speed(dj.move_speed, 0.0), 0.0001)
+					if dratio > dash_worst_ratio:
+						dash_worst_ratio = dratio
+						dash_worst_id = cw.id
+			# ⑶ 🔴 **마무리 타의 판정 각 < 표시 각** — 표시 = 판정이 되면 *"판정 안인데 궤적이 안 지나간
+			#    자리"* 를 눈으로 검사할 수단이 사라지고, 그것이 궤적 결손(TUNING §13 A-2)의 **유일한
+			#    관측 경로**다. 여유는 `COMBO_FINISH_SHOW_MARGIN`이 코드로 쥐므로 부호가 구조로 고정되지만,
+			#    `swing_arc`가 포화(≥ PI−EPS)면 넓힐 곳이 없어 등호가 되어 그 경로가 죽는다 → 여기서 잡는다.
+			if CombatMath.melee_show_half_angle(cw, true) <= CombatMath.melee_half_angle(cw, true):
+				finish_show_ok = false
+			# 🔴 **마무리 각 ≥ 기본 각** — 「로컬 ≤ 호스트」가 콤보 축으로 넘어가는 **필요조건**이다.
+			#    호스트는 `min(주장, 자기 계수)`라 확정 타수 ≤ 로컬 주장 타수인데, 마무리를 기본보다
+			#    ⚠ **논거를 2026-07-29에 정정했다 — 전엔 부호를 거꾸로 적어 뒀다**(netreview C-1).
+			#    사실관계: `finish < base`면 로컬(마무리·좁음) ⊆ 호스트(평타·넓음)라 **안전**하고,
+			#    `finish ≥ base`가 오히려 그 부호를 깬다 — 그래서 C-1은 각을 **주장 타수**로 정렬해
+			#    닫았다(`combat_authority`의 `_melee_claim`). 즉 이 단정이 지키는 것은 「로컬 ≤ 호스트」가
+			#    아니라 **기획 요구**(GDD §6: 마무리는 더 넓게 친다)이고, 어기면 광역이 조용히 사라진다.
+			#    ⚠ 옛 논거를 근거로 이 부등호를 **뒤집지 마라** — 뒤집으면 마무리가 평타보다 좁아진다.
+			if CombatMath.melee_half_angle(cw, true) < CombatMath.melee_half_angle(cw, false) - 0.000001:
+				finish_wider_ok = false
+			# 🔴 **적은 마무리 각이 그대로 쓰이는가**(clamped == raw). 상한
+			#    (`MELEE_FULL_ARC − EPS − MARGIN` = 2.98)을 넘겨 적으면 **조용히 절삭**된다.
+			if cw.combo_finish_arc > 0.0 \
+					and not is_equal_approx(CombatMath.melee_half_angle(cw, true), cw.combo_finish_arc):
+				finish_clamp_ok = false
+		# ⑷ 🔴 **사이클 DPS 비 ≤ 예산** — GDD §6을 코드가 지킨다. 한 사이클(전 타수)을 돌리는 데 드는
+		#    시간과 그동안의 데미지를 "콤보 없이 1타만 반복"과 비교한다:
+		#      사이클 = Σ(쿨다운 + 뜸[i]) · 데미지 = Σ 배율[i] · 비 = (Σ데미지 ÷ 사이클) ÷ (1 ÷ 쿨다운)
+		#    ⚠ **haste 불변이다** — 사이클과 기준선에 `haste_scale`이 똑같이 곱해져 약분된다(§3 haste
+		#      계약이 뜸에도 같은 배율을 곱하는 덕이다). 그래서 haste 전수를 돌리지 않는다.
+		#    ⚠ 단위 혼동 주의(GDD §6 🔴): 도끼의 **타별** 배율 2.2는 이 1.3과 비교할 값이 아니다
+		#      (한 사이클로 환산하면 1.219다).
+		if CombatMath.combo_len(cw) <= 1:
+			continue
+		for jf9: String in DirAccess.get_files_at("res://data/jobs"):
+			var jbase9 := jf9.trim_suffix(".remap")
+			if jbase9.get_extension() != "tres":
+				continue
+			var j9 := load("res://data/jobs/%s" % jbase9) as JobDef
+			if j9 == null or j9.attack_cooldown <= 0.0:
+				continue
+			if not cw.job_id.is_empty() and cw.job_id != j9.id:
+				continue  # 직업 귀속 — 실제로 착용 가능한 조합만 (스윙 창 전수와 같은 규약)
+			var cyc_dmg := 0.0
+			var cyc_time := 0.0
+			for ki: int in range(CombatMath.combo_len(cw)):
+				cyc_dmg += CombatMath.combo_damage_mult_at(cw, ki)
+				cyc_time += j9.attack_cooldown + CombatMath.combo_delay_at(cw, ki)
+			var ratio := (cyc_dmg / cyc_time) * j9.attack_cooldown
+			if ratio > dps_worst:
+				dps_worst = ratio
+				dps_worst_id = "%s@%s" % [cw.id, j9.id]
+			if ratio > COMBO_DPS_BUDGET:
+				dps_bad += "%s@%s(%.3f) " % [cw.id, j9.id, ratio]
+	failures += _check(combo_scanned > 0 and melee_combo_seen > 0,
+		"근접 콤보 전수: 무기가 실제로 스캔됐다 (전체 %d · 근접 %d — 0건 = 침묵 통과)"
+			% [combo_scanned, melee_combo_seen])
+	failures += _check(melee_has_range.is_empty(),
+		"★근접 콤보 전수 ⑴: 근접 무기에 combo_range_mult 없음 — 실리면 사거리는 그대로인데 타수만 옮겨간다 (위반: %s)"
+			% ("없음" if melee_has_range.is_empty() else melee_has_range))
+	failures += _check(dash_worst_ratio <= 1.0,
+		"★대시 속도 전수: 최대 haste에서도 원격 위치 clamp 하한 이내 (최악 %s = %.1f%%)"
+			% ["없음" if dash_worst_id.is_empty() else dash_worst_id, dash_worst_ratio * 100.0])
+	failures += _check(combo_raw_ok,
+		"★근접 콤보 전수 ⑵: combo_damage_mult_at == .tres 원본 전수 (조용한 clamp·상수화 검출)")
+	failures += _check(finish_show_ok and finish_wider_ok and finish_clamp_ok,
+		"★마무리 각 전수 ⑶: 판정 < 표시 · 마무리 ≥ 기본(로컬≤호스트) · 적은 각이 절삭 안 됨")
+	failures += _check(dps_bad.is_empty(),
+		"★콤보 예산 전수 ⑷: 사이클 DPS 비 ≤ %.2f (GDD §6) — 최대 %s = %.3f (위반: %s)"
+			% [COMBO_DPS_BUDGET, dps_worst_id, dps_worst,
+				"없음" if dps_bad.is_empty() else dps_bad])
+	# ★검출력 — 위 넷은 현 데이터가 통과라 "루프가 실제로 도는가"를 못 보여준다. 합성으로 확인한다.
+	var over_arc := EquipDef.new()
+	over_arc.swing_arc = 2.8
+	over_arc.combo_finish_arc = 10.0  # 상한(2.98)을 훨씬 넘겨 적었다 = 조용한 절삭 대상
+	var arc_cap := CombatMath.MELEE_FULL_ARC - CombatMath.MELEE_FULL_ARC_EPS \
+		- CombatMath.COMBO_FINISH_SHOW_MARGIN
+	failures += _check(is_equal_approx(CombatMath.melee_half_angle(over_arc, true), arc_cap),
+		"★마무리 각 검출력: 상한 초과(10.0) → clamp — 🔴 clamp를 지우는 뮤테이션이 여기서 잡힌다")
+	# 🔴 **상한 초과 데이터에서도 판정은 전방위가 되지 않는다** — 이게 절대값 계약의 핵심이다(옛 균일
+	#   배율 1.25는 도끼 문턱 1.122를 넘어 마무리 타마다 "등 뒤도 맞는다"를 되살렸다).
+	#   ⚠ 표시는 그 상한에서 정확히 `PI − EPS`에 **닿는다**(= span 2π − 0.02, 궤적이 한 바퀴를 안 넘는
+	#     최대치). 판정에서 여유를 **미리 뺀** 이유가 그것이라, 여기는 `<`가 아니라 `<=`가 계약이다.
+	failures += _check(CombatMath.melee_half_angle(over_arc, true)
+			< CombatMath.MELEE_FULL_ARC - CombatMath.MELEE_FULL_ARC_EPS
+			and CombatMath.melee_show_half_angle(over_arc, true)
+			<= CombatMath.MELEE_FULL_ARC - CombatMath.MELEE_FULL_ARC_EPS + 0.000001,
+		"★마무리 각 검출력: 판정은 전방위 문턱 밖 · 표시는 문턱까지만 — 여유 자리가 남는다")
+	failures += _check(not is_equal_approx(
+			CombatMath.melee_half_angle(over_arc, true), over_arc.combo_finish_arc),
+		"★마무리 각 검출력: 위 ⑶의 `clamped == raw`가 절삭된 데이터를 실제로 잡는다")
+	var fat_combo := EquipDef.new()
+	fat_combo.combo_damage_mult = PackedFloat32Array([1.0, 1.0, 4.0])  # 뜸 없이 4배 = 예산 밖
+	var fat_dmg := 0.0
+	var fat_time := 0.0
+	for fi: int in range(CombatMath.combo_len(fat_combo)):
+		fat_dmg += CombatMath.combo_damage_mult_at(fat_combo, fi)
+		fat_time += 0.4 + CombatMath.combo_delay_at(fat_combo, fi)
+	failures += _check((fat_dmg / fat_time) * 0.4 > COMBO_DPS_BUDGET,
+		"★콤보 예산 검출력: 뜸 없는 4배 마무리(비 %.2f)는 예산 밖으로 잡힌다" % ((fat_dmg / fat_time) * 0.4))
+	var bad_range := EquipDef.new()
+	bad_range.motion_type = "thrust"
+	bad_range.combo_range_mult = PackedFloat32Array([1.0, 2.0])
+	failures += _check(not CombatMath.is_projectile_weapon(bad_range)
+			and bad_range.combo_range_mult.size() > 0,
+		"★근접 사거리 배율 검출력: 찌르기 + combo_range_mult 조합이 ⑴의 조건에 실제로 걸린다")
 
 	# --- 발사형 판정 (호스트 G_SHOOT 신뢰 경계, 2026-07-27 netreview M4) ---
 	# 🔴 근접 무기가 이 경로에 새면 `arrow_range` 기본값 360짜리 권한 화살이 전사 공격력으로 확정된다.

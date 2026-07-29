@@ -260,8 +260,12 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 		NetSchema.G_ATK:
 			if _players.has(from_id):
 				var dir := Vector2(float(data.get("dx", 1.0)), float(data.get("dy", 0.0)))
-				# "cb" = 콤보 타수(표시 전용 — 궤적 방향/크기만 정한다). 없으면 0 = 도입 전과 같은 첫 타 궤적.
-				# 범위 밖 값은 play_attack_fx → _begin_swing이 clamp하므로 여기선 정수화만 한다.
+				# "cb" = 그 피어의 콤보 타수. 🔴 **v2.2(2026-07-29)부터 표시 전용이 아니다** — 같은 타수가
+				# 호스트에서 데미지 배율·마무리 각을 고른다(`combat_authority`의 G_ATK 분기가 **자기 수신
+				# 간격으로 따로 센다** — 여기서 넘기는 값은 판정에 안 쓰인다).
+				# ⚠ 그래서 이 경로는 여전히 "주장 그대로 그리기"이고, 그것이 계약이다: 호스트가
+				# `min(주장, 자기 계수)`를 쓰므로 갈라짐이 항상 **표시 ⊇ 판정** 쪽으로만 떨어진다(§3).
+				# 없으면 0 = 도입 전과 같은 첫 타 궤적. 범위 밖 값은 play_attack_fx가 clamp한다.
 				_players[from_id].play_attack_fx(
 					dir.normalized() if dir.length() > 0.001 else Vector2.RIGHT, int(data.get("cb", 0)))
 		NetSchema.G_SHOOT:

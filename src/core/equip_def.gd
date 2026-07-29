@@ -96,6 +96,49 @@ const SLOT_ARMOR := 1
 @export var combo_damage_mult: PackedFloat32Array = PackedFloat32Array()  # 타별 데미지 배율 — confirm_damage 안에서 곱해진다(반올림 1회, §3)
 @export var combo_delay: PackedFloat32Array = PackedFloat32Array()        # 그 타 **직전**의 추가 뜸(s). 쿨다운에 더해진다(haste로 같이 짧아짐)
 
+# --- 근접 콤보 (v2.2, 2026-07-29) — 위 세 배열을 근접에도 켜면서 딸려온 것 ---
+#
+# 🔴 **근접은 `combo_range_mult`를 쓰지 않는다 — 비워 둬라.** 근접 사거리는
+#   `effective_attack_range`가 정하고 그 함수엔 콤보 인자가 **아예 없다**. 그런데
+#   `CombatMath.combo_len`은 세 배열의 **최대 크기**라, 근접 `.tres`에 이 배열을 적으면
+#   **사거리는 안 바뀌고 타수와 마무리 타 위치만 조용히 옮겨간다.** 근접에서 사거리를 타수로
+#   늘리는 것 자체가 금지다(`MAX_MELEE_RANGE` 130 · 「폴백 창 불변식」 여유 4px).
+#   `test_combat_math_auto`가 `motion_type` ∈ {"", swing, thrust}에 대해 전수로 막는다.
+#
+# 콤보가 다음 타로 **이어지는** 여유(s). 0 = `CombatMath.COMBO_GRACE_S` 기본(0.8 = 활).
+# 🔴 **왜 데이터인가:** 활과 근접이 같은 창을 쓸 이유가 없다 — 활은 클릭 1회 = 1발이라 조준하거나
+#   굴렀다가 쏘는 페이스(0.7s+)를 수용해야 「쭉」이 나오고(0.45 → 0.8로 되돌린 이력), 근접은 촘촘히
+#   이어 치는 리듬 자체가 재미다. 상수 하나를 둘이 다투면 한쪽을 고칠 때 다른 쪽이 조용히 망가진다.
+# ⚠ 근접 도입 전 창은 `player.gd`의 `_swing_time + COMBO_WINDOW(0.55)` = **0.79~0.91s**였다
+#   (무기별). 근접에 0.4를 적으면 `(cd + 뜸) × haste_scale + 0.4` = 0.80~1.05s로 그와 비슷해진다.
+@export var combo_grace: float = 0.0
+# 마무리 타의 **판정** 반각(rad). 0 = `swing_arc` 그대로 = **도입 전과 완전 항등**.
+# 🔴 **배율이 아니라 절대값인 것이 계약이다** (v2.2). 포화 문턱이 `π ÷ swing_arc`라 무기마다 다르고,
+#   균일 배율(옛 `COMBO_FINISH_ARC` 1.25)을 쓰면 **넓은 무기만 전방위가 되어 무기 구별이 사라진다** —
+#   실측 문턱: 도끼 **1.122** · 철 대검 1.309 · 낡은 대검 1.653. 도끼는 1.25에서 이미 3.5rad =
+#   전방위였고, 그러면 07-28에 없앤 "등 뒤도 맞는다"가 마무리 타마다 복귀한다.
+# 🔴 **표시는 이 값보다 `CombatMath.COMBO_FINISH_SHOW_MARGIN`만큼 넓다 — 여유를 데이터에 맡기지
+#   않는다.** 표시 = 판정이 되면 *"판정 안인데 궤적이 안 지나간 자리"* 를 눈으로 검사할 수단이
+#   사라지고, 그것이 궤적 결손 결함의 **유일한 관측 경로**다(`docs/TUNING.md` §13 A-2).
+# ⚠ 상한은 `melee_half_angle`이 `MELEE_FULL_ARC − EPS − MARGIN`으로 자른다 — **표시가 포화하지
+#   않도록** 판정 쪽을 먼저 좁히는 것이라, 이 값을 크게 적으면 조용히 절삭된다(전수 트립와이어가 잡는다).
+@export var combo_finish_arc: float = 0.0
+# 마무리 타에 **몸이 앞으로 나가는** 거리(px). 0 = 없음 = 도입 전과 항등. (창 = 돌진 찌르기)
+# 🔴 **`swing_lunge`와 전혀 다른 것이다.** 그쪽은 무기 스프라이트 위치와 리본 선단만 정한다
+#   (`_motion_lunge` 소비처 2곳 — `velocity`/`position`에 들어가는 곳이 **0곳**이다). 이 필드는
+#   진짜 이동이라 **지연 보상의 입력**이 된다.
+# 🔴 **`velocity`를 통해 움직여야 한다 — `position` 직접 대입 금지.** 대입하면 G_POS의 `vx/vy`가
+#   0이라 호스트의 lead 외삽이 그 변위를 **원리적으로 못 덮고**, 그러면 마무리 타가 게스트에서
+#   통째로 무음 거부된다(각 오차 = `asin(변위 ÷ 도달)`이 반각을 넘는다).
+# 🔴 **대시는 「선딜 시작 → 판정」 전 구간에 걸친다 — 스윕에만 몰지 마라.** 두 가지가 동시에 걸린다:
+#   ⑴ 판정 순간까지 velocity가 살아 있어야 lead 외삽이 덮는다(판정 전에 멈추면
+#      `net_anchor_lead == net_anchor`가 되어 오차 = 대시 거리 **전체**가 남는다 = 최악)
+#   ⑵ 구간이 짧으면 속도가 `player._max_move_speed`(전사 260px/s)를 넘어 **원격 clamp가 정당한
+#      대시를 깎는다.** 전 구간(창 0.135s)이면 27px에서 200px/s로 그 안에 든다.
+# ⚠ 상한 = `CombatMath.MAX_COMBO_DASH` — haste 상한에서도 clamp를 안 넘도록 유도된 값이다.
+#   더 크게 하려면 `LAG_MAX_LEAD_DIST`와 clamp 3곳을 함께 재유도해야 한다(`roll_dist` 선례).
+@export var combo_dash: float = 0.0
+
 # 차지 발사 (motion_type="charge" 한정) — 마우스를 눌러 모으고 놓으면 발사, 착탄 지점에서 범위 폭발.
 # 단계별 위력·폭발 반경 배율은 CombatMath.CHARGE_* 공용 상수(§3 단일 소스) — 무기는 "기준값"만 쥔다.
 @export_group("차지")
