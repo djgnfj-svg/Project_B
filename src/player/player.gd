@@ -145,6 +145,7 @@ const IDLE_SWAY_SPEED := 2.6
 const RUN_SWAY_AMP := 0.15      # 이동 중 흔들림 — 걸음에 맞춰 크게
 const RUN_SWAY_SPEED := 7.5
 const STANCE_LERP := 9.0        # 스탠스↔조준 전환 부드러움
+const COMBO_POSE_RETURN_SPEED := 18.0 # 입력이 끊긴 뒤 끝 포즈에서 기본 자세로 돌아오는 속도(rad/s)
 # --- 평타 콤보 (v2.2 2026-07-29 — 연출 전용이었던 것이 판정·화력으로 승격됐다) ---
 # 🔴 **더 이상 연출 전용이 아니다.** 타수·타별 데미지·뜸·마무리 각·돌진이 전부 **무기 데이터**
 #   (`EquipDef.combo_*`)에서 오고 호스트가 G_ATK 간격으로 타수를 직접 센다(GDD §6 「공격 리듬」).
@@ -342,6 +343,12 @@ var _swing_onset_pending: bool = false  # 스윕 시작 이벤트(휘두름 소�
 # 🔴 무기 각과 궤적 진행이 같은 계산에서 나오게 하는 장치다(사본을 만들면 또 갈라진다).
 var _motion_off: float = 0.0
 var _motion_lunge: float = 0.0
+# 콤보 연결 포즈. 공격이 끝난 뒤에도 칼/도끼/창의 끝 자세를 콤보 창 동안 유지해,
+# 다음 타가 기본 자세가 아니라 직전 타의 끝에서 출발하게 한다. 표시 전용이다.
+var _combo_pose_active: bool = false
+var _combo_entry_off: float = 0.0
+var _combo_entry_lunge: float = 0.0
+var _combo_entry_from_previous: bool = false
 # 🔴🔴 **이 스윙이 태어날 때 굳힌 시간 축** (netreview M-1, 2026-07-28).
 #   `t`를 **살아 있는** `_swing_time`/`_swing_windup`에서 구하면 스윙 도중 그 값이 바뀔 때
 #   **판정 시점이 움직인다.** 그리고 판 도중 장비 변경 경로는 **열려 있다** — 내가 "F1뿐"이라고
@@ -660,6 +667,11 @@ func _motion_at(t: float, u: float) -> Vector2:
 	if t < w:
 		# 예비(선딜) — 각을 시작각까지 젖히고, `swing_pull`만큼 뒤로 당긴다(0 = 개편 전과 항등).
 		var a := t / w
+		if _combo_entry_from_previous:
+			# 연계 타는 직전 타격의 끝 포즈에서 출발한다. 특히 창은 뻗은 끝에서
+			# 다음 찌르기의 당김 자세로 이어져, 매 타마다 중립 자세를 거치지 않는다.
+			return Vector2(lerpf(_combo_entry_off, _swing_from, a),
+				lerpf(_combo_entry_lunge, -_swing_pull, a))
 		return Vector2(_swing_from * a, -_swing_pull * a * a)
 	if t < w + s:
 		if thrust:
@@ -667,7 +679,11 @@ func _motion_at(t: float, u: float) -> Vector2:
 			return Vector2(_swing_angle_at(u), lerpf(-_swing_pull, peak, u))
 		# 베기 — 각이 주 모션. 내지르기는 스윕 중간이 최대(들어갔다 나온다).
 		return Vector2(_swing_angle_at(u), peak * sin(u * PI))
-	# 복귀(후딜) — 각은 평상 자세로. 찌르기는 뻗은 창을 잠깐 두었다가 당겨 온다(1-r²: 처음이 느리다).
+	# 콤보 무기는 후딜에 끝 포즈를 유지한다. 입력이 끊겨 콤보 창이 닫힐 때만
+	# `_tick_swing_motion`에서 기본 자세로 복귀한다.
+	if _combo_pose_active:
+		return Vector2(_swing_to, peak if thrust else 0.0)
+	# 단발은 기존 복귀를 유지한다.
 	var r := (t - w - s) / maxf(1.0 - w - s, 0.0001)
 	return Vector2(_swing_to * (1.0 - r), (peak * (1.0 - r * r)) if thrust else 0.0)
 
@@ -930,8 +946,15 @@ func _tick_swing_motion(delta: float) -> void:
 		# 데이터에서 `p >= 1.0`인 프레임이 한 번도 관측되지 않을 수 있다(netreview I-2).
 		# ⚠ 취소·사망은 `_cancel_swing()`이 플래그를 이미 내려서 여기로 새지 않는다.
 		_finalize_swing_sweep(delta)
-		_motion_off = 0.0
-		_motion_lunge = 0.0
+		if _combo_pose_active and _combo_left > 0.0:
+			_motion_off = _swing_to
+			_motion_lunge = (_swing_lunge * _swing_lunge_mult) if _weapon_motion() == "thrust" else 0.0
+		else:
+			# 콤보 입력이 끊긴 경우에만 자연스럽게 기본 자세로 복귀한다.
+			_motion_off = move_toward(_motion_off, 0.0, COMBO_POSE_RETURN_SPEED * delta)
+			_motion_lunge = move_toward(_motion_lunge, 0.0, COMBO_POSE_RETURN_SPEED * delta)
+			if is_zero_approx(_motion_off) and is_zero_approx(_motion_lunge):
+				_combo_pose_active = false
 	# 🔴 **판정은 창과 독립인 카운트다운이다** (netreview I-2) — `p >= 1.0`인 프레임이 관측되는지에
 	#   기대지 않으므로 프레임 격자 의존이 **구조적으로** 없다. 스로틀로 미뤄졌으면 창이 닫힌 뒤에
 	#   나기도 한다(그때도 궤적은 위에서 이미 완성돼 있어 `표시 ⊇ 판정`이 유지된다).
@@ -1040,6 +1063,7 @@ func _update_weapon(delta: float) -> void:
 		return
 	# 모션(선딜→스윕→후딜)은 `_tick_swing_motion`이 **이미 이 프레임에 계산했다** — 여기선 소비만 한다.
 	var swinging := _attack_anim_left > 0.0
+	var combo_holding := not swinging and _combo_pose_active
 	var swing_off := _motion_off
 	var lunge := _motion_lunge
 	# 발사 반동(shoot 무기) — 활을 뒤로 당겼다 복귀. shoot는 _attack_anim_left를 안 켜므로 스윙과 상호 배타.
@@ -1048,12 +1072,12 @@ func _update_weapon(delta: float) -> void:
 	# 🔴 **스윙 중에는 클릭 순간 고정된 방향을 쓴다** — 라이브 조준각이 아니다(멤버 `_swing_dir` 주석).
 	#   전에는 무기만 `_aim_angle`(라이브)을 따라가고 궤적은 클릭 고정이라, 스윙 중 마우스를
 	#   돌리면 **칼과 궤적이 이미 어긋났다**. 선딜이 생기면서 그 창이 길어져 반드시 묶어야 한다.
-	var base_ang := _swing_dir.angle() if swinging else _aim_angle
+	var base_ang := _swing_dir.angle() if swinging or combo_holding else _aim_angle
 	# 좌향 조준 시 뒤집기 — 안 하면 검이 거꾸로(날이 아래) 보인다. 스윙 중엔 고정각 기준(중간 뒤집힘 방지)
 	_weapon.flip_v = absf(wrapf(base_ang, -PI, PI)) > PI / 2.0
 	# 평상시 스탠스 — 무기를 살짝 내려 들고 호흡/걸음에 맞춰 흔든다. 표시 전용이라 발사 원점·판정
 	# 기하는 이 각을 보지 않는다(그쪽은 _aim_dir). 뒤집힌 쪽에선 부호를 반대로 줘야 양쪽 다 "내려 든" 모습.
-	_tick_stance(delta, swinging)
+	_tick_stance(delta, swinging or combo_holding)
 	var ang := base_ang + swing_off + _stance_sway * (-1.0 if _weapon.flip_v else 1.0)
 	_weapon_pivot.rotation = ang
 	_weapon.position = -_weapon_grip + Vector2(_hold_dist + lunge, 0.0)
@@ -1085,8 +1109,11 @@ func _update_weapon(delta: float) -> void:
 #   ⚠ 시작값에서 연속적으로 줄어드므로 스윙 진입 시 점프가 없다(원래 lerp가 지키던 성질 그대로).
 #   ⚠ 판정 쪽에 sway를 더해 맞추는 방향은 **금지다** — 호스트가 흔들림 위상을 알아야 해서 신뢰 경계가
 #     늘고, 궤적만 sway로 돌리면 부채꼴이 통째로 기울어 반대쪽에 "안 보이는데 맞는" 구역이 생긴다(§3).
-func _tick_stance(delta: float, swinging: bool) -> void:
-	if swinging:
+func _tick_stance(delta: float, in_attack_pose: bool) -> void:
+	if in_attack_pose:
+		if _attack_anim_left <= 0.0:
+			_stance_sway = 0.0
+			return
 		# 굳힌 시간 축에서만 파생한다(`_tick_swing_motion`과 같은 근거 — netreview M-1 방어).
 		var t := clampf(1.0 - _attack_anim_left / _swing_win_total, 0.0, 1.0)
 		var w := maxf(_swing_windup_l, 0.0001)
@@ -1362,7 +1389,7 @@ func melee_combo_mult() -> float:
 #   고른다. 스윙 창·쿨다운은 여전히 콤보와 무관하다(§3 미러 계약).
 # 짝수 타 = 좌→우 · 홀수 타 = 우→좌(되돌려 베기) · 마무리 타 = 더 넓게 + 깊이 내지른다.
 # 로컬(입력)과 원격(G_ATK "cb") 공용이라 양쪽 화면이 같은 궤적을 그린다.
-func _begin_swing(combo: int) -> void:
+func _begin_swing(combo: int, chain_from_previous: bool = false) -> void:
 	var n := _combo_len()
 	_combo_index = clampi(combo, 0, n - 1)
 	_swing_is_finish = _is_combo_finish(_combo_index)
@@ -1374,6 +1401,10 @@ func _begin_swing(combo: int) -> void:
 	#   2타(도끼)면 반전 타와 마무리 타가 **한 타에 겹치고**, 4타(창)면 index 0과 2가 같은 방향·크기가
 	#   되어 **두 타가 같은 궤적**이 된다. 패리티면 타수 무관하게 왕복이 유지된다.
 	var reverse := CombatMath.is_combo_swing_reversed(_combo_index)
+	_combo_entry_from_previous = chain_from_previous and _combo_pose_active
+	_combo_entry_off = _motion_off if _combo_entry_from_previous else 0.0
+	_combo_entry_lunge = _motion_lunge if _combo_entry_from_previous else 0.0
+	_combo_pose_active = n > 1
 	_swing_from = arc if reverse else -arc
 	_swing_to = -arc if reverse else arc
 	if _weapon_motion() == "thrust":
@@ -1442,8 +1473,9 @@ func _swing_attack(dir: Vector2) -> float:
 	# 콤보 이어가기 — 창 안이면 다음 타, 아니면 처음부터. 🔴 창은 `CombatMath.combo_window_s`가 정한다
 	#   (로컬·호스트 공용 §3). 옛 `_swing_time + COMBO_WINDOW`는 호스트 창과 최대 160ms 어긋나 있었다.
 	var n := _combo_len()
-	var idx := ((_combo_index + 1) % n) if _combo_left > 0.0 else 0
-	_begin_swing(idx)
+	var continues_combo := _combo_left > 0.0
+	var idx := ((_combo_index + 1) % n) if continues_combo else 0
+	_begin_swing(idx, continues_combo)
 	# 다음 타의 창 — 인덱스는 **그 다음 타**다(그 타의 뜸이 창에 들어간다, `advance_combo` 규약).
 	_combo_left = _combo_window_s((idx + 1) % n)
 	_arm_swing_trail()
@@ -1779,7 +1811,9 @@ func play_attack_fx(dir: Vector2, combo: int = 0) -> void:
 		# ⚠ 원격도 **같은 선딜·스윕 비율**을 지나므로(그 피어의 무기 데이터) 두 화면의 타이밍이
 		#   자동으로 맞는다. 소리·파형은 `_tick_swing_motion`의 스윕 시작 지점에서 난다.
 		_swing_dir = dir  # 원격도 이 한 방향으로 무기·궤적을 그린다(로컬의 클릭 고정과 미러)
-		_begin_swing(_combo_index)  # 그 피어의 무기 스윙 창 + 같은 콤보 궤적 (위에서 이미 clamp됐다)
+		# 연계 여부는 **타수 인덱스**에서 읽는다 — 원격엔 로컬의 `_combo_left` 창이 없고, 호스트가
+		# 센 인덱스가 0보다 크다는 것 자체가 "직전 타에서 이어졌다"는 뜻이다(그 인덱스는 위에서 clamp됐다).
+		_begin_swing(_combo_index, _combo_index > 0)  # 그 피어의 무기 스윙 창 + 같은 콤보 궤적
 		_arm_swing_trail()
 
 
