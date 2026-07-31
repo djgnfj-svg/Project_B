@@ -134,6 +134,7 @@ func _ready() -> void:
 
 func _setup() -> void:
 	HealthComponent.force_damage_one = true   # 테스트 랩 — 모든 데미지 1 (프로덕션 무영향, 정적 플래그)
+	_blank_arena()                            # 보스 전용 빈 아레나 — 무대 바닥/배경 장식("타일") 치우기
 	_boss = get_parent().get_node_or_null("Boss")
 	_coop = get_parent().get_node_or_null("CoopAuthority")
 	if _boss != null:
@@ -163,6 +164,19 @@ func _setup() -> void:
 	EventBus.boss_phase_changed.connect(_on_boss_phase)   # ⑤ 페이즈2 → 환경 오염
 	_setup_boss_hpbar()       # 상단 글리치 보스 HP바
 	_build_panel()
+
+
+# 보스 전용 빈 아레나 — 무대(stage_boss.tscn)가 깔아 둔 바닥/배경 장식 스프라이트("타일")를 치운다.
+# 🔴 이 프로젝트는 Godot TileMap을 안 쓴다 — 바닥·아레나는 z_index 음수 Sprite2D 두 장이다(rules §5 z 배치표).
+#   그래서 "타일 지우기" = 이 노드들을 숨기는 것. **shipped stage_boss.tscn은 손대지 않는다**(챕터1이 그대로 쓴다) —
+#   랩이 붙을 때 런타임으로만 숨겨 프로덕션 무접촉을 지킨다(TestMode 게이트 · rules §2 "손맛/랩은 표시 전용").
+# ⚠ 이름으로 찾는다 — stage_boss.tscn의 Ground/BossArena와 미러다(그 씬 노드명을 바꾸면 여기도 바꾼다).
+const ARENA_DECO_NODES: Array[String] = ["Ground", "BossArena"]
+func _blank_arena() -> void:
+	for deco_name: String in ARENA_DECO_NODES:
+		var deco := get_parent().get_node_or_null(deco_name) as CanvasItem
+		if deco != null:
+			deco.visible = false
 
 
 # ③ 공기 채우기 — 3겹: ⑴ 부유 모트(공간감) ⑵ 표류 코드 조각(데이터 질감) ⑶ 데이터 레인(세로 흐름).

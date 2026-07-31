@@ -1,8 +1,8 @@
 [gd_scene load_steps=18 format=3]
 
 [ext_resource type="Script" path="res://src/stage/stage.gd" id="1"]
-[ext_resource type="Texture2D" path="res://assets/sprites/stage/sanctum_ground.png" id="2"]
-[ext_resource type="Texture2D" path="res://assets/sprites/stage/sanctum_arena.png" id="14"]
+[ext_resource type="Texture2D" path="res://assets/sprites/stage/meadow_ground.png" id="2"]
+[ext_resource type="Texture2D" path="res://assets/sprites/stage/meadow_arena.png" id="14"]
 [ext_resource type="PackedScene" path="res://src/enemies/boss.tscn" id="3"]
 [ext_resource type="Resource" path="res://data/enemies/wraith_boss.tres" id="4"]
 [ext_resource type="Script" path="res://src/net/peer_sync.gd" id="5"]
@@ -10,13 +10,13 @@
 [ext_resource type="Script" path="res://src/stage/mob_sync.gd" id="7"]
 [ext_resource type="Script" path="res://src/net/scene_flow.gd" id="8"]
 [ext_resource type="Script" path="res://src/stage/chapter_flow.gd" id="9"]
-[ext_resource type="Script" path="res://src/stage/coop_authority.gd" id="15"]
 [ext_resource type="PackedScene" path="res://src/hud/stage_hud.tscn" id="10"]
 [ext_resource type="Script" path="res://src/stage/drop_authority.gd" id="11"]
 [ext_resource type="Script" path="res://src/stage/drop_field.gd" id="12"]
-[ext_resource type="Script" path="res://src/stage/swamp_field.gd" id="13"]
 [ext_resource type="Script" path="res://src/stage/arrow_field.gd" id="17"]
 [ext_resource type="Script" path="res://src/stage/exp_authority.gd" id="16"]
+[ext_resource type="Script" path="res://src/stage/rock_field.gd" id="18"]
+[ext_resource type="Script" path="res://src/stage/coop_authority.gd" id="19"]
 
 [node name="Stage" type="Node2D"]
 script = ExtResource("1")
@@ -62,9 +62,6 @@ peer_sync_path = NodePath("../PeerSync")
 [node name="MobSync" type="Node" parent="."]
 script = ExtResource("7")
 
-[node name="SwampField" type="Node" parent="."]
-script = ExtResource("13")
-
 [node name="SceneFlow" type="Node" parent="."]
 script = ExtResource("8")
 
@@ -72,11 +69,15 @@ script = ExtResource("8")
 script = ExtResource("9")
 scene_flow_path = NodePath("../SceneFlow")
 
-[node name="CoopAuthority" type="Node" parent="."]
-script = ExtResource("15")
-boss_eid = "boss1"
-
 [node name="HUD" parent="." instance=ExtResource("10")]
 
 [node name="ExpAuthority" type="Node" parent="."]
 script = ExtResource("16")
+
+[node name="RockField" type="Node" parent="."]
+script = ExtResource("18")
+
+[node name="CoopAuthority" type="Node" parent="."]
+script = ExtResource("19")
+boss_eid = "boss1"
+stele_only = true

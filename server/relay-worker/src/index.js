@@ -26,6 +26,7 @@ const G_SHOOT = "shoot"; // 궁수 발사 (연사 ~6.6Hz) — 고빈도라 로�
 const G_ARROW_HIT = "arrowhit"; // 화살 종료 (명중마다) — 고빈도라 로그 제외 (net_schema.gd 미러)
 const G_PING = "nping"; // 지연 계측 (각 피어 2Hz) — 고빈도라 로그 제외 (net_schema.gd 미러)
 const G_PONG = "npong"; // 지연 계측 에코 (ping과 짝) — 고빈도라 로그 제외 (net_schema.gd 미러)
+const G_COOP_GAUGE = "cgauge"; // C1 영혼 비석 두 게이지 표시 동기화 (STELE 중 ~6Hz) — 고빈도라 로그 제외 (net_schema.gd 미러)
 const ROOM_CODE_LEN = 4;
 const ROOM_CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // 혼동 문자(I/L/O/0/1) 제외
 const MAX_ROOM_PEERS = 2; // GDD §3: 해커톤 = 2인 협동
@@ -135,7 +136,8 @@ export class RelayHub {
 				const kind = String(data[KEY_KIND] ?? "");
 				if (
 					kind !== G_POS && kind !== G_MOB_POS && kind !== G_SHOOT &&
-					kind !== G_ARROW_HIT && kind !== G_PING && kind !== G_PONG
+					kind !== G_ARROW_HIT && kind !== G_PING && kind !== G_PONG &&
+					kind !== G_COOP_GAUGE
 				) {
 					// pos(30Hz)·mpos(20Hz)·shoot(연사 6.6Hz)·arrowhit(명중마다)·ping/pong(2Hz)은 고빈도라 제외 — 저빈도 게임 이벤트만 기록
 					console.log(`[relay] ${kind}: ${info.id} -> room ${info.room}: ${JSON.stringify(data)}`);

@@ -25,8 +25,44 @@ const DATA_DIR := "res://data/enemies"
 # 즉 이건 "배율이 1에서 너무 멀지 않은가" = 아트와 데이터가 크게 갈라지지 않았나의 트립와이어다.
 const LEN_TOLERANCE := 1.5
 
+# 4대각 facing 접미사 — boss.gd `_dir_suffix`가 내놓는 값의 전체 집합. 보스는 어느 facing으로도
+# 설 수 있으므로 모든 방향에서 애니가 풀려야 "조용한 무모션"이 안 난다.
+const DIRS := ["se", "sw", "nw", "ne"]
+
 var _fail := 0
 var _checks := 0
+
+
+# 🔴 boss.gd `_resolve_dir_anim` **미러** — 이 파일은 boss.gd를 preload 못 하므로(헤더 참조) 유도식을
+#   여기 재현한다. 한쪽을 고치면 같이 고쳐라. base가 주어진 facing에서 실제 존재하는 애니로 풀리면
+#   그 이름을, 아무것도 안 풀리면 ""(= `_play`의 `_has_anim` 가드가 조용히 건너뛰는 경우)을 돌려준다.
+func _resolve(sf: SpriteFrames, base: String, dir: String) -> StringName:
+	if base == "idle" or base == "slam" or base == "swing" or base == "spray" or base == "spin":
+		var d := StringName(base + "_" + dir)
+		if sf.has_animation(d):
+			return d
+		if base == "swing" or base == "spray" or base == "spin":   # 방향 전용 공격 없으면 slam_<dir> 재사용(플레이스홀더)
+			var sd := StringName("slam_" + dir)
+			if sf.has_animation(sd):
+				return sd
+	elif base == "walk":
+		var wd := StringName("walk_" + dir)
+		if sf.has_animation(wd):
+			return wd
+		var idle_d := StringName("idle_" + dir)   # walk 없으면 방향 idle로 — 이동 중에도 안 등짐
+		if sf.has_animation(idle_d):
+			return idle_d
+	if sf.has_animation(StringName(base)):   # 단방향 보스 폴백 — base 그대로
+		return StringName(base)
+	return &""
+
+
+# base가 **모든** facing에서 재생 가능한 애니로 풀리는가. 단방향 보스는 4방향 모두 bare base로 풀린다.
+func _resolves_all(sf: SpriteFrames, base: String) -> bool:
+	for d: String in DIRS:
+		if _resolve(sf, base, d) == &"":
+			return false
+	return true
 
 
 func _init() -> void:
@@ -77,9 +113,10 @@ func _check_boss(file: String, def: BossDef) -> void:
 		# frames가 없으면 boss.gd가 sprite 1장을 idle로 감싼다 → 공격 애니가 통째로 없다
 		_check(false, "%s: frames(SpriteFrames)가 없다 — 공격 애니가 통째로 안 나온다" % file)
 		return
-	_check(sf.has_animation(&"idle"), "%s: idle 애니 존재" % file)
-	_check(sf.has_animation(&"walk"),
-		"%s: walk 애니 존재 (없으면 이동 미끄러짐 + 다음 공격 애니가 얼어붙는다)" % file)
+	# 방향 인지 — idle/walk가 4방향 모두에서 풀려야(방향 변형 또는 단방향 bare). boss.gd `_resolve_dir_anim` 미러.
+	_check(_resolves_all(sf, "idle"), "%s: idle 애니가 모든 facing에서 풀린다(방향 변형 포함)" % file)
+	_check(_resolves_all(sf, "walk"),
+		"%s: walk 애니가 모든 facing에서 풀린다 (없으면 이동 미끄러짐 + 다음 공격 애니가 얼어붙는다)" % file)
 	if sf.has_animation(&"death"):
 		# 시체 남김이 loop=false 전제 — 반복되면 시체가 계속 죽는 모션을 반복한다
 		_check(not sf.get_animation_loop(&"death"), "%s: death loop=false (시체 남김 전제)" % file)
@@ -99,16 +136,26 @@ func _check_boss(file: String, def: BossDef) -> void:
 		_check(p.range > 0.0,
 			"%s: range > 0 (%.1f) — 0이면 예고만 보이고 판정이 없다"
 			% [label, p.range])
-		var anim := StringName(p.id)
-		var has := sf.has_animation(anim)
-		_check(has, "%s: 패턴 id와 같은 이름의 애니 존재 (없으면 공격 모션이 조용히 안 나온다)" % label)
-		if not has:
+		# 돌진(P3)은 pat.id 애니가 아니라 상태머신이 placeholder 클립(windup=slam·dash=walk)을 직접 몬다
+		# → id 애니 존재 계약에서 제외. 대신 돌진 전용 파라미터가 유효한지 본다(0이면 안 움직이거나 못 맞힌다).
+		if p.is_charge:
+			_check(p.charge_speed > 0.0, "%s: charge_speed > 0 (%.1f)" % [label, p.charge_speed])
+			_check(p.charge_sweep_radius > 0.0,
+				"%s: charge_sweep_radius > 0 (%.1f) — 0이면 스윕이 아무도 못 맞힌다" % [label, p.charge_sweep_radius])
+			_check(p.charge_travel_max > 0.0, "%s: charge_travel_max > 0 (%.1f)" % [label, p.charge_travel_max])
+			continue
+		# 패턴 id가 **모든 facing**에서 재생 가능한 애니로 풀려야 (방향 변형·slam_<dir> 폴백 포함).
+		_check(_resolves_all(sf, p.id),
+			"%s: 패턴 id가 모든 facing에서 애니로 풀린다 (없으면 공격 모션이 조용히 안 나온다)" % label)
+		# loop·길이 검사는 실제 풀린 애니로 한다 — front(se) 방향 대표값. 안 풀리면 건너뛴다.
+		var anim := _resolve(sf, p.id, "se")
+		if anim == &"":
 			continue
 		_check(not sf.get_animation_loop(anim),
-			"%s: loop=false (true면 무한 반복 + speed_scale 굳음)" % label)
+			"%s: loop=false (true면 무한 반복 + speed_scale 굳음) [%s]" % [label, anim])
 		var base := _anim_len(sf, anim)
-		_check(base > 0.0, "%s: 애니 길이 > 0 (프레임 %d · speed %.2f)"
-			% [label, sf.get_frame_count(anim), sf.get_animation_speed(anim)])
+		_check(base > 0.0, "%s: 애니 길이 > 0 (프레임 %d · speed %.2f) [%s]"
+			% [label, sf.get_frame_count(anim), sf.get_animation_speed(anim), anim])
 		var ratio := (base / p.telegraph_s) if p.telegraph_s > 0.0 else INF
 		_check(ratio <= LEN_TOLERANCE,
 			"%s: 애니 %.3fs ≤ telegraph_s %.2fs × %.1f (speed_scale %.3f 필요)"

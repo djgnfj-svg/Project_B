@@ -8,6 +8,8 @@ extends EnemyDef
 @export var patterns: Array[BossPatternDef] = []
 @export var phase2_hp_ratio: float = 0.5         # 이 비율 이하 HP → 페이즈2 (min_phase=2 패턴 개방)
 @export var keep_distance: float = 0.0           # >0 이면 카이팅: 플레이어와 이 거리 유지(더 가까우면 물러남). 0=추격(기본)
+@export var ghostly: bool = false                # 유령 연출(부유·명멸·발광 아우라) — 망령 전용. false=실체 보스(미노 등). boss.gd _update_life_feel/_setup_aura 게이트.
+@export var show_telegraph: bool = true          # false면 공격 예고 원/부채꼴을 안 그린다(윈드업·타격은 그대로). 예고 없는 기본 공격용.
 
 # 늪 기믹 파라미터 (보스 종속 — 별도 SwampDef 불필요). 수치는 GDD §11 TBD, 사용자 실기 튜닝.
 @export var swamp_radius: float = 40.0

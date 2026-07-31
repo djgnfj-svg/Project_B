@@ -40,7 +40,7 @@ const TELEGRAPH_PULSE_HZ := 2.2
 const LEASH_MULT := 1.5
 
 # 공격 애니 이름(=BossPatternDef.id 관례). 이 애니가 도는 동안엔 walk/idle로 덮지 않는다.
-const ATTACK_ANIMS: Array[StringName] = [&"swing", &"slam", &"spray"]
+const ATTACK_ANIMS: Array[StringName] = [&"swing", &"slam", &"spray", &"spin", &"charge_windup", &"charge_dash", &"charge_hit", &"charge_recover"]
 
 # 공격 애니 speed_scale 하한 — 0/음수는 애니를 세우거나 거꾸로 돌린다. 히트스톱 정지(0.0) 판별과도 겹치지 않게.
 const MIN_ANIM_SPEED_SCALE := 0.01
@@ -74,7 +74,12 @@ const STAGGER_DUR := 0.4        # 카운터 성공 꿇음 지속(s)
 const STAGGER_DROP := 9.0       # 꿇을 때 아래로 꺾이는 양(px, offset)
 const STAGGER_LEAN := 0.22      # 꿇을 때 앞으로 숙이는 skew
 
-enum State { IDLE, CHASE, WINDUP, RECOVER }
+enum State { IDLE, CHASE, WINDUP, RECOVER, CHARGE_DASH, CHARGE_HIT }
+
+# 돌진(P3) 연출 상수 (rules §0 예외 — 손맛값, docs/TUNING.md 대상)
+const CHARGE_HIT_DUR := 0.3       # 바위 충돌 리코일(튕김) 지속(s) — 짧게, 이후 그로기로
+const CHARGE_RECOIL_SPEED := 180.0  # 바위 충돌 시 뒤로 튕기는 초기 속도(px/s)
+const CHARGE_TIMEOUT_MARGIN := 0.4  # 돌진 타임아웃 = 이동시간 + 이 여유(벽에 낀 채 무한 돌진 방지)
 
 @export var eid: String = ""
 @export var def: BossDef
@@ -89,6 +94,7 @@ var _strike_center: Vector2 = Vector2.ZERO
 var _strike_angle: float = 0.0
 var _pattern_last_msec: Dictionary = {}  # pattern.id -> 마지막 발동 msec (호스트 전용 쿨다운 게이트)
 var _swamp_seq: int = 0                # 늪 생성 로컬 id 시퀀스
+var _rock_seq: int = 0                 # 낙석(P4) 바위 스폰 로컬 id 시퀀스 (_swamp_seq 미러 — 고유 rid 생성)
 var _strike_centers: Array = []        # 물뿌리기 착탄점(Vector2) — 비었으면 단일 패턴(_strike_center)
 var _max_hp: int = 0                   # party_scale 적용된 max_hp (페이즈2 임계·초기 hp 단일 소스)
 var _p2_swamp_accum: float = 0.0       # 페이즈2 자동 늪 생성 카운트다운(호스트 전용)
@@ -105,6 +111,8 @@ var _telegraph_center: Vector2 = Vector2.ZERO
 # 이번 예고를 띄워둘 시간(초) — 호스트는 지연 보상분이 더해진 값, 게스트는 pat.telegraph_s 그대로.
 # WINDUP 진입/예고 수신 때 한 번 확정해 표시·타격이 같은 값을 쓰게 한다(중간에 RTT가 흔들려도 안 갈라지게).
 var _telegraph_hold_s: float = 0.0
+var _move_hold: float = 0.0   # 이동 디바운스 — 잔멈춤에도 walk 애니가 프레임0으로 리셋 안 되게 (0이면 idle 복귀)
+var _face_dir: String = "s"   # 8방향 바라보기 접미사(플레이어 방향) — 디렉셔널 애니(idle_<dir>/slam_<dir>) 선택용. 없으면 base 폴백.
 var _anim_scale: float = 1.0           # 지금 애니에 걸려 있어야 할 speed_scale (공격 애니만 1.0이 아니다)
 var _life_t: float = 0.0               # 생명감 연출 시간 누적(부유·명멸·아우라 위상)
 var _prev_life_x: float = 0.0          # 망토 나부낌용 직전 x (이동량 = 위치 델타, 호스트/게스트 공통)
@@ -115,6 +123,11 @@ var groggy_left: float = 0.0           # 그로기(격파 당함) 남은 시간 
 var _stagger_t: float = 0.0            # 카운터 성공 꿇음 타이머
 var _aura: Sprite2D = null             # 보스 발밑 가산 발광(따라다님) — _ready에서 생성
 var _noise: FastNoiseLite = null       # 지터용 연속 노이즈(1D 표본) — _ready에서 생성
+var _charge_seq: int = 0               # 돌진(P3) 회차 id — 스윕 dedup 키(돌진당 +1, CombatAuthority._boss_sweep_seq와 짝)
+var _charge_start: Vector2 = Vector2.ZERO  # 이번 돌진 시작 위치 — 이동거리(travel_max) 판정 기준
+var _c1_frames: SpriteFrames = null    # C1 코옵 전용 클립 시트(roar/grab/groggy — mino_boss_c1) 지연 로드
+var _c1_active: bool = false           # C1 클립 재생 중 — 생명감 눕기 포즈를 건너뛴다(클립이 곧 포즈)
+var coop_locked: bool = false          # C1 결박 중 — 패턴 AI 정지(외부=coop_authority가 설정). 페이즈2 자동 늪도 멈춤(설계 §9)
 
 @onready var _sprite: AnimatedSprite2D = $Sprite
 @onready var _collision: CollisionShape2D = $Collision
@@ -157,7 +170,8 @@ func _ready() -> void:
 	_health.hp_confirmed.connect(func(hp: int) -> void: EventBus.enemy_hp_confirmed.emit(eid, hp))
 	# 물뿌리기 N개 원 텔레그래프 + 애니 = 이 구독이 그린다 (호스트/게스트 공용 단일 경로).
 	EventBus.boss_spray.connect(_on_boss_spray)
-	_setup_aura()
+	if def != null and def.ghostly:
+		_setup_aura()   # 유령 보스만 발광 아우라 — 실체 보스(미노)는 아예 안 만든다
 	_noise = FastNoiseLite.new()
 	_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
 	_noise.frequency = 1.0   # 표본 좌표를 _life_t*NOISE_SPEED로 직접 굴리므로 여기선 항등에 가깝게
@@ -227,14 +241,17 @@ func _physics_process(delta: float) -> void:
 	if _health.is_dead() or def == null:
 		_reassert_telegraph_pos()
 		return
+	var raw_moving := false
 	if Net.is_host():
 		_host_ai(delta)
-		_update_move_anim(_state == State.CHASE and velocity.length_squared() > 0.0)
+		raw_moving = _state == State.CHASE and velocity.length_squared() > 0.0
 	else:
-		var moving := global_position.distance_to(_remote_target) > REMOTE_MOVE_EPS
+		raw_moving = global_position.distance_to(_remote_target) > REMOTE_MOVE_EPS
 		global_position = global_position.lerp(_remote_target, minf(1.0, REMOTE_LERP_SPEED * delta))
 		_sprite.flip_h = _remote_flip
-		_update_move_anim(moving)
+	# 디바운스: 움직이면 즉시 walk, 멈춰도 0.25초는 유지 → 잔멈춤에 walk가 리셋되지 않는다.
+	_move_hold = 0.25 if raw_moving else maxf(0.0, _move_hold - delta)
+	_update_move_anim(_move_hold > 0.0)
 	# 🔴 **몸이 움직인 뒤에** 예고를 제자리에 다시 못 박는다 — 순서가 계약이다. 위쪽(타이머 감산 자리)에서
 	# 부르면 그 프레임의 이동(_host_ai의 move_and_slide · 게스트 lerp)이 뒤따라와 한 프레임씩 밀린다.
 	# `_apply_anim_scale()`이 speed_scale을 매 프레임 재주장하는 것과 같은 관용구다(rules §2 손맛 계층 —
@@ -258,6 +275,8 @@ func _update_life_feel(delta: float) -> void:
 	# 그로기(격파) — 옆으로 눕고(회전) 바닥으로 내려앉아 무방비. 흔들림·아우라 정지.
 	if groggy_left > 0.0:
 		groggy_left -= delta
+		if _c1_active:
+			return   # C1 groggy 클립이 포즈를 맡음 — 회전/오프셋 안 건드린다
 		_sprite.rotation = lerp_angle(_sprite.rotation, 1.43, minf(1.0, delta * 9.0))  # ~82° 눕기
 		_sprite.offset = Vector2(0.0, 16.0)
 		_sprite.skew = 0.0
@@ -272,8 +291,11 @@ func _update_life_feel(delta: float) -> void:
 	# 사인 드리프트(정처 없이) + 노이즈 지터(지직거림). 노이즈는 x/y 표본 좌표를 멀리 떨어뜨려 상관 제거.
 	var nx := _noise.get_noise_1d(_life_t * NOISE_SPEED) if _noise != null else 0.0
 	var ny := _noise.get_noise_1d(_life_t * NOISE_SPEED + 1000.0) if _noise != null else 0.0
-	_sprite.offset.x = sin(_life_t * TAU * SWAY_HZ) * SWAY_AMP + nx * NOISE_AMP
-	_sprite.offset.y = sin(_life_t * TAU * BOB_HZ) * BOB_AMP + ny * NOISE_AMP
+	if def != null and def.ghostly:
+		_sprite.offset.x = sin(_life_t * TAU * SWAY_HZ) * SWAY_AMP + nx * NOISE_AMP
+		_sprite.offset.y = sin(_life_t * TAU * BOB_HZ) * BOB_AMP + ny * NOISE_AMP
+	else:
+		_sprite.offset = Vector2.ZERO   # 실체 보스는 부유 없음 (땅에 붙어 있음)
 	# 망토 나부낌 — 이동 방향으로 기운다(위치 델타 = 호스트/게스트 공통) + 정지 시 은은한 흔들림.
 	# 🔴 순간속도를 그대로 쓰면 kiting(다가갔다 멈춤)에 망토가 툭툭 끊긴다 → 저역통과로 부드럽게.
 	var mv := (global_position.x - _prev_life_x) / maxf(delta, 0.0001)
@@ -289,7 +311,9 @@ func _update_life_feel(delta: float) -> void:
 		_sprite.offset.y += sk * STAGGER_DROP
 		_sprite.skew += sk * STAGGER_LEAN
 	# 명멸(알파) + 카운터 가능 시 몸색이 앰버로 맥동(약점 노출 신호). modulate는 HitFlash(material)와 안 겹침.
-	var shimmer_a := SHIMMER_MIN_A + (1.0 - SHIMMER_MIN_A) * (0.5 + 0.5 * sin(_life_t * TAU * SHIMMER_HZ))
+	var shimmer_a := 1.0   # 실체 보스는 명멸 없음(불투명). 유령만 알파 맥동.
+	if def != null and def.ghostly:
+		shimmer_a = SHIMMER_MIN_A + (1.0 - SHIMMER_MIN_A) * (0.5 + 0.5 * sin(_life_t * TAU * SHIMMER_HZ))
 	if counter_ready:
 		var cp := 0.55 + 0.45 * sin(_life_t * TAU * 3.2)
 		_sprite.modulate = Color(lerpf(1.0, COUNTER_TINT.r, cp), lerpf(1.0, COUNTER_TINT.g, cp), lerpf(1.0, COUNTER_TINT.b, cp), shimmer_a)
@@ -310,6 +334,32 @@ func counter_stagger() -> void:
 # 격파(활성 룬 파훼) 시 외부(랩)가 호출 — dur초 동안 누워서 무방비(그로기). _update_life_feel이 누운 포즈.
 func enter_groggy(dur: float) -> void:
 	groggy_left = maxf(groggy_left, dur)
+
+
+# C1 코옵 — 미노 전용 클립(roar/grab/groggy, mino_boss_c1 시트)을 임시로 물려 재생. coop_authority가 STELE 중 구동.
+# 방향 시트를 잠시 c1 시트로 갈고 end_c1_clip에서 원복. _c1_active면 생명감 눕기 포즈를 건너뛴다(클립이 곧 포즈).
+func play_c1_clip(clip: StringName) -> void:
+	if _c1_frames == null:
+		_c1_frames = load("res://assets/sprites/enemies/mino_boss_c1_frames.tres") as SpriteFrames
+	if _c1_frames == null or not _c1_frames.has_animation(clip):
+		return
+	_c1_active = true
+	_sprite.rotation = 0.0
+	_sprite.offset = Vector2.ZERO
+	_anim_scale = 1.0
+	if _sprite.sprite_frames != _c1_frames:
+		_sprite.sprite_frames = _c1_frames
+	_sprite.play(clip)
+	_sprite.speed_scale = 1.0
+
+
+func end_c1_clip() -> void:
+	if not _c1_active:
+		return
+	_c1_active = false
+	if def != null and def.frames != null:
+		_sprite.sprite_frames = def.frames   # 방향 시트 복구
+	_play(&"idle", 1.0, true)
 
 
 # 아우라용 방사 그라디언트(흰→투명) — 가산 블렌드로 발광. 정적 1회 생성(공유).
@@ -334,14 +384,19 @@ static func _radial_tex() -> GradientTexture2D:
 
 func _host_ai(delta: float) -> void:
 	_state_left -= delta
+	# C1 결박 중 — 패턴 AI·이동·자동 늪 전부 정지(c1 클립이 몸을 몬다, 설계 §9). 예고/돌진 서브상태 진행 중이면 먼저 정리 안 함(그런 상태에서 STELE가 겹치지 않게 coop 쪽이 보장).
+	if coop_locked:
+		velocity = Vector2.ZERO
+		return
 	# 페이즈2 = 안 때려도 바닥 잠식. 상태 무관하게 주기적으로 늪 생성(솔로면 간격↑, _auto_swamp_interval).
 	if _phase == 2:
 		_p2_swamp_accum -= delta
 		if _p2_swamp_accum <= 0.0:
 			_p2_swamp_accum = _auto_swamp_interval()
 			_spawn_auto_swamp()
-	# 테스트 랩 — debug_hold면 제자리 정지(관찰용). 강제 발동 패턴(WINDUP/RECOVER)은 그대로 진행.
-	if debug_hold and _state != State.WINDUP and _state != State.RECOVER:
+	# 테스트 랩 — debug_hold면 제자리 정지(관찰용). 강제 발동 패턴(WINDUP/RECOVER/돌진 서브상태)은 그대로 진행.
+	if debug_hold and _state != State.WINDUP and _state != State.RECOVER \
+			and _state != State.CHARGE_DASH and _state != State.CHARGE_HIT:
 		velocity = Vector2.ZERO
 		return
 	match _state:
@@ -356,6 +411,7 @@ func _host_ai(delta: float) -> void:
 				_state = State.IDLE
 				return
 			var anchor := t.net_anchor()
+			_face_dir = _dir_suffix(anchor - global_position)
 			var dist := global_position.distance_to(anchor)
 			if dist > def.aggro_range * LEASH_MULT:
 				velocity = Vector2.ZERO
@@ -378,15 +434,44 @@ func _host_ai(delta: float) -> void:
 			velocity = dir * def.move_speed * speed_mult
 			if dir != Vector2.ZERO:
 				move_and_slide()
-				_sprite.flip_h = velocity.x < 0.0
+				_sprite.flip_h = false
 		State.WINDUP:
+			velocity = Vector2.ZERO   # 공격 애니 중엔 이동 정지 (패턴 애니 하면서 안 움직인다)
 			if _state_left <= 0.0:
-				_fire_strike()
+				# 🔴 돌진은 기본 STRIKE 경로를 안 탄다 — 이동·스윕·분기가 있어 돌진 서브상태로 넘어간다(§3-1).
+				if _cur_pattern != null and _cur_pattern.is_charge:
+					_enter_charge_dash()
+				else:
+					_fire_strike()
+					_state = State.RECOVER
+					# 회복은 짧게(recover_s) — 재사용 쿨다운(cooldown_s)은 _pattern_last_msec가 따로 막는다.
+					# 둘을 분리하지 않으면 슬램 후 쿨다운(4s)만큼 멈춰 서 "빈틈"이 생긴다.
+					_state_left = _cur_pattern.recover_s if _cur_pattern != null else 0.5
+		State.CHARGE_DASH:
+			# 고정 방향 직진 + 매 프레임 몸 주위 스윕(호스트). 바위에 박으면 HIT(그로기), 아니면 완주→RECOVER.
+			velocity = Vector2.RIGHT.rotated(_strike_angle) * _cur_pattern.charge_speed * speed_mult
+			move_and_slide()
+			_play(&"walk")   # 플레이스홀더(달리기) — 전용 charge_dash 클립은 나중 API로. force_restart 없음=이어감
+			if Net.is_host():
+				EventBus.boss_sweep.emit(global_position, _strike_angle, _cur_pattern, _charge_seq)
+			var rock: Node = _dash_rock_collision()
+			var traveled := _charge_start.distance_to(global_position)
+			if rock != null:
+				_enter_charge_hit(rock)              # 🪨 바위 박음 → 그로기 처벌창
+			elif traveled >= _cur_pattern.charge_travel_max or _state_left <= 0.0:
+				velocity = Vector2.ZERO               # 💨 헛참 — 완주/타임아웃, 짧은 후딜만
 				_state = State.RECOVER
-				# 회복은 짧게(recover_s) — 재사용 쿨다운(cooldown_s)은 _pattern_last_msec가 따로 막는다.
-				# 둘을 분리하지 않으면 슬램 후 쿨다운(4s)만큼 멈춰 서 "빈틈"이 생긴다.
-				_state_left = _cur_pattern.recover_s if _cur_pattern != null else 0.5
+				_state_left = _cur_pattern.recover_s
+		State.CHARGE_HIT:
+			# 리코일(뒤로 튕김) 감쇠 → 끝나면 그로기(무방비 처벌창). 눕는 포즈는 _update_life_feel이 처리.
+			velocity = velocity.lerp(Vector2.ZERO, minf(1.0, delta * 8.0))
+			move_and_slide()
+			if _state_left <= 0.0:
+				enter_groggy(_cur_pattern.groggy_s)
+				_state = State.RECOVER
+				_state_left = _cur_pattern.groggy_s
 		State.RECOVER:
+			velocity = Vector2.ZERO   # 후딜에도 정지 유지 (스윙 마무리 프레임 동안 안 미끄러진다)
 			if _state_left <= 0.0:
 				_state = State.CHASE
 
@@ -420,6 +505,7 @@ func debug_force_pattern(pid: String) -> void:
 		return
 	var t := _nearest_alive_player()
 	var anchor := t.net_anchor() if t != null else global_position + Vector2(0, 80)
+	_face_dir = _dir_suffix(anchor - global_position)   # 강제 발동도 플레이어 바라보게
 	for p: BossPatternDef in def.patterns:
 		if p != null and p.id == pid:
 			_telegraph_left = 0.0
@@ -438,7 +524,7 @@ func _begin_windup(pat: BossPatternDef, anchor: Vector2) -> void:
 	velocity = Vector2.ZERO
 	_strike_angle = (anchor - global_position).angle()  # 대상 방향
 	_strike_centers = []
-	_sprite.flip_h = cos(_strike_angle) < 0.0
+	_sprite.flip_h = false   # 8/4방향 시트는 방향이 구워져 있음(미러 포함) — flip 미사용(디렉셔널 애니가 처리)
 	if pat.burst_count > 1:
 		# 물뿌리기 — N개 원 착탄. 호스트가 착탄점 확정 → boss_spray로 게스트 표시 중계(G_BOSS_SPRAY).
 		# 개수는 솔로면 party_scale로 감소. 애니·N개 원 텔레그래프는 _on_boss_spray가 그린다(호스트/게스트 공용).
@@ -449,13 +535,19 @@ func _begin_windup(pat: BossPatternDef, anchor: Vector2) -> void:
 		if Net.is_host():
 			EventBus.boss_spray.emit(eid, pat.id, _strike_centers, _strike_angle)
 		return
-	if pat.shape == "cone":
-		_strike_center = global_position  # apex = 보스 위치
+	if pat.shape == "cone" or pat.center_self:
+		# 부채꼴 apex = 보스 위치 · 도끼 회전(center_self) 원 중심 = 보스 자신(전방위 근접)
+		_strike_center = global_position
 	else:
 		# 원: 대상 net_anchor 고정 — 예고를 보고 빠져나갈 수 있게 (GDD §5 기믹 원칙)
 		_strike_center = anchor
 	_show_telegraph_visual(pat, _strike_center, _strike_angle)
-	_play_attack_anim(pat)  # 공격 애니(swing/slam) — 예고 길이에 맞춰 재생 속도를 늘린다
+	if pat.is_charge:
+		# 돌진 예비 자세 — 전용 charge_windup 클립이 없어 slam을 플레이스홀더로(예고 길이에 압축). 나중 API로 교체.
+		# 예고(좁은 cone)는 "경로 예고(긁힘 선)"로 이미 _show_telegraph_visual이 그렸다.
+		_play(&"slam", _attack_speed_scale(&"slam", _telegraph_duration(pat)), true)
+	else:
+		_play_attack_anim(pat)  # 공격 애니(swing/slam) — 예고 길이에 맞춰 재생 속도를 늘린다
 	if Net.is_host():
 		# MobSync가 G_BOSS_ATK로 브로드캐스트 → 게스트 표시. 판정은 절대 여기서 안 한다.
 		EventBus.boss_telegraph.emit(eid, pat.id, _strike_center, _strike_angle)
@@ -481,6 +573,51 @@ func _fire_strike() -> void:
 		EventBus.swamp_spawn_local.emit(
 			[[sid, _strike_center.x, _strike_center.y,
 			def.swamp_radius, def.swamp_ttl, def.swamp_slow_factor]])
+	# 낙석(P4) — 착탄점마다 바위 지형이 남는다(돌진 유도). RockField가 로컬 스폰 + G_ROCK 브로드캐스트(늪 미러).
+	# 데미지는 위 boss_strike가 이미 냈다 — 바위는 판정 없는 지형일 뿐. 착탄점 = _strike_centers(spray N점).
+	if _cur_pattern.leaves_rock and not _strike_centers.is_empty():
+		var rocks: Array = []
+		for c: Variant in _strike_centers:
+			_rock_seq += 1
+			var cv := c as Vector2
+			rocks.append(["%s:rock:%d" % [eid, _rock_seq], cv.x, cv.y,
+				_cur_pattern.rock_radius, _cur_pattern.rock_ttl])
+		EventBus.rock_spawn_local.emit(rocks)
+
+
+# --- 돌진(P3) 서브상태 진입/충돌 (minotaur_patterns.md §3-1) ---
+
+# 돌진 진입 — WINDUP 종료 후 호출. 예고를 끄고 고정 방향(_strike_angle, WINDUP에서 대상 방향으로 확정)으로 질주.
+func _enter_charge_dash() -> void:
+	_telegraph.visible = false
+	_telegraph_left = 0.0
+	_charge_seq += 1                       # 스윕 dedup 회차 갱신 (CombatAuthority._boss_sweep_seq와 짝 — 돌진당 1회)
+	_charge_start = global_position
+	# 타임아웃 = 예상 이동시간 + 여유(벽/바위에 낀 채 무한 돌진 방지). _host_ai가 _state_left를 매 프레임 감산.
+	var travel_time := _cur_pattern.charge_travel_max / maxf(_cur_pattern.charge_speed, 1.0)
+	_state_left = travel_time + CHARGE_TIMEOUT_MARGIN
+	_state = State.CHARGE_DASH
+	_play(&"walk", 1.0, true)              # 플레이스홀더 달리기 시작(전용 charge_dash 클립은 나중 API로)
+
+
+# 바위 충돌 — 리코일로 뒤로 튕기고 CHARGE_HIT 진입. 바위가 shatter를 구현했으면 부순다(P4 오브젝트 계약).
+func _enter_charge_hit(rock: Node) -> void:
+	_state = State.CHARGE_HIT
+	_state_left = CHARGE_HIT_DUR
+	var away := global_position - (rock as Node2D).global_position
+	var dir := away.normalized() if away.length_squared() > 1.0 else -Vector2.RIGHT.rotated(_strike_angle)
+	velocity = dir * CHARGE_RECOIL_SPEED
+	if rock.has_method("shatter"):
+		rock.call("shatter")               # 바위 산산조각 (없으면 그냥 남는다 — 헤드리스 디버그 바위엔 없음)
+
+
+# 돌진 중 슬라이드 충돌에서 "boss_rock" 그룹만 골라 반환. 벽(아레나 경계)은 무시 → 헛참으로 처리. 없으면 null.
+func _dash_rock_collision() -> Node:
+	for i in get_slide_collision_count():
+		var c: Object = get_slide_collision(i).get_collider()
+		if c is Node and (c as Node).is_in_group("boss_rock"):
+			return c as Node
+	return null
 
 
 # 나 포함 파티 인원 — 호스트/게스트 동일 계산(peer_ids는 자기 제외라 +1). party_scale 표시 일치의 근거.
@@ -621,7 +758,11 @@ static var _quad_tex: ImageTexture = null
 
 static func _telegraph_quad_tex() -> ImageTexture:
 	if _quad_tex == null:
-		var img := Image.create_empty(1, 1, false, Image.FORMAT_RGBA8)
+		# 🔴 2×2(1×1 아님) — 1×1은 centered 오프셋이 -0.5px 서브픽셀이라, 거대 scale(~226)을 곱하면
+		#   그 반올림 오차가 half-quad(~113px)만큼 통째로 어긋난다(콘 apex가 회전 방향으로 -123px 튐,
+		#   실측 2026-07-31). 2×2면 centered 오프셋 = -1px 정수라 scale과 정확히 맞물려 중심에 앉는다.
+		#   UV는 텍스처 크기와 무관하게 0..1이라 셰이더 p=(UV-0.5)*quad_px는 그대로다(scale만 절반).
+		var img := Image.create_empty(2, 2, false, Image.FORMAT_RGBA8)
 		img.fill(Color.WHITE)
 		_quad_tex = ImageTexture.create_from_image(img)
 	return _quad_tex
@@ -630,7 +771,8 @@ static func _telegraph_quad_tex() -> ImageTexture:
 # 🔴 판정 기하를 화면으로 넘기는 **유일한 지점** — "맞는 곳 = 보이는 곳" (§3).
 #   원(circle)   = 중심 기준 반지름 pat.range           ≡ CombatMath.is_strike_hit
 #   부채꼴(cone) = apex 기준 반지름 pat.range ∩ 전체각 2*pat.half_angle ≡ CombatMath.is_hit_in_cone
-# 규약: 노드 원점 = 원 중심 / apex, 노드 회전 = facing, **균일** scale = 2*range(1×1 쿼드 → 월드 한 변).
+# 규약: 노드 원점 = 원 중심 / apex, 노드 회전 = facing, **균일** scale = quad/2(2×2 쿼드 → 월드 한 변 quad).
+#   ⚠ 텍스처는 **2×2**다(1×1 아님) — 1×1 centered 오프셋 -0.5px가 거대 scale에 곱해져 half-quad 어긋난다.
 #   셰이더는 로컬 프레임(facing = +x = 각 0)에서 판정식을 그대로 계산한다. 회전+균일스케일은
 #   닮음변환이라 각·거리비가 보존된다 — 세로만 늘리는 비균일 스케일은 정원을 타원으로 만들어
 #   다시 어긋나므로 절대 넣지 마라(rules §3 콘 계약이 두 번 기각한 우회로).
@@ -648,7 +790,8 @@ func _apply_telegraph_geometry(spr: Sprite2D, pat: BossPatternDef, angle: float)
 	# 셀 중심이 쿼드 밖으로 나가 그 픽셀이 아예 안 그려진다(= 판정 안인데 무예고). 여유는 표시용일 뿐
 	# 판정 기하가 아니다 — 셰이더는 radius_px로만 안팎을 가른다.
 	var quad := 2.0 * (radius + TELEGRAPH_PIXEL_PX + TELEGRAPH_EDGE_BIAS_PX)
-	spr.scale = Vector2.ONE * quad
+	# 텍스처가 2×2라 월드 한 변 = 2*scale → scale = quad/2. quad_px(월드 span)은 quad 그대로 넘긴다.
+	spr.scale = Vector2.ONE * (quad * 0.5)
 	var mat := spr.material as ShaderMaterial
 	if mat == null or mat.shader != TELEGRAPH_SHADER:
 		mat = ShaderMaterial.new()
@@ -674,6 +817,9 @@ func _apply_telegraph_geometry(spr: Sprite2D, pat: BossPatternDef, angle: float)
 # "데이터 한 칸을 비우면 예고가 통째로 안 보이는데 판정은 난다"(= 무예고 피격 100%)로만 남았다.
 # 이 전환이 없애려던 결함 클래스 그 자체라 게이트를 두는 것이 곧 위험이었다.
 func _show_telegraph_visual(pat: BossPatternDef, center: Vector2, angle: float) -> void:
+	if def != null and not def.show_telegraph:
+		_telegraph.visible = false   # 예고 원 숨김 (윈드업 타이밍은 _state_left가 따로 잡음)
+		return
 	_apply_telegraph_geometry(_telegraph, pat, angle)
 	_telegraph_center = center     # 매 프레임 재주장할 목표 (부모에 끌려가지 않게 — 선언부 주석)
 	_telegraph.global_position = center
@@ -696,7 +842,39 @@ func _show_telegraph_visual(pat: BossPatternDef, center: Vector2, angle: float) 
 # 프레임으로 얼어 있는다(에러 없음). 시트에 walk가 없는 보스에서 실제로 도달 가능하다 —
 # 공격 애니가 예고를 꽉 채우게 된 뒤로는 중간에 idle/walk가 끼어들어 이름을 갈아주는 것에
 # 기댈 수 없다(RECOVER의 idle·CHASE의 walk 둘뿐이고, walk가 없는 시트는 early return한다).
+# 4방향(대각선만) 접미사 — 부호로 se/sw/nw/ne. 가로선(dy=0)은 '앞(아래)'으로 편향해서
+# 서/동쪽 플레이어에 등(NW/NE) 대신 앞(SW/SE)을 보게 한다. 뒤 대각선은 플레이어가 위에 있을 때만.
+func _dir_suffix(v: Vector2) -> String:
+	if v.length_squared() < 1.0:
+		return _face_dir
+	if v.y >= 0.0:
+		return "se" if v.x >= 0.0 else "sw"
+	return "ne" if v.x >= 0.0 else "nw"
+
+
+# idle/slam/swing/spray는 방향별 변형(_<dir>)이 있으면 그걸로, 없으면 base 그대로 (단방향 보스 폴백).
+func _resolve_dir_anim(anim: StringName) -> StringName:
+	var s := String(anim)
+	if s == "idle" or s == "slam" or s == "swing" or s == "spray" or s == "spin":
+		var d := StringName(s + "_" + _face_dir)
+		if _has_anim(d):
+			return d
+		if s == "swing" or s == "spray" or s == "spin":   # 방향 전용 공격 애니가 없으면 slam_<dir> 재사용(오픈소스 플레이스홀더, 나중 API로 교체)
+			var sd := StringName("slam_" + _face_dir)
+			if _has_anim(sd):
+				return sd
+	elif s == "walk":
+		var wd := StringName("walk_" + _face_dir)   # 방향 walk 있으면 그걸로
+		if _has_anim(wd):
+			return wd
+		var idle_d := StringName("idle_" + _face_dir)   # 없으면 방향 idle(플레이어 바라보기) — 이동 중에도 안 등짐
+		if _has_anim(idle_d):
+			return idle_d
+	return anim
+
+
 func _play(anim: StringName, speed_scale: float = 1.0, force_restart: bool = false) -> void:
+	anim = _resolve_dir_anim(anim)
 	if not _has_anim(anim):
 		return  # 없는 애니는 갈아타지 않으므로 배율도 그대로 둔다(현재 애니의 배율이 계속 맞다)
 	_anim_scale = maxf(speed_scale, MIN_ANIM_SPEED_SCALE)
@@ -768,11 +946,19 @@ func _has_anim(anim: StringName) -> bool:
 
 
 func _is_attack_anim_playing() -> bool:
-	return _sprite.animation in ATTACK_ANIMS and _sprite.is_playing()
+	if not _sprite.is_playing():
+		return false
+	var s := String(_sprite.animation)
+	for a: StringName in ATTACK_ANIMS:
+		if s == String(a) or s.begins_with(String(a) + "_"):  # slam_e 등 방향 변형 포함
+			return true
+	return false
 
 
 func _update_move_anim(moving: bool) -> void:
-	# 공격 애니(one-shot)가 도는 동안은 덮지 않는다 — 끝나면 walk/idle로 복귀
-	if _is_attack_anim_playing():
+	# 공격 애니(one-shot)가 도는 동안은 덮지 않는다 — 끝나면 walk/idle로 복귀.
+	# 돌진 서브상태도 자기 클립(placeholder walk)을 직접 모므로 이동 애니 중재가 덮지 않게 게이트.
+	# C1 코옵 클립(roar/grab/groggy) 재생 중에도 덮지 않는다.
+	if _c1_active or _is_attack_anim_playing() or _state == State.CHARGE_DASH or _state == State.CHARGE_HIT:
 		return
 	_play(&"walk" if moving else &"idle")

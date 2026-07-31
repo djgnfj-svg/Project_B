@@ -1,61 +1,11 @@
-[gd_resource type="Resource" script_class="BossDef" load_steps=18 format=3]
+[gd_resource type="Resource" script_class="BossDef" load_steps=20 format=3]
 
 [ext_resource type="Script" path="res://src/core/boss_def.gd" id="1"]
 [ext_resource type="Script" path="res://src/core/boss_pattern_def.gd" id="2"]
-[ext_resource type="Texture2D" path="res://assets/sprites/enemies/boss_wraith.png" id="3"]
+[ext_resource type="Texture2D" path="res://assets/sprites/enemies/mino_boss_8dir.png" id="3"]
 [ext_resource type="Script" path="res://src/core/drop_table.gd" id="4"]
 [ext_resource type="Script" path="res://src/core/drop_entry.gd" id="5"]
-[ext_resource type="SpriteFrames" path="res://assets/sprites/enemies/boss_wraith_frames.tres" id="8"]
-
-[sub_resource type="Resource" id="p_sweep_l"]
-script = ExtResource("2")
-id = "swing"
-shape = "cone"
-telegraph_s = 1.2
-damage = 18
-range = 130.0
-half_angle = 0.75
-cooldown_s = 2.0
-recover_s = 0.4
-priority = 3
-use_min_dist = 0.0
-use_max_dist = 150.0
-min_phase = 1
-creates_swamp = false
-burst_count = 1
-
-[sub_resource type="Resource" id="p_slam"]
-script = ExtResource("2")
-id = "slam"
-shape = "circle"
-telegraph_s = 1.3
-damage = 26
-range = 80.0
-cooldown_s = 4.0
-recover_s = 0.6
-priority = 2
-use_min_dist = 50.0
-use_max_dist = 300.0
-min_phase = 1
-creates_swamp = true
-burst_count = 1
-
-[sub_resource type="Resource" id="p_nova"]
-script = ExtResource("2")
-id = "spray"
-shape = "circle"
-telegraph_s = 1.5
-damage = 20
-range = 44.0
-cooldown_s = 6.0
-recover_s = 0.5
-priority = 1
-use_min_dist = 120.0
-use_max_dist = 400.0
-min_phase = 1
-creates_swamp = false
-burst_count = 6
-burst_spread = 120.0
+[ext_resource type="SpriteFrames" path="res://assets/sprites/enemies/mino_boss_8dir_frames.tres" id="8"]
 
 [sub_resource type="Resource" id="d_gold"]
 script = ExtResource("5")
@@ -105,9 +55,93 @@ chance = 1.0
 script = ExtResource("4")
 entries = Array[DropEntry]([SubResource("d_gold"), SubResource("d_core"), SubResource("d_bp_sword"), SubResource("d_bp_bow"), SubResource("d_bp_staff"), SubResource("d_bp_axe"), SubResource("d_bp_spear")])
 
+[sub_resource type="Resource" id="pat_swing"]
+script = ExtResource("2")
+id = "swing"
+shape = "cone"
+telegraph_s = 0.8
+damage = 10
+range = 120.0
+half_angle = 0.7
+cooldown_s = 2.0
+recover_s = 0.4
+priority = 1
+use_min_dist = 0.0
+use_max_dist = 130.0
+min_phase = 1
+
+[sub_resource type="Resource" id="pat_spin"]
+script = ExtResource("2")
+id = "spin"
+shape = "circle"
+telegraph_s = 0.9
+damage = 14
+range = 95.0
+cooldown_s = 4.5
+recover_s = 0.5
+priority = 1
+use_min_dist = 0.0
+use_max_dist = 115.0
+min_phase = 2
+center_self = true
+
+[sub_resource type="Resource" id="pat_rockfall"]
+script = ExtResource("2")
+id = "spray"
+shape = "circle"
+telegraph_s = 1.1
+damage = 12
+range = 46.0
+cooldown_s = 6.0
+recover_s = 0.5
+priority = 1
+use_min_dist = 160.0
+use_max_dist = 520.0
+min_phase = 1
+burst_count = 4
+burst_spread = 130.0
+leaves_rock = true
+rock_radius = 24.0
+rock_ttl = 10.0
+
+[sub_resource type="Resource" id="pat_charge"]
+script = ExtResource("2")
+id = "charge"
+shape = "cone"
+telegraph_s = 1.2
+damage = 16
+range = 260.0
+half_angle = 0.3
+cooldown_s = 5.0
+recover_s = 0.5
+priority = 2
+use_min_dist = 140.0
+use_max_dist = 420.0
+min_phase = 1
+is_charge = true
+charge_speed = 240.0
+charge_sweep_radius = 72.0
+charge_travel_max = 260.0
+groggy_s = 3.0
+
+[sub_resource type="Resource" id="pat_slam"]
+script = ExtResource("2")
+id = "slam"
+shape = "circle"
+telegraph_s = 1.0
+damage = 14
+range = 110.0
+cooldown_s = 3.0
+recover_s = 0.6
+priority = 0
+use_min_dist = 0.0
+use_max_dist = 210.0
+min_phase = 1
+
 [resource]
 script = ExtResource("1")
-display_name = "몰락한 망령"
+display_name = "미노타우로스"
+show_telegraph = true
 max_hp = 360
 respawns = false
 sprite = ExtResource("3")
@@ -115,10 +149,10 @@ frames = ExtResource("8")
 body_radius = 42.0
 move_speed = 62.0
 aggro_range = 600.0
-keep_distance = 150.0
+keep_distance = 0.0
 exp = 30
 drop_table = SubResource("d_table")
-patterns = Array[BossPatternDef]([SubResource("p_sweep_l"), SubResource("p_slam"), SubResource("p_nova")])
+patterns = Array[BossPatternDef]([SubResource("pat_swing"), SubResource("pat_slam"), SubResource("pat_charge"), SubResource("pat_rockfall"), SubResource("pat_spin")])
 phase2_hp_ratio = 0.5
 swamp_radius = 44.0
 swamp_slow_factor = 0.5

@@ -22,3 +22,14 @@ func _ready() -> void:
 
 func is_active() -> bool:
 	return _active
+
+
+# 런타임 활성화 — 로비의 개발용 「보스 테스트 랩」 버튼이 부른다.
+# 🔴 스톡 Godot 바이너리는 `--test`를 자기 유닛테스트 플래그로 가로채 abort하므로, 네이티브·에디터에는
+#   플래그 진입로가 없다(웹 `?test=1`만 켜졌다). 이 버튼이 에디터·네이티브의 유일한 입구다.
+# ⚠ 켜졌을 때만 훅이 붙는다 — 안 누르면 _active=false로 남아 프로덕션(master)과 완전히 항등이다(파일 상단 규약).
+func activate() -> void:
+	if _active:
+		return
+	_active = true
+	print("[test_mode] ACTIVE (런타임 — 로비 버튼) — 패턴 테스트 랩")

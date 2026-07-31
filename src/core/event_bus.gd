@@ -37,7 +37,9 @@ signal arrow_gone_local(aid: String, world_pos: Vector2)  # 호스트 전용 emi
 # --- boss (보스전 2026-07-23) — 호스트 전용 emit(보스 AI), 표시(telegraph)와 판정(strike) 분리. mob_* 규약 확장 ---
 signal boss_telegraph(eid: String, pattern_id: String, center: Vector2, angle: float)  # 호스트 emit(보스 WINDUP) — MobSync가 G_BOSS_ATK 브로드캐스트(표시). 수신 측은 자기 def에서 패턴 리졸브
 signal boss_strike(center: Vector2, angle: float, pattern: BossPatternDef)  # 호스트 emit(보스 STRIKE) — CombatAuthority가 pattern.shape별(원/부채꼴) 플레이어 피격 판정
+signal boss_sweep(center: Vector2, angle: float, pattern: BossPatternDef, dash_seq: int)  # 🔴 호스트 emit(돌진 P3 매 프레임 스윕) — CombatAuthority가 charge_sweep_radius 원 판정. **dash_seq로 돌진당 플레이어 1회 dedup**(boss_strike의 프레임 dedup과 다르다 — 이동 히트박스라 매 프레임 발화). 데미지=호스트 확정(게스트는 mpos로 이동만 봄)
 signal swamp_spawn_local(swamps: Array)  # 호스트 보스 → SwampField 로컬 스폰 (호스트는 자기 G_SWAMP를 릴레이로 못 받으므로 — drop_spawn_local 미러). swamps=[[sid,x,y,r,ttl,slow], …] slow=늪 안 이동 배율
+signal rock_spawn_local(rocks: Array)  # 호스트 보스(낙석 P4 STRIKE) → RockField 로컬 스폰 + G_ROCK 브로드캐스트 (swamp_spawn_local 미러). rocks=[[rid,x,y,r,ttl], …] 착탄점에 바위 지형(돌진 유도용)이 남는다
 signal boss_spray(eid: String, pattern_id: String, centers: Array, angle: float)  # 호스트 emit(보스 물뿌리기 WINDUP) — MobSync가 G_BOSS_SPRAY 브로드캐스트. 각 클라가 centers마다 원 텔레그래프 표시(N개). 판정은 호스트가 STRIKE 시 boss_strike를 착탄점마다 재사용
 signal boss_phase_changed(phase: int)  # 호스트 emit(보스 페이즈 전이) — MobSync가 G_BOSS_PHASE 브로드캐스트, HUD가 배너. 게스트는 G_BOSS_PHASE 수신 시 로컬 emit(mob_telegraph→matk 미러)
 signal coop_call(duration: float)      # 코옵 파훼 시전 시작 — HUD 프롬프트("함께 F!")·보스 cast 애니·아레나 텔레그래프. 호스트/게스트 각자 로컬 표시

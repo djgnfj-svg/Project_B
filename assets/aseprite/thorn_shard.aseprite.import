@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://ojaqjhkdc1r8"
+path="res://.godot/imported/thorn_shard.aseprite-958b50b0cbd18cae5c0883ba5a4e3ab8.res"
+
+[deps]
+
+source_file="res://assets/aseprite/thorn_shard.aseprite"
+dest_files=["res://.godot/imported/thorn_shard.aseprite-958b50b0cbd18cae5c0883ba5a4e3ab8.res"]
+
+[params]
+

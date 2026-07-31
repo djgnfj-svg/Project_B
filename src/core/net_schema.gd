@@ -68,6 +68,7 @@ const G_PICK_OK := "pickok"           # {k, did, pid} 호스트→전원: 픽업
 # 보스전 (2026-07-23). 상태 확정 권한 = 호스트 (§1·§3). 전부 저빈도(패턴/생성당 1회) → relay-worker 로그 제외 불필요.
 const G_BOSS_ATK := "batk"            # {k, eid, p, x, y, a} 호스트→전원: 보스 패턴 텔레그래프. p=패턴 id·(x,y)=판정 중심·a=각(rad). 타격 시각·판정 반경은 패턴 telegraph_s/range를 각자 로컬 리졸브 (matk 규약 확장)
 const G_SWAMP := "swamp"              # {k, s, sw}    호스트→전원: 늪 존 스폰. s=stage_token(유령 스폰 차단, G_DROP "s" 미러)·sw=[[sid,x,y,r,ttl,slow], …] sid=늪 고유 id·(x,y)=중심·r=반경·ttl=지속(초, 로컬 despawn)·slow=늪 안 이동 배율
+const G_ROCK := "rock"                # {k, s, rk}    호스트→전원: 낙석(P4) 바위 지형 스폰. s=stage_token(유령 스폰 차단, G_SWAMP "s" 미러)·rk=[[rid,x,y,r,ttl], …] rid=바위 고유 id·(x,y)=중심·r=충돌 반경·ttl=지속(초, 로컬 despawn). 판정 없음(지형)·돌진 충돌은 호스트 로컬(각 클라 자기 플레이어도 로컬 충돌) — G_SWAMP 미러(장판 대신 정적 몸)
 const G_BOSS_PHASE := "bphase"        # {k, ph}       호스트→전원: 페이즈 전환 표시 큐(연출/배너용). 정본 판정은 호스트 hp — 표시 동기화일 뿐
 const G_BOSS_SPRAY := "bspray"        # {k, eid, p, c} 호스트→전원: 물 뿌리기 N개 원 착탄 예고. p=패턴 id(반경·telegraph_s 로컬 리졸브)·c=[[x,y], …] 착탄 중심들. 판정은 호스트가 착탄점마다 is_strike_hit(표시 전용 메시지)
 
@@ -75,6 +76,8 @@ const G_BOSS_SPRAY := "bspray"        # {k, eid, p, c} 호스트→전원: 물 �
 const G_COOP_CALL := "ccall"          # {k, t}   호스트→전원: 코옵 파훼 시전 시작. t=파훼 창(초). 각 클라 프롬프트 표시
 const G_COOP_IN := "cin"              # {k}      발신자=본인→호스트: 파훼 입력(F 눌렀다). 호스트가 생존 피어별 1회 집계
 const G_COOP_RES := "cres"            # {k, ok}  호스트→전원: 파훼 결과. ok=1 전원 입력 성공(시전 취소·보스 그로기), ok=0 실패(파티 피해). 판정 권한=호스트 (rules §3)
+const G_COOP_GAUGE := "cgauge"         # {k, du, re}  호스트→전원: C1 영혼 비석 두 게이지 표시 동기화(du=비석 내구도·re=A 저항). 저빈도(~6Hz), 표시 전용 — 판정은 호스트가 이미 확정(내구도 0/저항 0은 G_COOP_RES로 결말 통지)
+const G_THORN := "cthorn"              # {k, x, y, t}  호스트→전원: C1 가시 링/파편 스폰(표시 동기화). t="ring"(예고→버스트 회피 대상)·"shard"(회수 아이템). 🔴 판정(링 피격·파편 회수)은 호스트만 — 게스트는 링을 보고 피할 수 있게 표시만(G_MOB_ATK 예고 규약 미러)
 
 # 왕복 지연 계측 (2026-07-24) — 지연 보상(§3)의 입력이자 HUD 핑 표시의 출처. Net 오토로드가 자체 처리한다
 # (게임 로직으로 안 올라온다 — net_msg emit 전에 Net이 가로챈다). 각자 상대에게 보내고 상대는 즉시 에코.

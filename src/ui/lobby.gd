@@ -15,6 +15,7 @@ const DebugBridgeScript := preload("res://src/core/debug_bridge.gd")
 @onready var _adv_btn: Button = %AdvBtn
 @onready var _settings_btn: Button = %SettingsBtn
 @onready var _debug_btn: Button = %DebugBtn  # 개발 모드 토글 — 켜 두면 F1 패널이 URL 없이 열린다
+@onready var _boss_test_btn: Button = %BossTestBtn  # 개발 전용 — 누르면 보스 테스트 랩(무적·패턴 버튼) 직행
 @onready var _status: Label = %Status
 @onready var _job_btns: Dictionary[String, Button] = {  # job id -> 토글 버튼 (ButtonGroup로 라디오)
 	"warrior": %WarriorBtn as Button,
@@ -68,6 +69,11 @@ func _ready() -> void:
 	_debug_btn.toggled.connect(func(on: bool) -> void:
 		DebugBridgeScript.set_panel_forced(on)
 		_status.text = "개발 모드 %s — F1로 패널을 엽니다" % ("켬" if on else "끔"))
+	# 개발 전용 「보스 테스트 랩」 — dev 게이트(F1 패널과 **같은 판정** = DebugBridge.panel_enabled)로만 보인다.
+	#   프로덕션 웹 빌드(debug=1 없음)에서는 숨겨져 프로덕션 무접촉을 지킨다. 에디터·네이티브는 항상 dev라 보인다.
+	# 🔴 스톡 엔진이 `--test`를 가로채 네이티브·에디터엔 플래그 진입로가 없어(test_mode.activate 주석), 이 버튼이 유일한 입구다.
+	_boss_test_btn.visible = DebugBridgeScript.panel_enabled()
+	_boss_test_btn.pressed.connect(_on_boss_test_pressed)
 	var settings := SettingsPanelScene.instantiate()
 	add_child(settings)  # CanvasLayer(layer 10) — 로비 위 오버레이
 	_settings_btn.pressed.connect(settings.open)
@@ -161,6 +167,16 @@ func _run_autostart(req: Dictionary) -> void:
 func _on_host_pressed() -> void:
 	_set_busy("방 만드는 중…")
 	Net.host_room(_url_edit.text.strip_edges())
+
+
+# 개발 전용 — TestMode를 켜고 현재 선택 직업(기본 전사)으로 즉시 호스트한다.
+# 방 성립(room_created) → main._enter_after_room()이 TestMode.is_active()를 보고 _to_boss_test()로
+# 챕터1 보스 칸 + 랩(무적 플레이어·NPC 더미·패턴 버튼·「새 보스」)에 직행한다.
+# ⚠ 호스트는 릴레이(기본 wss://relay.jachana.com)를 지난다 — 기존 ?test=1 경로와 동일한 전제다(솔로도 방을 만든다).
+func _on_boss_test_pressed() -> void:
+	TestMode.activate()
+	_status.text = "보스 테스트 랩으로 시작합니다…"
+	_on_host_pressed()
 
 
 func _on_join_pressed() -> void:

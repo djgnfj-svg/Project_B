@@ -7,7 +7,9 @@ shader_type canvas_item;
 //   여기서 그리는 도형 = CombatMath.is_strike_hit(원) / is_hit_in_cone(부채꼴)의 **조건 그 자체**다.
 //
 // 좌표 규약 (boss.gd `_apply_telegraph_geometry`와 미러 — 한쪽을 고치면 같이 고친다):
-//   쿼드 = 1×1 텍스처 + centered + **균일** scale(= quad_px)
+//   쿼드 = 2×2 텍스처 + centered + **균일** scale(= quad_px/2) → 월드 한 변 = quad_px
+//     ⚠ 텍스처가 2×2인 이유: 1×1이면 centered 오프셋 -0.5px가 거대 scale에 곱해져 half-quad 어긋난다
+//       (콘 apex가 회전 방향으로 -123px 튐, boss.gd `_telegraph_quad_tex` 주석 미러 — 같이 고쳐라).
 //     ⇒ 노드 원점 = 원 중심 / 부채꼴 apex, 쿼드가 덮는 월드 영역 = 원점 중심 한 변 quad_px 정사각.
 //     ⇒ p = (UV - 0.5) * quad_px 는 **월드 px 오프셋**이다(노드 로컬 = facing 정렬 프레임).
 //       회전+균일스케일은 닮음변환이라 길이는 그대로고 각은 facing만큼만 돌아간다 — 전단·타원 없음.
@@ -55,6 +57,14 @@ uniform float fill_fade = 0.25;      // 채움 알파가 바깥으로 갈수록 
 // `_telegraph_left`를 uniform으로 넘겨라 — 그 값은 각 클라가 자기 예고 창으로 리졸브한 것이다.
 uniform float pulse_amp = 0.10;      // 알파 맥동 폭
 uniform float pulse_hz = 2.2;        // 알파 맥동 주기(등속 — 위 주석)
+// 대각 위험 줄무늬(공사장 경고 톤 — swing_cone.md §3 B안). 판정-안 채움을 밝은/어두운 대각 빗금으로.
+// 🔴 흐름은 `TIME` **등속만** — 임박도(남은 시간)를 TIME에서 유도 금지(위 pulse 계약과 동일). 격자 스냅된
+//   q로 좌표를 만들어 빗금도 도트 블록으로 계단진다(16px 톤 유지). 전부 손맛 상수라 boss.gd가 안 심어도
+//   패턴마다 값이 같아 "이전 패턴 값 잔류" 문제가 없다(기하 uniform과 다른 점).
+uniform float stripe_period = 12.0;  // 빗금 간격(월드 px) — 도트 격자와 어울리는 값
+uniform float stripe_speed = 0.6;    // 흐름 속도(등속)
+uniform vec4 stripe_dark : source_color = vec4(0.541, 0.157, 0.063, 0.353);  // 어두운 줄(밝은 줄 = fill_color)
+uniform float duty = 0.5;            // 밝은 줄 비율
 
 void fragment() {
 	// 🔴 incoming COLOR = modulate × self_modulate × vertex color. fragment를 오버라이드하면
@@ -89,11 +99,16 @@ void fragment() {
 	} else {
 		float t = clamp(r / max(radius_px, 0.0001), 0.0, 1.0);
 		vec4 base = fill_color;
+		// 대각 위험 줄무늬 — q(격자 스냅점)로 계단진 빗금. s의 대각선 = (x+y), 흐름은 TIME 등속(위 주석 계약).
+		float stripe_s = (q.x + q.y) / max(stripe_period, 0.0001) - TIME * stripe_speed;
+		if (fract(stripe_s) >= duty) {
+			base = stripe_dark;                  // 어두운 줄 (밝은 줄 = fill_color 그대로)
+		}
 		base.a *= mix(1.0, 1.0 - fill_fade, t);
 		if (d <= border_px) {
 			base = border_color;                 // 경계 테두리 밴드(위 border_px 주석 — 안쪽만이 아니다)
 		}
-		// 텍스처는 "무늬"로만 곱한다 — 1×1 흰색이면 정확히 항등이다. 나중에 정사각 풀블리드(알파 1)
+		// 텍스처는 "무늬"로만 곱한다 — 2×2 흰색이면 정확히 항등이다. 나중에 정사각 풀블리드(알파 1)
 		// 패턴을 얹고 싶으면 `boss.gd`의 `_telegraph_quad_tex()`를 갈아야 한다(형태는 계속 셰이더가
 		// 정한다 — ⚠ **형태를 그린 텍스처는 안 된다**. 알파가 셰이더 형태를 다시 잘라 정합이 깨진다).
 		vec4 tex = texture(TEXTURE, UV);

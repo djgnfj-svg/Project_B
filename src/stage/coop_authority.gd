@@ -44,6 +44,27 @@ const MECH_SOLVE := "solve"      # 전원 각자 키패드(공유 순서) 완료
 const MECH_REACH := "reach"      # 전원 표식 지점으로 대피(이동)
 const MECH_SCATTER := "scatter"  # 각자 다른 표식으로 갈라짐(분산·이동)
 const MECH_HUDDLE := "huddle"    # 둘이 바짝 붙기(뭉치기·이동)
+# C1 영혼 비석 결박 — 한 명(A) 비석에 결박(연타 버티기) + 파트너(B)가 비석 파괴. 두 게이지 맞물림.
+# (stele_bind_coop.md §4·§6-4 — CAGE 확장. win = A 저항시간.)
+const MECH_STELE := "stele"
+const STELE_DURA_MAX := 100.0    # 비석 내구도(B가 깎음, 0=파괴=성공)
+const STELE_HIT := 6.0           # B 타격 1회당 내구도 감소
+const STELE_REGEN := 10.0        # 내구도 자연회복(/s) — 단 A가 버티는(연타) 동안은 정지
+const RESIST_DRAIN := 6.0        # A 저항시간 기본 감소(/s)
+const RESIST_MASH_DRAIN := 3.0   # A 연타 중 감소(/s) — 버티면 느려짐
+const STELE_MASH_WINDOW_MS := 500  # 이 시간 안에 연타 입력이 있으면 "버티는 중"
+const STELE_B_HIT_COOLDOWN_MS := 220  # B 타격 최소 간격(연타 스팸 방지 — 호스트/로컬 게이트)
+const STELE_FAIL_HP_FRAC := 0.4  # 저항 0(실패) 시 A가 잃는 HP 비율
+const STELE_BOSS_HEAL_FRAC := 0.06  # 실패 시 보스 소량 회복 비율
+# 가시 링(비석 주기 hazard) + 파편(회수 강타 아이템) — §4
+const THORN_INTERVAL := 2.5      # 가시 링 방출 주기(s)
+const THORN_TELEGRAPH := 0.7     # 링 예고(커지는 구간) — 구르기로 피할 시간
+const THORN_RADIUS := 52.0       # 링 판정 반경(B가 안이면 피격)
+const THORN_DAMAGE := 8          # 링 피격 데미지(B)
+const SHARD_TTL := 3.0           # 파편 잔존(s)
+const SHARD_PICKUP_RADIUS := 26.0
+const SHARD_BUFF_HITS := 3       # 파편 회수 = 다음 N타 강타
+const STELE_HIT_STRONG := 18.0   # 강타 시 내구도 감소(§4 −18)
 
 const HUDDLE_RADIUS := 50.0      # 뭉치기 성공 = 서로 이 거리 안
 
@@ -55,9 +76,11 @@ const MECHS: Array[Dictionary] = [
 	{"m": MECH_SCATTER, "name": "분산", "desc": "각자 다른 표식(초록·주황) 안에서 버텨라 — 나가면 즉사!", "win": 6.0},
 	{"m": MECH_HUDDLE, "name": "뭉치기", "desc": "초록 링 안에 둘 다 모여 버텨라 — 밖이면 즉사!", "win": 5.0},
 	{"m": MECH_SOLVE, "name": "직면", "desc": "시간 안에 표시 키를 눌러라 — 못 누르면 메테오!", "len": 1, "win": 4.0},
+	{"m": MECH_STELE, "name": "영혼 비석 결박", "desc": "한 명 결박! A는 연타로 버티고 B는 비석을 부숴 구출하라 — 저항 소진 전에!", "win": 18.0},
 ]
 
 @export var boss_eid: String = "boss1"
+@export var stele_only: bool = false  # 실보스: true면 로테이션 대신 영혼 비석(STELE)만 발동(다른 테스트 메커니즘 제외)
 const BUILD_TAG := "v0725g-menu"
 
 var _mech_idx: int = 0            # 다음 발동할 패턴 인덱스
@@ -85,6 +108,24 @@ var _doom: Sprite2D = null        # CAGE 즉사 장판(피해자 발밑 추적)
 var _fx: Array[Sprite2D] = []     # 패턴별 부가 이펙트(별·봉인진·직면·집결) — 정적
 var _danger: ColorRect = null     # 화면 붉은 예고/플래시 오버레이 (표시 전용)
 var _last_safe_t: Dictionary = {} # 호스트: 위치 패턴에서 피어가 마지막으로 안전지대 안에 있던 시각(msec)
+# --- C1 영혼 비석 결박 상태 (호스트 확정) ---
+var _stele_dura: float = STELE_DURA_MAX   # 비석 내구도(호스트 확정)
+var _resist: float = 100.0                # A 저항시간(호스트 확정, win에서 초기화)
+var _a_mash_msec: int = -1                # A가 마지막으로 연타한 시각(호스트) — "버티는 중" 판정
+var _b_hit_msec: int = -1                 # B가 마지막으로 비석 타격한 시각(로컬 스팸 게이트)
+var _stele_obj: Sprite2D = null           # 영혼 비석 스프라이트(피해자 옆 고정)
+var _stele_pos: Vector2 = Vector2.ZERO    # 비석 월드 위치(결박 시작점 고정)
+var _soul_line: Line2D = null             # 비석↔A 붉은 결박선
+var _resist_bar_bg: ColorRect = null      # A 저항 게이지(내구도 바 아래 별도)
+var _resist_bar_fg: ColorRect = null
+var _thorn_next: float = 0.0              # 다음 가시 링까지(호스트)
+var _shard: Sprite2D = null               # 현재 가시 파편(1개 유지)
+var _shard_pos: Vector2 = Vector2.ZERO
+var _shard_left: float = 0.0              # 파편 잔존 타이머(호스트)
+var _b_buff_hits: int = 0                 # B 강타 남은 횟수(파편 회수, 호스트)
+var _gauge_next: float = 0.0              # 게이지 표시 브로드캐스트 스로틀(호스트)
+var _roll_grant_msec: Dictionary = {}     # 원격 피어 구르기 i-frame 창(가시 링 회피, Critical4)
+var _npc_b_msec: int = -1                 # 랩: NPC가 B일 때(인간이 A) 자동 타격 스로틀
 
 var _log_left: float = 0.0
 
@@ -102,6 +143,7 @@ var _bar_fg: ColorRect = null
 
 func _ready() -> void:
 	EventBus.net_msg.connect(_on_net_msg)
+	EventBus.peer_left.connect(_on_peer_left)
 	_build_prompt()
 	print("[coop] ready · my_id=%d host=%s" % [Net.my_id, str(Net.is_host())])
 
@@ -109,6 +151,9 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_update_status()
 	if _active:
+		if _mech == MECH_STELE:
+			_update_stele(delta)
+			return
 		_window_left -= delta
 		_update_bar()
 		_update_danger()
@@ -164,6 +209,8 @@ func _trigger() -> void:
 	if alive.size() < 2:
 		_next_left = INTERVAL_S   # 2인 전용
 		return
+	if stele_only:
+		_mech_idx = MECHS.size() - 1   # STELE는 MECHS 마지막 — 실보스는 이것만
 	var cfg: Dictionary = MECHS[_mech_idx]
 	_mech_idx = (_mech_idx + 1) % MECHS.size()
 	_mech = str(cfg["m"])
@@ -174,9 +221,9 @@ func _trigger() -> void:
 	_seq = []
 	for _i in seq_len:
 		_seq.append(randi() % KEYS.size())
-	_victim = alive[randi() % alive.size()] if _mech == MECH_CAGE else -1
-	# 랩: 케이지 피해자를 NPC로 고정 → 님이 달려가 구출(패턴을 님이 푼다)
-	if TestMode.is_active() and _mech == MECH_CAGE and _player_by_id(TestMode.NPC_PEER_ID) != null:
+	_victim = alive[randi() % alive.size()] if (_mech == MECH_CAGE or _mech == MECH_STELE) else -1
+	# 랩: 피해자(A)를 NPC로 고정 → 님(B)이 달려가 구출/비석 파괴(패턴을 님이 푼다)
+	if TestMode.is_active() and (_mech == MECH_CAGE or _mech == MECH_STELE) and _player_by_id(TestMode.NPC_PEER_ID) != null:
 		_victim = TestMode.NPC_PEER_ID
 	# 위치 표식 결정 (생존 평균 위치 기준)
 	var avg := Vector2.ZERO
@@ -211,6 +258,22 @@ func debug_force_mech(idx: int) -> void:
 	_trigger()
 
 
+# 테스트 랩 — STELE를 **지정 victim**으로 즉시 발동. 인간이 A(=victim=자기) / B(=victim=NPC)를 골라 솔로 테스트.
+func debug_force_stele(victim_pid: int) -> void:
+	if not Net.is_host() or _active:
+		return
+	if _alive_peer_ids().size() < 2:
+		return   # 2인(인간+NPC) 필요
+	_mech = MECH_STELE
+	_mech_name = "영혼 비석 결박"
+	_window_max = 18.0
+	_victim = victim_pid
+	_npc_b_msec = -1
+	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_COOP_CALL, "m": _mech, "t": _window_max,
+		"v": _victim, "s": [], "n": _mech_name, "d": "", "tx": 0.0, "ty": 0.0, "tx2": 0.0, "ty2": 0.0})
+	_begin(_window_max)
+
+
 func _begin(t: float) -> void:
 	_active = true
 	_window_left = t
@@ -224,7 +287,7 @@ func _begin(t: float) -> void:
 		_danger.color.a = 0.0
 	var me := _local_player()
 	if me != null:
-		if _mech == MECH_CAGE:
+		if _mech == MECH_CAGE or _mech == MECH_STELE:
 			me.bound = (me.peer_id == _victim)   # 피해자만 정지, 구조자는 이동
 		elif _mech == MECH_SOLVE:
 			me.bound = true                      # SOLVE = 전원 정지(WASD가 키패드로)
@@ -247,6 +310,24 @@ func _begin(t: float) -> void:
 			_fx.append(_mk_sprite(GAZE_TEX, me.global_position + Vector2(0, -22), Color(1, 1, 1, 0.95), 6))
 		else:
 			_fx.append(_mk_sprite(SEAL_TEX, me.global_position + Vector2(0, 8), Color(1, 1, 1, 0.95), 4))
+	elif _mech == MECH_STELE:
+		# 두 게이지 초기화(호스트 확정 · 게스트는 표시용 max에서 시작 — 동기화는 후속). A 옆에 비석 낙하 + 붉은 결박선.
+		_stele_dura = STELE_DURA_MAX
+		_resist = 100.0
+		_a_mash_msec = -1
+		_b_hit_msec = -1
+		_thorn_next = THORN_INTERVAL
+		_shard_left = 0.0
+		_b_buff_hits = 0
+		var vic := _player_by_id(_victim)
+		_stele_pos = (vic.global_position + Vector2(22, -2)) if vic != null else Vector2.ZERO
+		_stele_obj = _mk_stele(_stele_pos)
+		_soul_line = _mk_soul_line()
+		var bnode := _boss_node()
+		if bnode != null and bnode.has_method("play_c1_clip"):
+			bnode.set("coop_locked", true)   # 결박 중 보스 AI 정지(설계 §9)
+			bnode.call("play_c1_clip", "roar")   # 지목 포효
+			get_tree().create_timer(0.5).timeout.connect(_stele_start_grab.bind(bnode))
 	_show_prompt(true)
 
 
@@ -293,10 +374,277 @@ func _clear_marker() -> void:
 	if _doom != null:
 		_doom.queue_free()
 		_doom = null
+	if _stele_obj != null:
+		_stele_obj.queue_free()
+		_stele_obj = null
+	if _soul_line != null:
+		_soul_line.queue_free()
+		_soul_line = null
+	if _shard != null:
+		_shard.queue_free()
+		_shard = null
+		_shard_left = 0.0
 	for s: Sprite2D in _fx:
 		if is_instance_valid(s):
 			s.queue_free()
 	_fx.clear()
+
+
+# ── C1 영혼 비석 결박 (CAGE 확장 — 두 게이지 맞물림) ──
+
+# soul_stele.png 텍스처 (런타임 load — 아트 랜딩 전에도 파스 통과, 없으면 CAGE_TEX 폴백).
+func _stele_tex() -> Texture2D:
+	var t := load("res://assets/sprites/enemies/soul_stele.png") as Texture2D
+	return t if t != null else CAGE_TEX
+
+
+func _mk_stele(pos: Vector2) -> Sprite2D:
+	var s := Sprite2D.new()
+	s.texture = _stele_tex()
+	s.hframes = 5   # idle 0~1 · break 2~4 (soul_stele 시트)
+	s.frame = 0
+	s.global_position = pos
+	s.z_index = 4
+	get_parent().add_child(s)
+	return s
+
+
+func _mk_soul_line() -> Line2D:
+	var l := Line2D.new()
+	l.width = 3.0
+	l.default_color = Color(0.95, 0.15, 0.2, 0.85)   # 붉은 영혼 결박선
+	l.z_index = 3
+	get_parent().add_child(l)
+	return l
+
+
+# STELE 매 프레임 (활성 중). 결박선 갱신 + 호스트 두 게이지 판정. 게스트는 표시만(게이지 동기화는 후속).
+func _update_stele(delta: float) -> void:
+	var vic := _player_by_id(_victim)
+	if _soul_line != null and vic != null:
+		_soul_line.points = PackedVector2Array([_stele_pos, vic.global_position + Vector2(0, -8)])
+	if Net.is_host():
+		var now := Time.get_ticks_msec()
+		# 랩: NPC가 반대 역할을 자동으로 → 인간이 A/B 어느 쪽이든 솔로로 테스트 가능(설계 요구)
+		if TestMode.is_active():
+			if _victim == TestMode.NPC_PEER_ID:
+				_a_mash_msec = now   # NPC=A 자동 버티기 (인간이 B일 때)
+			elif _player_by_id(TestMode.NPC_PEER_ID) != null and now - _npc_b_msec >= 500:
+				_npc_b_msec = now
+				_stele_b_hit()       # NPC=B 자동 타격 ~2/s (인간이 A일 때 — B가 비석을 깬다)
+		var a_holding := (now - _a_mash_msec) <= STELE_MASH_WINDOW_MS
+		# A 저항: 항상 감소, 버티는 중엔 느리게(§4)
+		_resist -= (RESIST_MASH_DRAIN if a_holding else RESIST_DRAIN) * delta
+		# 비석 내구도: A가 버티면 자연회복 정지(=B 진전 열림), 아니면 회복. B 타격은 input에서 즉시 감산.
+		if not a_holding:
+			_stele_dura = minf(STELE_DURA_MAX, _stele_dura + STELE_REGEN * delta)
+		_thorn_next -= delta
+		if _thorn_next <= 0.0:
+			_thorn_next = THORN_INTERVAL
+			_spawn_thorn_ring()
+		_update_shard(delta)
+		_gauge_next -= delta
+		if _gauge_next <= 0.0:
+			_gauge_next = 0.15
+			Net.send_game({NetSchema.KEY_KIND: NetSchema.G_COOP_GAUGE, "du": _stele_dura, "re": _resist})
+		if _stele_dura <= 0.0:
+			_stele_success()
+			return
+		if _resist <= 0.0:
+			_stele_fail()
+			return
+	_update_stele_bars()
+
+
+# B가 비석 근처에서 타격 — 호스트가 내구도 확정. 연타 스팸은 쿨다운 게이트.
+func _stele_b_hit() -> void:
+	if not Net.is_host() or not _active or _mech != MECH_STELE:
+		return
+	var now := Time.get_ticks_msec()
+	if now - _b_hit_msec < STELE_B_HIT_COOLDOWN_MS:
+		return
+	_b_hit_msec = now
+	var dmg := STELE_HIT
+	if _b_buff_hits > 0:
+		dmg = STELE_HIT_STRONG   # 파편 회수 강타
+		_b_buff_hits -= 1
+	_stele_dura = maxf(0.0, _stele_dura - dmg)
+
+
+# A가 버티기(연타) — 호스트가 시각 기록(회복 정지 + 저항 감소 완화).
+func _stele_a_mash() -> void:
+	if Net.is_host():
+		_a_mash_msec = Time.get_ticks_msec()
+
+
+# STELE 입력 — A(속박): 아무 키 연타=버티기 · B(자유): 비석 근처에서 아무 키=타격.
+func _stele_input(event: InputEvent) -> void:
+	var ke := event as InputEventKey
+	if ke == null or not ke.pressed or ke.echo:
+		return
+	var kc := ke.physical_keycode
+	if not (KEYS.has(kc) or kc == KEY_SPACE or kc == KEY_J):
+		return
+	if Net.my_id == _victim:
+		get_viewport().set_input_as_handled()   # A 버티기
+		if Net.is_host():
+			_stele_a_mash()
+		else:
+			Net.send_game({NetSchema.KEY_KIND: NetSchema.G_COOP_IN, "act": "mash"})
+	else:
+		var me := _local_player()
+		if me == null or me.global_position.distance_to(_stele_pos) > RESCUE_RADIUS:
+			return   # 비석에서 멀면 무시 — 달려가야 타격
+		get_viewport().set_input_as_handled()   # B 타격
+		if Net.is_host():
+			_stele_b_hit()
+		else:
+			Net.send_game({NetSchema.KEY_KIND: NetSchema.G_COOP_IN, "act": "hit"})
+
+
+func _stele_success() -> void:
+	# 내구도 0 → 비석 파괴 + 보스 경직(공동 딜 창) + A 해방. _finish(성공·메테오 없음) 재사용.
+	if _stele_obj != null:
+		_stele_obj.frame = 4   # 산산조각
+	var boss := _boss_node()
+	if boss != null and boss.has_method("enter_groggy"):
+		boss.call("enter_groggy", 3.0)   # 호스트 상태(무방비 창) — 클립/락은 _apply_resolution이 양쪽 처리
+	_finish(true, [])
+
+
+func _stele_fail() -> void:
+	# 저항 0 → A가 HP 큰 덩이 잃고 강제 해방(즉사 아님 — 진행 계속). 메테오 없음.
+	var vic := _player_by_id(_victim)
+	if vic != null and vic.is_alive():
+		var h := vic.get_node_or_null("Health") as HealthComponent
+		if h != null:
+			var mx: int = int(h.get("max_hp")) if h.get("max_hp") != null else 100
+			h.apply_damage(int(mx * STELE_FAIL_HP_FRAC))
+	_finish(false, [])   # dead 비움 = 메테오/즉사 없음, 실패 표시(붉은 플래시)만
+
+
+func _on_peer_left(peer_id: int) -> void:
+	_roll_grant_msec.erase(peer_id)
+	if _active and _mech == MECH_STELE:
+		if Net.is_host():
+			_finish(false, [])
+		else:
+			_apply_resolution(false, [], false)
+
+
+func _boss_node() -> Node:
+	for node: Node in get_tree().get_nodes_in_group("mob"):
+		if str(node.get("eid")) == boss_eid:
+			return node
+	return null
+
+
+# STELE 보스 클립 전환 (타이머 콜백 — bind로 노드 넘김)
+func _stele_start_grab(b: Node) -> void:
+	if is_instance_valid(b) and _active and _mech == MECH_STELE:
+		b.call("play_c1_clip", "grab")
+
+
+func _stele_end_clip(b: Node) -> void:
+	if is_instance_valid(b):
+		b.set("coop_locked", false)
+		b.call("end_c1_clip")
+
+
+# ── 가시 링 hazard + 파편 (STELE 중 B 회피 게임플레이 · §4) ──
+func _plain_sprite(tex: Texture2D, pos: Vector2, z: int, a: float) -> Sprite2D:
+	var sp := Sprite2D.new()
+	sp.texture = tex
+	sp.global_position = pos
+	sp.z_index = z
+	sp.modulate = Color(1, 1, 1, a)
+	get_parent().add_child(sp)
+	return sp
+
+
+func _spawn_thorn_ring() -> void:
+	# 호스트: 로컬 링 시각 + 전원 브로드캐스트(게스트도 보고 피하게, Critical3) + 예고 후 판정
+	_spawn_thorn_visual(_stele_pos)
+	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_THORN, "x": _stele_pos.x, "y": _stele_pos.y, "t": "ring"})
+	get_tree().create_timer(THORN_TELEGRAPH).timeout.connect(_thorn_judge.bind(_stele_pos))
+
+
+func _spawn_thorn_visual(pos: Vector2) -> void:
+	var tex := load("res://assets/sprites/enemies/thorn_ring.png") as Texture2D
+	if tex == null:
+		return
+	var ring := _plain_sprite(tex, pos, 3, 0.55)
+	ring.scale = Vector2.ONE * 0.3
+	var tw := create_tween()
+	tw.tween_property(ring, "scale", Vector2.ONE * (THORN_RADIUS * 2.0 / 64.0), THORN_TELEGRAPH)
+	tw.parallel().tween_property(ring, "modulate:a", 0.95, THORN_TELEGRAPH)
+	tw.tween_property(ring, "modulate:a", 0.0, 0.2)
+	tw.tween_callback(ring.queue_free)
+
+
+func _thorn_judge(pos: Vector2) -> void:
+	if not (Net.is_host() and _active and _mech == MECH_STELE):
+		return
+	for pid: int in _alive_peer_ids():
+		if pid == _victim:
+			continue
+		var p := _player_by_id(pid)
+		if p == null:
+			continue
+		if p.net_anchor().distance_to(pos) <= THORN_RADIUS and not _b_rolling(p):
+			var h := p.get_node_or_null("Health") as HealthComponent
+			if h != null:
+				h.apply_damage(THORN_DAMAGE)
+	_spawn_shard(pos)
+
+
+func _b_rolling(p) -> bool:
+	if p.is_local:
+		return p.is_rolling()
+	return CombatMath.is_iframe_active(int(_roll_grant_msec.get(p.peer_id, -1000000000)), Time.get_ticks_msec())
+
+
+func _spawn_shard(pos: Vector2) -> void:
+	_spawn_shard_visual(pos)
+	if Net.is_host():
+		Net.send_game({NetSchema.KEY_KIND: NetSchema.G_THORN, "x": pos.x, "y": pos.y, "t": "shard"})
+
+
+func _spawn_shard_visual(pos: Vector2) -> void:
+	if _shard != null and is_instance_valid(_shard):
+		_shard.queue_free()
+	var tex := load("res://assets/sprites/enemies/thorn_shard.png") as Texture2D
+	_shard = _plain_sprite(tex, pos + Vector2(0, 4), 4, 1.0) if tex != null else null
+	_shard_pos = pos + Vector2(0, 4)
+	_shard_left = SHARD_TTL
+
+
+func _update_shard(delta: float) -> void:
+	if _shard_left <= 0.0:
+		return
+	_shard_left -= delta
+	for pid: int in _alive_peer_ids():
+		if pid == _victim:
+			continue
+		var p := _player_by_id(pid)
+		if p != null and p.net_anchor().distance_to(_shard_pos) <= SHARD_PICKUP_RADIUS:
+			_b_buff_hits = SHARD_BUFF_HITS   # 회수 → 다음 N타 강타
+			_shard_left = 0.0
+			break
+	if _shard_left <= 0.0 and _shard != null and is_instance_valid(_shard):
+		_shard.queue_free()
+		_shard = null
+
+
+# 두 게이지 바 갱신 — 내구도(주황, _bar_fg 재사용) + A 저항(붉음, _resist_bar_fg).
+func _update_stele_bars() -> void:
+	if _bar_fg != null:
+		var dr: float = clampf(_stele_dura / STELE_DURA_MAX, 0.0, 1.0)
+		_bar_fg.size = Vector2(240.0 * dr, 10.0)
+		_bar_fg.color = Color(0.92, 0.5, 0.2)
+	if _resist_bar_fg != null:
+		var rr: float = clampf(_resist / 100.0, 0.0, 1.0)
+		_resist_bar_fg.size = Vector2(240.0 * rr, 8.0)
 
 
 # ── 만료 판정 (호스트): 버티지 못한 자에게 메테오 ──
@@ -388,6 +736,9 @@ func _update_rescuer_proximity() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not _active or _my_solved:
 		return
+	if _mech == MECH_STELE:
+		_stele_input(event)
+		return
 	if _mech == MECH_CAGE and (Net.my_id == _victim or not _engaged):
 		return   # CAGE: 구조자가 파트너 근처일 때만
 	var ke := event as InputEventKey
@@ -467,6 +818,15 @@ func _apply_resolution(success: bool, dead: Array, do_damage: bool) -> void:
 	if do_damage:
 		for e: Variant in dead:
 			_damage_one(int(e))
+	if _mech == MECH_STELE:
+		var sboss := _boss_node()
+		if sboss != null:
+			if success and sboss.has_method("play_c1_clip"):
+				sboss.call("play_c1_clip", "groggy")   # 성공: 경직 클립(양쪽) + 3.2s 뒤 원복
+				get_tree().create_timer(3.2).timeout.connect(_stele_end_clip.bind(sboss))
+			elif sboss.has_method("end_c1_clip"):
+				sboss.set("coop_locked", false)   # 실패: 즉시 락 해제 + 원복(게스트 정지 버그 방지)
+				sboss.call("end_c1_clip")
 	EventBus.coop_result.emit(success)
 
 
@@ -540,7 +900,23 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			_target2 = Vector2(float(data.get("tx2", 0.0)), float(data.get("ty2", 0.0)))
 			_begin(float(data.get("t", 8.0)))
 		NetSchema.G_COOP_IN:
-			if not Net.is_host() or int(data.get("done", 0)) != 1:
+			if not Net.is_host():
+				return
+			if _mech == MECH_STELE:
+				# 게스트 A 버티기 / B 타격 보고 → 호스트 확정. 역할=발신자 id(위조 방지) + B 근접 호스트 재검증.
+				if not _active:
+					return
+				match str(data.get("act", "")):
+					"mash":
+						if from_id == _victim:
+							_stele_a_mash()
+					"hit":
+						if from_id != _victim:
+							var bp := _player_by_id(from_id)
+							if bp != null and bp.net_anchor().distance_to(_stele_pos) <= RESCUE_RADIUS:
+								_stele_b_hit()
+				return
+			if int(data.get("done", 0)) != 1:
 				return
 			if _mech == MECH_CAGE:
 				if from_id != _victim:
@@ -557,6 +933,25 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 				for e: Variant in (dv as Array):
 					dead.append(int(e))
 			_apply_resolution(int(data.get("ok", 0)) == 1, dead, false)   # 게스트: 표시만(피해 없음)
+		NetSchema.G_COOP_GAUGE:
+			if Net.is_host() or from_id != NetSchema.HOST_ID:
+				return
+			if _mech == MECH_STELE and _active:
+				_stele_dura = float(data.get("du", _stele_dura))
+				_resist = float(data.get("re", _resist))
+				_update_stele_bars()
+		NetSchema.G_ROLL:
+			_roll_grant_msec[from_id] = Time.get_ticks_msec()   # 원격 구르기 i-frame 창 기록
+		NetSchema.G_THORN:
+			if Net.is_host() or from_id != NetSchema.HOST_ID:
+				return
+			if _mech != MECH_STELE or not _active:
+				return
+			var tpos := Vector2(float(data.get("x", 0.0)), float(data.get("y", 0.0)))
+			if str(data.get("t", "")) == "shard":
+				_spawn_shard_visual(tpos)
+			else:
+				_spawn_thorn_visual(tpos)
 
 
 # ── 헬퍼 ──
@@ -666,6 +1061,21 @@ func _build_prompt() -> void:
 	_bar_fg.color = Color(0.4, 0.95, 0.45)
 	_bar_fg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_bar_bg.add_child(_bar_fg)
+	# STELE 전용 A 저항 게이지(내구도 바 아래 별도) — 평소엔 숨김
+	_resist_bar_bg = ColorRect.new()
+	_resist_bar_bg.color = Color(0.12, 0.05, 0.05, 0.8)
+	_resist_bar_bg.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_resist_bar_bg.offset_left = -120.0
+	_resist_bar_bg.offset_right = 120.0
+	_resist_bar_bg.offset_top = 142.0
+	_resist_bar_bg.offset_bottom = 150.0
+	_resist_bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_resist_bar_bg.visible = false
+	center.add_child(_resist_bar_bg)
+	_resist_bar_fg = ColorRect.new()
+	_resist_bar_fg.color = Color(0.9, 0.25, 0.25)
+	_resist_bar_fg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_resist_bar_bg.add_child(_resist_bar_fg)
 	_prompt.visible = false
 
 
@@ -694,6 +1104,8 @@ func _show_prompt(on: bool) -> void:
 	_prompt.visible = on
 	_title.visible = on
 	if not on:
+		if _resist_bar_bg != null:
+			_resist_bar_bg.visible = false
 		return
 	if _mech == MECH_CAGE:
 		if Net.my_id == _victim:
@@ -715,13 +1127,24 @@ func _show_prompt(on: bool) -> void:
 	elif _mech == MECH_HUDDLE:
 		_title.text = "뭉쳐라! 초록 링 안에 둘 다 버텨라!"
 		_keys_box.visible = false
+	elif _mech == MECH_STELE:
+		if Net.my_id == _victim:
+			_title.text = "⛓ 결박됨! 아무 키나 연타해 버텨라 — 파트너가 비석을 부순다!"
+		else:
+			_title.text = "🔨 비석으로 달려가 연타해 부셔라 — 파트너 저항이 다하기 전에!"
+		_keys_box.visible = false
 	else:
 		# SOLVE (봉인진/직면) — 전원 각자 키패드, 시간 내 완료 못하면 메테오
 		_title.text = "%s — 시간 안에 아래 키를 순서대로!" % _mech_name
 		_keys_box.visible = true
 		_refresh_keys()
 	_bar_bg.visible = true
-	_update_bar()
+	if _resist_bar_bg != null:
+		_resist_bar_bg.visible = (_mech == MECH_STELE)
+	if _mech == MECH_STELE:
+		_update_stele_bars()
+	else:
+		_update_bar()
 
 
 func _refresh_keys() -> void:

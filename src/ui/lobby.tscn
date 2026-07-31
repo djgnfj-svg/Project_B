@@ -186,6 +186,15 @@ toggle_mode = true
 theme_type_variation = &"SmallButton"
 text = "개발 모드"
 
+[node name="BossTestBtn" type="Button" parent="Center/Dialog/Margin/Box"]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(0, 28)
+layout_mode = 2
+focus_mode = 0
+theme_type_variation = &"SmallButton"
+text = "▶ 보스 테스트 랩 (개발)"
+
 [node name="UrlEdit" type="LineEdit" parent="Center/Dialog/Margin/Box"]
 unique_name_in_owner = true
 visible = false

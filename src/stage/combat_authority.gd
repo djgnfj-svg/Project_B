@@ -22,6 +22,7 @@ var _roll_grant_msec: Dictionary = {}  # peer_id -> 마지막 구르기 그랜�
 var _pending_php: Dictionary = {}  # peer_id -> hp (게스트 전용) — 스폰 전 도착한 php 보류. 씬 전환 직후 호스트의 이월 HP 확정이 원격 아바타 스폰(첫 G_POS)보다 먼저 오면 유실되던 표시 드리프트 방지 (peer_sync._peer_jobs 보류 패턴 미러)
 var _stage_over: bool = false  # 클리어↔전멸 상호 배제 + 종료 후 판정 중지
 var _boss_strike_frame: Dictionary = {}  # peer_id -> 보스 STRIKE 피격 물리 프레임 — 물뿌리기 원 겹침 시 같은 프레임 중복 확정 방지(per-cast dedup, 보스는 한 프레임에 한 패턴만 발화)
+var _boss_sweep_seq: Dictionary = {}  # peer_id -> 마지막 피격 dash_seq — 🔴 돌진(P3) 스윕은 매 프레임 발화라 여기서 **돌진 1회당 플레이어 1회**로 dedup(프레임 dedup으론 매 프레임 데미지). i-frame으로 안 맞으면 미기록 → 다음 프레임 재판정(구르며 반경 밖으로 빠지면 회피)
 var _arrows: Array = []  # 호스트 권한 화살(궁수 활): [{aid, pos:Vector2, dir:Vector2, life:float, shooter:int}, …] — _physics_process가 전진·명중 판정
 var _last_shot_msec: Dictionary = {}  # peer_id -> 마지막 발사 msec (호스트 전용 — 발사율 스팸 게이트, _last_hit_msec 미러)
 # peer_id -> 호스트가 그 피어에게 **마지막으로 인정한** 평타 콤보 타수 (호스트 전용, 궁수 "평·평·쭉").
@@ -74,6 +75,7 @@ func _ready() -> void:
 	EventBus.player_hp_confirmed.connect(_on_player_hp_confirmed)
 	EventBus.mob_strike.connect(_on_mob_strike)
 	EventBus.boss_strike.connect(_on_boss_strike)
+	EventBus.boss_sweep.connect(_on_boss_sweep)
 	EventBus.player_shoot.connect(_on_player_shoot)
 	for node: Node in get_tree().get_nodes_in_group("enemy"):
 		_register_enemy(node)
@@ -88,6 +90,7 @@ func _ready() -> void:
 		_leech_frac.erase(peer_id)  # 피흡 잔량도 대칭 정리 (이탈 피어 잔류 방지)
 		_pending_php.erase(peer_id)
 		_boss_strike_frame.erase(peer_id)  # 보스 STRIKE dedup 기록도 대칭 정리 (유한하나 정리 일관성)
+		_boss_sweep_seq.erase(peer_id)  # 돌진 스윕 dedup 기록도 대칭 정리 (재접속 id가 남의 돌진 피격 이월 방지)
 		GameState.drop_party_hp(peer_id))  # 챕터 내 잔류 이월 기록 정리 (재접속 id는 증가라 재사용 없음)
 
 
@@ -441,6 +444,29 @@ func _on_boss_strike(center: Vector2, angle: float, pattern: BossPatternDef) -> 
 			continue  # 구르기 무적 (GDD §11 — 잔몹/보스 공용 예고 회피)
 		(p.get_node("Health") as HealthComponent).apply_damage(pattern.damage)
 		_boss_strike_frame[p.peer_id] = frame
+
+
+# 🔴 돌진(P3) 스윕 판정 — 호스트만. boss.gd가 돌진 매 프레임 emit하므로 **dash_seq로 돌진당 플레이어
+# 1회** 확정한다(boss_strike의 프레임 dedup과 다른 이유 = 이동 히트박스라 매 프레임 발화·같은 돌진이
+# 여러 프레임 지속). 판정 = charge_sweep_radius 원(is_strike_hit_lagged, 지연 보상은 boss_strike와 동일
+# 규약). i-frame(구르기)이면 미기록 → 다음 프레임 재판정 → 구르며 반경 밖으로 빠지면 회피(§3 공정성).
+func _on_boss_sweep(center: Vector2, _angle: float, pattern: BossPatternDef, dash_seq: int) -> void:
+	if not Net.is_host() or _stage_over or pattern == null:
+		return
+	for node: Node in get_tree().get_nodes_in_group("player"):
+		var p := node as PlayerActor
+		if p == null or not p.is_alive():
+			continue
+		if int(_boss_sweep_seq.get(p.peer_id, -1)) == dash_seq:
+			continue  # 이번 돌진에서 이미 이 플레이어 피격 — 매 프레임 중복 데미지 차단
+		var anchor := p.net_anchor()
+		var lead := p.net_anchor_lead(Net.one_way_ms(p.peer_id))
+		if not CombatMath.is_strike_hit_lagged(anchor, lead, center, pattern.charge_sweep_radius):
+			continue
+		if _is_iframe_active(p):
+			continue  # 구르기 무적 — 미기록이라 다음 프레임 재판정(반경 밖으로 빠지면 영구 회피)
+		(p.get_node("Health") as HealthComponent).apply_damage(pattern.damage)
+		_boss_sweep_seq[p.peer_id] = dash_seq
 
 
 # i-frame 조회 — 호스트 자신은 로컬 구르기 상태 직접, 원격은 G_ROLL 그랜트 창 (CombatMath 단일 소스)
