@@ -18,11 +18,13 @@ var _local_in_gate: bool = false  # 로컬 플레이어가 게이트 영역 안 
 var _local_in_craft: bool = false  # 로컬 플레이어가 제작대 영역 안 — F로 제작/강화 패널 오픈
 var _local_in_train: bool = false  # 로컬 플레이어가 훈련소 영역 안 — F로 하위 직업 패널 오픈
 
-# 마을 맵 크기 = baked 바닥(640×384) × Ground scale 1.5 — 바닥을 다시 구우면 여기도 같이 갱신 (미러)
+# 마을 맵 크기 = $Ground(TileMapLayer)에 깐 셀 범위 — 30×18셀 × 32px (미러).
+# ⚠ 에디터에서 바닥을 넓히면 여기도 같이 늘려야 카메라가 새 영역을 보여준다. 안 늘리면
+#   에러 없이 "걸어갔는데 화면이 안 따라오는" 상태가 된다.
 const MAP_RECT := Rect2(0, 0, 960, 576)
 
-# 빌드 버전 — 배포할 때마다 갱신. 마을 좌상단에 표시(캐시=구버전 판별 + 인원수 체크용)
-const BUILD_VERSION := "v0725g-menu"
+# 빌드 버전 — 배포할 때마다 갱신. 마을 우상단에 표시(캐시=구버전 판별 + 인원수 체크용)
+const BUILD_VERSION := "v0731a-forest"
 
 var _info_label: Label = null
 var _info_left: float = 0.0

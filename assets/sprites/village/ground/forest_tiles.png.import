@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dq3xmnxjqdigc"
-path="res://.godot/imported/smith.png-5a1ce12a08964ec128d9e581f694923f.ctex"
+uid="uid://cw2yd4i5f17rh"
+path="res://.godot/imported/forest_tiles.png-7890a1de66514d84d40a22150213d9d1.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/sprites/village/npc/smith.png"
-dest_files=["res://.godot/imported/smith.png-5a1ce12a08964ec128d9e581f694923f.ctex"]
+source_file="res://assets/sprites/village/ground/forest_tiles.png"
+dest_files=["res://.godot/imported/forest_tiles.png-7890a1de66514d84d40a22150213d9d1.ctex"]
 
 [params]
 

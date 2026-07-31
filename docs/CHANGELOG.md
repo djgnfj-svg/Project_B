@@ -35,6 +35,42 @@
 
 <!-- 새 항목은 이 줄 바로 아래에 `## YYYY-MM-DD — 제목` 으로 추가한다 -->
 
+## 2026-07-31 — 변경: 마을을 숲으로 — 장식 60노드 백지화 + 첫 TileMapLayer
+
+**한 줄:** 마을 장식을 전부 걷고(노드 ~60 · PNG 43장 · ambience 148줄) 바닥을 PixelLab Wang 타일셋 기반 **TileMapLayer**로 갈았다. 프로젝트 첫 TileMap. ⚠ 렌더 실기 미확인
+
+### 무엇이 바뀌었나
+
+마을은 "제작·강화·훈련소·출발"이라는 기능 4개를 위해 존재하는데, 씬 노드 ~70개 중 **기능은 6개**였고 나머지는 전부 장식(건물 6·프롭 15·NPC 8·나무 20·덤불·부두·다리·강)이었다. 사용자가 "다 지워도 될 정도로 안 쓴다"고 판단해 백지화하고 **숲**으로 방향을 잡았다.
+
+- **바닥 = `TileMapLayer` + Wang 오토타일** — `assets/tilesets/forest_village.tres`(32px·16타일·terrain 2종: 흙길 0 / 숲잔디 1). 이전 바닥은 `baked_960.png` **한 장**이었다(길·공터를 그릴 수 없었다).
+- **삭제:** 장식 노드 ~60개 · `village_ambience.gd`(148줄) · `assets/sprites/village/` PNG **43장**(+ `.import` 43).
+- **유지:** 기능 4곳 + `World` 외곽 벽 + 배선(`PeerSync`·`SceneFlow`·`ArrowField`·HUD·패널 2). 표지 스프라이트는 임시로 기존 4장 재사용(`gate_48`·`anvil`·`craft_station`·`train_station`).
+- **충돌체 정리:** 강 2 + 건물 블록 5 삭제(전부 사라진 지형의 것) · `WallBottom`을 537 → 567로 내려 맵 하단까지 개방.
+- **새 생성 도구 2개:** `scripts/gen_tileset.gd`(PixelLab 메타 → Godot TileSet) · `scripts/gen_village_ground.gd`(바닥 시드 레이아웃 → `tile_map_data`).
+
+### 왜
+
+- **`mode = 1`(MATCH_CORNERS)이다 — PixelLab 공식 문서의 컨버터는 `0`을 쓴다.** 0은 `MATCH_CORNERS_AND_SIDES`라 side peering bit까지 요구하는데 Wang 16타일 셋에는 코너 정보밖에 없다. 그대로 따랐으면 **에디터에서 오토타일이 에러 없이 안 붙었다.**
+- **시트 좌표는 `bounding_box`에서만 유도한다.** 타일 이름 `wang_N`의 N은 코너 비트값이고 `original_position`은 생성 격자 좌표다 — 둘 중 하나를 시트 인덱스로 쓰면 타일이 뒤섞인다(PixelLab 문서가 경고하는 그 실패).
+- **PNG를 `.tres`에 인라인하지 않았다.** 공식 컨버터는 이미지 바이트를 `PackedByteArray`로 박아 400KB짜리 텍스트를 만든다. `ext_resource` 참조로 두어 **4.5KB**가 됐고, rules §4 「게임은 .png/.tres만 본다」 경계도 유지된다.
+- **씬을 `PackedScene.pack()`으로 재직렬화하지 않았다.** 헤드리스에서 재-pack하면 인스턴스 자식(HUD·CraftPanel·SubJobPanel)이 인라인 노드로 풀릴 수 있다 — 그러면 패널을 고쳐도 마을에만 반영이 안 되는 조용한 갈라짐이 생긴다. 대신 **타일 데이터만** 뽑아 씬 텍스트의 한 줄로 넣었다.
+- **`village_ambience.gd`는 선택이 아니라 필연이었다** — `../Trees`·`../Npcs`·`../Blossom1/2`·`../EmberBarrel`·`../Campfire`를 `get_node`로 하드코딩해 물고 있어서, 장식을 지우면 null 참조로 죽는다.
+
+### 검증
+
+- 스위트 **9/9 통과** (`exit 0` · `ALL_TESTS_OK` · `SCRIPT ERROR` 0) + 씬 글루 파스 체크 OK.
+- 씬 무결성 직접 확인(rules §5 「익스포트 성공을 무결성 근거로 쓰지 마라」): `village.tscn` 로드 OK · Ground **540칸**(숲잔디 438 + 흙길 102, terrain 2종 다 깔림) · 기능 노드 10종 존재 · **HUD·패널이 인스턴스로 유지**(pack 사고 감시).
+- TileSet 검산: `terrain_set_0/mode = 1` · wang_13(NW/NE/SE=upper, SW=lower) → peering bit `top_left=1 top_right=1 bottom_right=1 bottom_left=0` 일치.
+
+### 남은 것
+
+- 🔴 **렌더 실기 미확인** — 헤드리스는 타일 이음새·경계 품질을 못 잡는다(rules §5). 에디터에서 눈으로 볼 것.
+- **기능 3곳 표지가 옛 마을 아트다** — 모루·대장간 문·훈련소 간판이 숲과 안 어울린다. 숲 버전(그루터기 작업대·덩굴 문 등)은 PixelLab으로 새로 뽑아야 한다.
+- **바닥이 시드 상태** — 길이 축 정렬 직선뿐이다. 에디터 Terrains 탭 + **Rect Tool(R)** 로 다듬는다(코너 모드에서 Paint Tool(D)은 안 먹는다).
+- 마을에 나무·풀이 **하나도 없다** — 숲인데 바닥만 있다. stage의 `foliage_field`·`ground_detail` 스캐터를 재사용할 수 있다(스크립트는 그대로, 텍스처만 숲용으로).
+- 미사용 타일셋 2종이 PixelLab 계정에 남아 있다(잔디↔흙길 마을풍) — 필요해지면 같은 `gen_tileset.gd`로 변환된다.
+
 ## 2026-07-29 — 추가: 무기별 콤보 액션 (근접 콤보를 연출에서 판정·화력으로)
 
 **한 줄:** 타수를 무기가 정한다(도끼2·대검3·창4) + 창 마무리 = 돌진. critic이 전제를 뒤집었다 — 활 콤보는 +21%가 아니라 **−3.6%(예산 중립)**였다. netreview Critical 1(각을 min된 타수로 세워 「로컬≤호스트」 파괴). ⚠ 실기 전량 미확인
