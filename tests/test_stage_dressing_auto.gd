@@ -128,6 +128,9 @@ func _run() -> void:
 	var respected := true
 	var pivot_ok := true
 	var textured := true
+	var shadow_ok := true
+	var shadow_z_ok := true
+	var shadow_scaled := true
 	var phases := {}
 	for c in ff.get_children():
 		var n2 := c as Node2D
@@ -143,10 +146,25 @@ func _run() -> void:
 		#   (아트 보고: foliage_* 3종 모두 밑동이 캔버스 하단 중앙).
 		if not is_equal_approx(sp.offset.y, -float(sp.texture.get_height()) * 0.5):
 			pivot_ok = false
+		# 🔴 접지 그림자 (2026-08-01) — 세 가지가 전부 조용히 깨지는 부류다.
+		var sh := n2.get_node_or_null("Shadow") as Sprite2D
+		if sh == null or sh.texture == null or not sh.visible:
+			shadow_ok = false
+		else:
+			# ⑴ 폴리지 몸통(-3)보다 **아래**여야 한다. 잔몹 그림자(-2)를 그대로 베끼면
+			#    그림자가 나무 위에 떠서 검은 얼룩이 된다 — 에러 없음.
+			if sh.z_index >= sp.z_index:
+				shadow_z_ok = false
+			# ⑵ 크기를 스프라이트 폭에서 유도한다 — 안 하면 64px 나무와 32px 풀이 같은 그림자를 쓴다
+			if sh.scale.x <= 0.0 or is_equal_approx(sh.scale.x, 1.0) and sp.texture.get_width() != 28:
+				shadow_scaled = false
 		phases[snappedf(float(n2.get("wind_phase")), 0.001)] = true
 	_check(respected, "폴리지: 제외 영역(스폰 지점)에는 안 심는다")
 	_check(textured, "폴리지: 전부 텍스처가 물렸다")
 	_check(pivot_ok, "폴리지: 회전 피벗이 밑동(offset.y = -높이/2)")
+	_check(shadow_ok, "폴리지: 접지 그림자가 물렸다")
+	_check(shadow_z_ok, "★폴리지: 그림자 z가 몸통보다 아래다 (위면 나무에 검은 얼룩)")
+	_check(shadow_scaled, "폴리지: 그림자 크기를 스프라이트 폭에서 유도했다")
 	# 위상이 전부 같으면 숲이 한 몸처럼 흔들려 인형처럼 보인다
 	_check(phases.size() > 1, "폴리지: 바람 위상이 개체마다 흩어진다 (%d종)" % phases.size())
 
@@ -161,6 +179,7 @@ func _run() -> void:
 		_check(false, "폴리지: 인스턴스가 없다")
 
 	_check_scene_wiring()
+	_check_village_dressing()
 
 	if _fail == 0:
 		print("TEST_OK stage_dressing")
@@ -227,6 +246,66 @@ func _check_scene_wiring() -> void:
 	_check(checked >= 8, "씬 배선: 검사한 *_path 배선 %d개" % checked)
 	_check(bad.is_empty(), "★씬 배선 전수: 모든 *_path가 같은 씬의 실제 노드를 가리킨다 (위반: %s)"
 		% ("없음" if bad.is_empty() else bad))
+
+
+# --- 마을 숲 드레싱 계약 (2026-08-01) ---
+#
+# 🔴 왜: 스캐터 세 노드는 `textures`가 비거나 `foliage_scene`이 안 물리면 `_ready`가 **early return**한다
+#   — 장식이 0개인데 **에러도 경고도 없다.** 위 ⑴~⑶ 검사는 스캐터 *로직*을 스테이지 에셋으로 보지,
+#   마을 씬이 그 노드를 실제로 물었는지는 아무도 안 본다. 아트를 갈아엎을 때 정확히 이 줄이 빠진다.
+# 🔴 그리고 **제외 영역**: 기능 3곳 + 스폰이 exclude 안에 없으면 상호작용 영역(60×60)에 덤불이 돋아
+#   "그림 위에 섰는데 F가 안 뜬다"가 된다. 좌표는 **씬에서 읽는다** — 여기 숫자를 적으면 기능을 옮겼을 때
+#   테스트만 초록인 채 갈라진다(rules 「미러를 만들지 마라」).
+const VILLAGE := "res://src/village/village.tscn"
+
+
+func _check_village_dressing() -> void:
+	var ps := load(VILLAGE) as PackedScene
+	if ps == null:
+		_check(false, "마을: 씬 로드 실패")
+		return
+	var st := ps.get_state()
+	var props: Dictionary = {}     # 노드명 -> {프로퍼티: 값}
+	var spots: Array[Vector2] = []  # 기능 3곳 + 스폰 (씬에서 읽는다 — 미러 금지)
+	for i: int in range(st.get_node_count()):
+		var name := str(st.get_node_name(i))
+		var d: Dictionary = {}
+		for j: int in range(st.get_node_property_count(i)):
+			d[st.get_node_property_name(i, j)] = st.get_node_property_value(i, j)
+		props[name] = d
+		if name in ["CraftStation", "TrainStation", "Gate"] and d.has("position"):
+			spots.append(d["position"] as Vector2)
+		elif name == "PeerSync" and d.has("spawn_base"):
+			spots.append(d["spawn_base"] as Vector2)
+
+	for n: String in ["GroundDetail", "TreeRing", "Bushes"]:
+		var d: Dictionary = props.get(n, {})
+		if d.is_empty():
+			_check(false, "마을: %s 노드가 없다" % n)
+			continue
+		var texs: Variant = d.get("textures", [])
+		var n_tex := (texs as Array).size() if texs is Array else 0
+		# 🔴 비면 `_ready`가 조용히 return — 장식 0개인데 에러 없음
+		_check(n_tex > 0, "마을 %s: textures가 비어있지 않다 (%d장)" % [n, n_tex])
+		_check(int(d.get("count", 0)) > 0, "마을 %s: count > 0 (%d)" % [n, int(d.get("count", 0))])
+		if n != "GroundDetail":
+			_check(d.get("foliage_scene", null) != null, "마을 %s: foliage_scene이 물렸다" % n)
+
+	_check(spots.size() == 4, "마을: 기능 3곳+스폰 좌표를 씬에서 읽었다 (%d/4)" % spots.size())
+	var ex: Variant = (props.get("Bushes", {}) as Dictionary).get("exclude", [])
+	var rects: Array = ex if ex is Array else []
+	var uncovered := ""
+	for p: Vector2 in spots:
+		var covered := false
+		for r: Variant in rects:
+			if (r as Rect2).has_point(p):
+				covered = true
+				break
+		if not covered:
+			uncovered += "%s " % p
+	_check(uncovered.is_empty(),
+		"★마을: 덤불 제외 영역이 기능 3곳+스폰을 전부 덮는다 (안 덮임: %s)"
+		% ("없음" if uncovered.is_empty() else uncovered))
 
 
 func _collect_scenes(dir: String, out: Array[String]) -> void:

@@ -9,8 +9,8 @@ const PlayerActor := preload("res://src/player/player.gd")
 const SceneFlowNode := preload("res://src/net/scene_flow.gd")
 const UiTheme := preload("res://src/ui/ui_theme.gd")  # UI 톤 단일 소스 (HUD·패널과 같은 테마)
 
-# 훈련소 스프라이트 — 아트 담당 작업 중(2026-07-25). 파일이 임포트되면 자동 교체되고,
-# 없으면 씬에 박아둔 폴백(craft_station.png)을 그대로 쓴다.
+# 훈련소 스프라이트 — 씬이 이 경로를 ext_resource로 직접 물고, 여기서 한 번 더 런타임 로드해
+# **offset을 텍스처 크기에서 유도**한다(아트를 갈아도 씬을 안 만지게 — 발밑 원점 규약).
 # ⚠ .tscn에 없는 경로를 ext_resource로 박으면 씬 로드가 깨지므로 반드시 런타임 검사로 문다.
 const TRAIN_TEX_PATH := "res://assets/sprites/village/train_station.png"
 

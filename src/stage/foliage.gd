@@ -22,6 +22,23 @@ const WIND_AMP := 0.035        # 상시 바람 진폭(rad)
 const WIND_SPEED := 1.15       # 상시 바람 속도
 const BODY_MASK := (1 << 1) | (1 << 2)  # player_body(2) + enemy_body(3) — rules §5 배정표가 단일 소스
 
+# 접지 그림자 (사용자 지적 2026-08-01: "나무 등 오브젝트가 그림자가 없네?").
+# 🔴 **그림자는 픽셀로 찍지 않는다** — 공용 `shadow.png` 한 장을 코드가 크기만 맞춘다.
+#   `mob_melee._fit_shadow()`와 같은 관용구이고 이유도 같다: 아트를 다시 그려도 자동으로 맞아서
+#   **텍스처 크기 미러 상수가 안 생긴다**. 잔몹은 `body_radius`(판정)에서 폭을 유도하지만 폴리지엔
+#   판정이 없으므로 **스프라이트 폭**에서 유도한다 → 나무(64)는 크고 풀(32)은 작은 그림자가 자동.
+# ⚠ **z는 폴리지보다 아래여야 한다.** 씬에서 Shadow의 z_index = −1(상대) → 절대 **−4**.
+#   잔몹·플레이어 그림자(−2)를 그대로 베끼면 폴리지(−3)보다 **위**라 그림자가 나무 몸통에 뜬다.
+# ⚠ 그림자는 흔들리지 않는다 — `_sprite.rotation`만 돌리므로 별도 노드인 그림자는 제자리다(의도).
+const SHADOW_WIDTH_MULT := 0.8  # 그림자 폭 = 스프라이트 폭 × 이 배수
+# 🔴 **텍스처가 `shadow_prop.png`(장식 전용)다 — 공용 `shadow.png`가 아니다.**
+#   공용 쪽은 alpha 최대 **94/255**라 modulate를 1.0(최대)로 올려도 그 이상 진해질 수 없다.
+#   처음에 공용 텍스처 + 0.26으로 뒀다가 실효 alpha 24 = 캐릭터 그림자의 1/4이 되어
+#   **"그림자가 너무 안 보임"** 신고를 받았다(사용자, 2026-08-01). 배수만 올려선 한계에 부딪혀
+#   알파를 2.2배 증폭한 전용 텍스처를 따로 만들었다.
+# ⚠ **공용 `shadow.png`를 진하게 고치지 마라** — 플레이어·잔몹·보스 그림자가 전부 같이 바뀐다.
+const SHADOW_ALPHA := 0.9
+
 @export var sprite_texture: Texture2D  # 이 오브젝트의 겉모습(풀/덤불/나무). 씬 인스턴스마다 교체 가능
 @export var wind_phase: float = 0.0    # 바람 위상 오프셋 — 같은 값이면 숲 전체가 한 몸처럼 흔들린다
 
@@ -31,6 +48,7 @@ var _wind_t: float = 0.0
 var _inside: Array[Node2D] = []  # 겹쳐 있는 몸들 — 나갈 때 한 번 더 밀어 주려고 들고 있는다
 
 @onready var _sprite: Sprite2D = $Sprite
+@onready var _shadow: Sprite2D = $Shadow
 
 
 func _ready() -> void:
@@ -43,6 +61,20 @@ func _ready() -> void:
 	# 회전 피벗을 밑동으로 — Sprite2D는 기본 centered라 offset을 위로 올려 원점이 바닥에 오게 한다.
 	if _sprite.texture != null:
 		_sprite.offset = Vector2(0.0, -float(_sprite.texture.get_height()) * 0.5)
+	_fit_shadow()
+
+
+# 접지 그림자를 이 개체 크기에 맞춘다 — 노드 원점이 곧 밑동이라 위치는 (0,0) 그대로면 된다.
+func _fit_shadow() -> void:
+	if _shadow == null:
+		return
+	var tex := _sprite.texture
+	var stex := _shadow.texture
+	if tex == null or stex == null or stex.get_width() <= 0:
+		_shadow.visible = false  # 텍스처가 없으면 그림자만 떠 있는 것이 더 이상하다
+		return
+	_shadow.scale = Vector2.ONE * (float(tex.get_width()) * SHADOW_WIDTH_MULT / float(stex.get_width()))
+	_shadow.modulate = Color(1.0, 1.0, 1.0, SHADOW_ALPHA)
 	body_entered.connect(_on_body_entered)
 	body_exited.connect(_on_body_exited)
 

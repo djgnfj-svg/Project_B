@@ -26,7 +26,11 @@ const TERRAIN_SET := 0
 const T_DIRT := 0
 const T_GRASS := 1
 
-const PATH_HALF := 1  # 흙길 반폭(셀) — 1 = 3셀(96px) 폭
+# 흙길 반폭(셀). **0 = 1셀(32px) 폭.**
+# ⚠ 1(=3셀·96px)이었을 때 실기에서 화면 절반이 흙이 되어 「숲」이 아니라 「공터」로 읽혔다
+#   (2026-08-01 실기 확인). 이 값을 올리면 `village.tscn`의 스캐터 `exclude` rect도 같이 넓혀야
+#   한다 — 안 그러면 넓어진 길 위에 덤불이 돋는다(에러 없음, 화면에서만 드러남).
+const PATH_HALF := 0
 
 
 func _init() -> void:

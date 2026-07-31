@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bxd45wndxf303"
-path="res://.godot/imported/craft_station.png-e4991affc9525d66564da6528ff2bb76.ctex"
+uid="uid://bvsywins8a5e2"
+path="res://.godot/imported/rock_a.png-95813b14f9a6da685259f44d09c73183.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/sprites/village/craft_station.png"
-dest_files=["res://.godot/imported/craft_station.png-e4991affc9525d66564da6528ff2bb76.ctex"]
+source_file="res://assets/sprites/village/decor/rock_a.png"
+dest_files=["res://.godot/imported/rock_a.png-95813b14f9a6da685259f44d09c73183.ctex"]
 
 [params]
 
