@@ -331,6 +331,13 @@ var level_stats: Dictionary = {}
 # 🔴 5스탯과 분리: 레벨로 자라지 않고 **낀 자리에 따라** 켜지므로 level_stats에 섞으면 서브 가중·레벨 곱이 붙는다.
 var traits: Dictionary = {}
 var _kill_move_left: float = 0.0  # 「광란」(kill_move) 남은 지속 — 로컬 연출/이동 전용(네트워크 0)
+# 메인 하위 직업의 궤적 아이덴티티 (2026-08-01, GameState.main_fx_of가 리졸브) — **표시 전용**이라
+# `traits`와 분리돼 있다: 저쪽은 판정 기하에 들어가고 이쪽은 한 픽셀도 판정을 안 움직인다.
+# 🔴 위 `traits`와 **같은 공지(G_STATS "ms")에서 나오지만 값은 각자 로컬 리졸브**다 — 새 필드 0개.
+# 기본값이 항등(흰색 · 배율 1)이라 미공지 창·특성 없는 하위 직업은 도입 전과 완전히 같다.
+var _subjob_fx_color: Color = Color(1, 1, 1, 1)
+var _subjob_fx_ghost: float = 1.0
+var _subjob_fx_tex: Texture2D = null  # 리본 질감(null = 단색 = 도입 전 항등)
 
 # 무기 겉모습 — 착용 무기(EquipDef.weapon_texture)에서 그린다. 미착용이면 직업 기본 무기로 폴백.
 # _weapon_grip은 _update_weapon이 매 프레임 참조 → 착용/직업에 따라 바뀌므로 멤버로 보관(job.weapon_grip 직참 금지).
@@ -648,6 +655,21 @@ func set_level_stats(stats: Dictionary) -> void:
 # 여기서 한 번 더 clamp한다(수신부 clamp와 이중) — set_level_stats와 같은 규약.
 func set_traits(t: Dictionary) -> void:
 	traits = CombatMath.clamp_traits(t)
+
+
+# 메인 하위 직업 궤적 아이덴티티 반영 (2026-08-01) — **표시 전용**.
+# set_traits와 **같은 자리에서 같은 공지로** 불린다(peer_sync): 로컬 = GameState.active_main_fx() ·
+#   원격 = 그 피어가 공지한 "ms"를 리졸브한 값. 🔴 둘을 갈라 놓으면 "특성은 검성인데 색은 광전사"가
+#   되고, 그건 화면만 보고는 어느 쪽이 틀렸는지 알 수 없는 종류의 어긋남이다.
+# 🔴 clamp는 GameState.main_fx_of가 이미 지났다(→ CombatMath.fx_ghost_mult) — 여기서 다시 하지
+#   않는 것은 저쪽이 **유일한 리졸브 경로**이기 때문이다(set_traits의 이중 clamp와 다른 점: 저쪽은
+#   네트워크 payload가 직접 들어오지만 여기 오는 것은 항상 로컬 .tres에서 나온 값이다).
+func set_subjob_fx(fx: Dictionary) -> void:
+	var c: Variant = fx.get("color", Color(1, 1, 1, 1))
+	_subjob_fx_color = (c as Color) if c is Color else Color(1, 1, 1, 1)
+	_subjob_fx_ghost = float(fx.get("ghost", 1.0))
+	var t: Variant = fx.get("tex")
+	_subjob_fx_tex = (t as Texture2D) if t is Texture2D else null
 
 
 # 이 아바타의 특성값 — 모르는 키/미설정은 0(항등).
@@ -982,9 +1004,15 @@ func _weapon_weight() -> float:
 	return CombatMath.weapon_weight(_weapon_override)
 
 
-# 궤적 페이드 색 — 무기 틴트 rgb 유지, 알파만 페이드로 구동
+# 궤적 페이드 색 — (무기 틴트 × 메인 하위 직업 틴트) rgb 유지, 알파만 페이드로 구동.
+# 🔴 **리본·칼 잔상이 둘 다 이 함수를 지난다 = 단일 소스다.** 한쪽만 곱하면 같은 스윙에서 띠와
+#   잔상이 다른 색으로 나온다(에러 없음, 화면만 지저분해진다).
+# 🔴 **곱셈인 것이 계약이다** — 무기 색을 덮어쓰면 원소 무기(불 지팡이 등 §4 "중립 텍스처 + 원소색")가
+#   하위 직업 색에 먹힌다. 곱이면 둘 중 하나가 흰색(항등)일 때 다른 쪽이 그대로 나오고, 근접 4종은
+#   현재 전부 흰색이라 하위 직업 색이 온전히 산다.
 func _fx_color(alpha: float) -> Color:
-	return Color(_swing_color.r, _swing_color.g, _swing_color.b, alpha * _swing_color.a)
+	return Color(_swing_color.r * _subjob_fx_color.r, _swing_color.g * _subjob_fx_color.g,
+		_swing_color.b * _subjob_fx_color.b, alpha * _swing_color.a * _subjob_fx_color.a)
 
 
 func is_alive() -> bool:
@@ -2195,7 +2223,11 @@ func _draw_swing_trail(u: float) -> void:
 	# ⚠ `while`인 것은 한 프레임에 여러 칸을 건너뛸 수 있기 때문이다(저프레임·짧은 스윕).
 	# ⚠ 마무리 타만 장수를 늘린다 — 각·반경은 그대로이고 **같은 호를 더 촘촘히** 채울 뿐이라
 	#   §3(표시 ⊇ 판정)에 손대지 않는다(잔상은 판정을 만들지 않는다).
-	var ghosts := maxi(1, int(round(lerpf(float(GHOST_STEPS), float(COMBO_FINISH_GHOSTS), _combo_ramp))))
+	# 🔴 메인 하위 직업 배율(`_subjob_fx_ghost`)도 **같은 성질이라 여기 곱해도 안전하다** — 늘어나는
+	#   것은 밀도뿐이고 호의 각·반경은 `_swing_angle_at` 하나가 정한다. 광전사가 "몰아친다"로 읽히는
+	#   것은 이 밀도이고, 상한은 CombatMath.MAX_FX_GHOST_MULT가 잡는다(드로우콜 = 웹 프레임 비용).
+	var ghosts := maxi(1, int(round(
+		lerpf(float(GHOST_STEPS), float(COMBO_FINISH_GHOSTS), _combo_ramp) * _subjob_fx_ghost)))
 	var ghost_gap := 1.0 / float(ghosts)
 	while _ghost_next_u <= u and _ghost_next_u < 1.0:
 		AfterImage.spawn_weapon(_weapon, _weapon_pivot, self,
@@ -2223,6 +2255,9 @@ func _trail_clear() -> void:
 	_trail_tip.clear()
 	_swing_trail.polygon = PackedVector2Array()
 	_swing_trail.vertex_colors = PackedColorArray()
+	# ⚠ **uv도 같이 내린다** — 정점을 비우면서 uv만 남기면 다음 스윙의 첫 프레임에 낡은 크기의
+	#   uv가 새 다각형과 짝지어진다(Godot이 크기 불일치를 무시하므로 **에러 없이** 질감만 안 붙는다).
+	_swing_trail.uv = PackedVector2Array()
 	_swing_trail.visible = false
 
 
@@ -2245,6 +2280,18 @@ func _rebuild_trail_ribbon() -> void:
 	var cols := PackedColorArray()
 	poly.resize(n * 2)
 	cols.resize(n * 2)
+	# --- 리본 질감 (2026-08-01 사용자 요구: *"리본쪽에 특성 넣을 수 있나? 막 피처럼 보이거나"*) ---
+	# 🔴 **UV는 정점과 정확히 같은 인덱스로 채운다** — 고리 순서가 `안쪽[0..n-1]` → `바깥[n-1..0]`이라
+	#   UV도 그 순서를 따라야 한다. 어긋나면 텍스처가 뒤틀려 붙는데 **에러가 없다**.
+	#   가로(u) = 꼬리(0) → 선단(1) = 시간축 · 세로(v) = 칼끝(0) → 칼밑(1) = 날 폭 방향.
+	# 🔴 **`Polygon2D.uv`는 정규화가 아니라 텍스처 픽셀 좌표다** — 0~1로 넣으면 텍스처 왼쪽 위
+	#   한 픽셀만 늘어나 단색으로 보인다(에러 없음). 그래서 크기를 곱한다.
+	# ⚠ 텍스처가 없으면 **uv를 빈 배열로 되돌린다** — 남겨 두면 다음 하위 직업(질감 없음)으로
+	#   바꿨을 때 크기만 맞는 낡은 uv가 남는다.
+	var tex := _subjob_fx_tex
+	var uvs := PackedVector2Array()
+	if tex != null:
+		uvs.resize(n * 2)
 	# ⚠ 마무리 타만 더 진하다 — **기하는 그대로**이고 알파만 오른다(폭을 안쪽으로 넓히는 것은 이
 	#   무기들에선 소용이 없다: 대검은 `blade_length` 36이 칼끝 거리 44의 대부분이라 안쪽 변이 이미
 	#   `TRAIL_MIN_INNER_DIST`에 붙어 있고, 더 넓히면 07-29에 버린 **부채꼴 띠**로 되돌아간다).
@@ -2256,6 +2303,16 @@ func _rebuild_trail_ribbon() -> void:
 		poly[n * 2 - 1 - i] = _trail_tip[i]
 		cols[i] = col
 		cols[n * 2 - 1 - i] = col
+		if tex != null:
+			var tw := float(tex.get_width())
+			var th := float(tex.get_height())
+			uvs[i] = Vector2(s * tw, th)              # 안쪽 변(칼밑) = 텍스처 아래
+			uvs[n * 2 - 1 - i] = Vector2(s * tw, 0.0)  # 바깥 변(칼끝) = 텍스처 위
+	# ⚠ **대입 순서가 중요하다** — `polygon`을 먼저 넣으면 그 프레임에 낡은 uv(직전 크기)와 잠깐
+	#   짝이 안 맞는다. Godot이 크기 불일치 uv를 무시하므로 치명적이진 않지만, 텍스처를 먼저 세워
+	#   두면 그 한 프레임의 깜빡임도 없앤다.
+	_swing_trail.texture = tex
+	_swing_trail.uv = uvs
 	_swing_trail.polygon = poly
 	_swing_trail.vertex_colors = cols
 	_swing_trail.visible = true

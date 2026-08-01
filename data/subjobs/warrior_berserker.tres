@@ -24,3 +24,5 @@ main_trait_value = 0.15
 sub_trait_name = "돌진 본능"
 sub_trait_key = "roll_dist"
 sub_trait_value = 0.2
+fx_color = Color(1, 0.29, 0.22, 1)
+fx_ghost_mult = 1.8

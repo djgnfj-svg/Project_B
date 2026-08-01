@@ -24,3 +24,5 @@ main_trait_value = 0.3
 sub_trait_name = "간격 감각"
 sub_trait_key = "reach"
 sub_trait_value = 0.1
+fx_color = Color(0.51, 0.83, 1, 1)
+fx_ghost_mult = 1.3

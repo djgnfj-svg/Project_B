@@ -541,6 +541,26 @@ static func blade_length(equip: EquipDef) -> float:
 	return clampf(equip.blade_length, MIN_BLADE_LENGTH, MAX_BLADE_LENGTH)
 
 
+# --- 메인 하위 직업 궤적 아이덴티티 (2026-08-01) — 표시 전용 ---
+# 🔴 **`player.gd`가 아니라 여기 있는 이유는 `blade_length`·`motion_phases`·`weapon_weight`와 같다**
+#   (리뷰 J-1·J-2): 씬 글루에 상한을 두면 `-s` preload가 안 돼 **`data/subjobs` 전수 트립와이어가
+#   못 닿고**, 테스트는 코드보다 느슨한 근사만 쓸 수 있어 조용히 clamp된 값이 초록으로 샌다
+#   (실측 선례: `swing_windup_ratio = 0.02`와 구간 합 0.97이 **둘 다 통과**했다).
+#   테스트는 `clamped == raw`를 단정하므로 상한 값을 복제하지 않고도 검출력이 선다.
+# 🔴 판정 함수와 헷갈리지 마라 — 이 값은 화면에만 나타나고 사거리·데미지·각 어느 것도 안 움직인다.
+# 상한 근거: 잔상 한 장 = `Sprite2D` 하나 = 드로우콜이라 장수가 곧 웹 프레임 비용이다(§5 — 에디터
+#   프로파일로 "괜찮다"고 결론 내지 마라). 마무리 타 6장 × 3.0 = 18장이 한 스윙(0.24~0.34s)의 최악이다.
+# 하한 0.5 = 잔상을 **끄지는 못하게** 한다(0이면 마무리 타 강조가 통째로 사라지는데 이유가 화면에 없다).
+const MIN_FX_GHOST_MULT := 0.5
+const MAX_FX_GHOST_MULT := 3.0
+
+
+static func fx_ghost_mult(sub: SubJobDef) -> float:
+	if sub == null or not is_finite(sub.fx_ghost_mult):
+		return 1.0
+	return clampf(sub.fx_ghost_mult, MIN_FX_GHOST_MULT, MAX_FX_GHOST_MULT)
+
+
 # 유효 투사체 사거리 — proj_range 특성 + 콤보 타별 배율만큼 길어진다. 둘 다 기본값(0 / 1.0)이면
 # **도입 전과 완전 항등**이다.
 # 🔴 근접의 effective_attack_range와 같은 자리다: 표시(ArrowField)와 판정(CombatAuthority)이 **같은

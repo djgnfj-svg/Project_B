@@ -534,6 +534,47 @@ func _initialize() -> void:
 	_check("슬롯: 전환 후에도 장착은 3개(중복 없음)", gg.equipped_sub_jobs().size() == 3)
 	_check("슬롯: 전환 후 서브에 검성이 남지 않음",
 		"warrior_swordmaster" not in [gg.sub_slot_id(0), gg.sub_slot_id(1)])
+	# --- 궤적 아이덴티티 리졸브 (표시 전용, 2026-08-01) ---
+	# 🔴 **traits_of와 같은 게이트를 지나는가**가 이 블록의 전부다. 색만 통과하고 특성이 막히면
+	#   "메인 특성은 안 켜지는데 색은 바뀐" 상태가 되고, 화면만 보고는 어느 쪽이 틀렸는지 알 수 없다.
+	var fx_master: Dictionary = gg.main_fx_of("warrior_swordmaster", "warrior")
+	_check("궤적 fx: 검성 리졸브 — 데이터의 색이 그대로 나온다",
+		(fx_master.get("color", Color(1, 1, 1, 1)) as Color) == gg.sub_job_def("warrior_swordmaster").fx_color)
+	# 🔴 계열 불일치 폐기 — 남의 계열 메인을 공지해도 색을 못 얻는다(traits_of와 같은 부호)
+	var fx_wrong: Dictionary = gg.main_fx_of("warrior_swordmaster", "mage")
+	_check("궤적 fx: 계열 불일치 → 항등(흰색) 폐기",
+		(fx_wrong.get("color", Color()) as Color) == Color(1, 1, 1, 1)
+			and is_equal_approx(float(fx_wrong.get("ghost", -1.0)), 1.0))
+	# 🔴 공유 하위 직업은 **메인 자리에 못 온다** — SubJobDef.trait_at(true)가 특성을 막는 것과 같은 근거.
+	#   여기서만 통과시키면 곡예사를 메인으로 주장한 공지가 특성은 못 얻고 색만 얻는다.
+	# 🔴🔴 **합성으로 검사하는 것이 이 케이스의 전부다** (2026-08-01 뮤테이션이 잡아냈다). 실 데이터
+	#   `shared_acrobat`은 `fx_color`가 기본 흰색이라, 게이트를 **통째로 지워도** 결과가 흰색으로 같아
+	#   검사가 초록으로 남는다 = 검출력 0. 색을 명시한 합성 공유 하위 직업을 캐시에 심어야
+	#   "게이트가 실제로 도는가"를 묻게 된다(`_equip_cache["test_charger"]` 관용구와 같은 자리).
+	var fx_fake := SubJobDef.new()
+	fx_fake.id = "test_shared_fx"
+	fx_fake.series_id = SubJobDef.SERIES_SHARED
+	fx_fake.max_level = 5
+	fx_fake.fx_color = Color(1, 0, 0, 1)   # 흰색이 아니어야 게이트 유무가 결과를 가른다
+	fx_fake.fx_ghost_mult = 2.5
+	gg._sub_job_cache["test_shared_fx"] = fx_fake
+	var fx_shared: Dictionary = gg.main_fx_of("test_shared_fx", "warrior")
+	_check("★궤적 fx: 공유 하위 직업은 메인 자리 불가 → 항등 폐기 (색을 명시한 합성으로 검출력 확보)",
+		(fx_shared.get("color", Color()) as Color) == Color(1, 1, 1, 1)
+			and is_equal_approx(float(fx_shared.get("ghost", -1.0)), 1.0))
+	# 대조군 — 같은 def를 계열 것으로 바꾸면 통과해야 한다(게이트가 "전부 거부"로 퇴화하지 않았는가).
+	fx_fake.series_id = "warrior"
+	_check("★궤적 fx 대조군: 같은 def가 계열 일치면 색이 나온다(게이트가 전부 거부로 퇴화 안 함)",
+		(gg.main_fx_of("test_shared_fx", "warrior").get("color", Color()) as Color) == Color(1, 0, 0, 1))
+	gg._sub_job_cache.erase("test_shared_fx")  # 뒷정리 — 이후 케이스가 합성 id를 보지 않게
+	_check("궤적 fx: 모르는 id → 항등 폐기(경로 조작·오타)",
+		(gg.main_fx_of("../../etc/passwd", "warrior").get("color", Color()) as Color) == Color(1, 1, 1, 1))
+	_check("궤적 fx: 빈 id(미장착) → 항등 = 도입 전과 완전히 같다",
+		(gg.main_fx_of("", "warrior").get("color", Color()) as Color) == Color(1, 1, 1, 1))
+	# active_main_fx는 announced_main_id를 지난다 — active_traits와 같은 입력이어야 갈라지지 않는다
+	_check("궤적 fx: active_main_fx == main_fx_of(공지 메인, 계열) — 근거 통일",
+		(gg.active_main_fx().get("color", Color()) as Color)
+			== (gg.main_fx_of(gg.announced_main_id(), gg.selected_job_id).get("color", Color()) as Color))
 	# 🔴 예산이 슬롯에 묶이는 자리 — 낀 것만 5스탯에 들어간다(보유 전부가 아니라)
 	gg.set_sub_slot(0, "")
 	gg.set_sub_slot(1, "")

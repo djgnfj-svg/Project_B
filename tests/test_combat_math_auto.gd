@@ -1566,6 +1566,49 @@ func _initialize() -> void:
 	blade_probe.blade_length = INF
 	failures += _check(is_equal_approx(CombatMath.blade_length(blade_probe), CombatMath.DEFAULT_BLADE_LENGTH),
 		"★칼날 폭 검출력: 비유한 값 → 기본 폴백 (리본 좌표가 NaN이 되면 다각형이 통째로 사라진다)")
+
+	# --- 궤적 아이덴티티 전수 (하위 직업별 궤적 색·밀도, 2026-08-01) ---
+	# 🔴 **`clamped == raw`를 단정한다** (리뷰 J-1·J-2의 처방 그대로): 상한 값을 테스트에 복제하지
+	#    않고도 "데이터가 조용히 clamp됐다"를 잡는다. 복제하면 상한을 튜닝할 때 테스트도 같이 고쳐야
+	#    하고, 그러면 트립와이어가 데이터가 아니라 자기 자신을 검사하게 된다.
+	# 🔴 **알파 0 검사가 이 블록의 핵심이다** — 0이면 리본·잔상이 통째로 사라지는데(`_fx_color`가
+	#    곱셈이다) **에러가 없다.** 화면에는 "칼만 도는" 것으로만 보이고 원인이 데이터에 있다는
+	#    단서가 어디에도 없다. 궤적은 §3에서 「표시 ⊇ 판정」을 지는 쪽이라 사라지면 그 계약이 통째로
+	#    무너진다("안 보이는데 맞는다"가 상시가 된다).
+	var subjob_fx_ok := true
+	var subjob_fx_seen := 0
+	for sf: String in DirAccess.get_files_at("res://data/subjobs"):
+		var sbase := sf.trim_suffix(".remap")
+		if sbase.get_extension() != "tres":
+			continue
+		var sd := load("res://data/subjobs/%s" % sbase) as SubJobDef
+		if sd == null:
+			continue
+		subjob_fx_seen += 1
+		if not is_equal_approx(CombatMath.fx_ghost_mult(sd), sd.fx_ghost_mult):
+			subjob_fx_ok = false  # 조용한 clamp = 데이터에 적힌 값과 화면이 갈라진 상태
+		if sd.fx_color.a <= 0.0:
+			subjob_fx_ok = false
+		# ⚠ **RGB 상한도 본다** (netreview Minor). Godot `Color`는 1.0 초과를 허용하므로
+		#   `Color(5, 5, 5, 1)`짜리 .tres가 들어오면 `_fx_color`의 곱셈이 궤적을 흰색으로 태운다
+		#   — 알파 0과 같은 부류(에러 없이 화면만 망가짐)라 같은 자리에서 닫는다.
+		if sd.fx_color.r > 1.0 or sd.fx_color.g > 1.0 or sd.fx_color.b > 1.0:
+			subjob_fx_ok = false
+	failures += _check(subjob_fx_seen > 0, "궤적 아이덴티티 전수: data/subjobs 스캔 성공(0장이면 검사가 빈다)")
+	failures += _check(subjob_fx_ok,
+		"★궤적 아이덴티티 전수: fx_ghost_mult 조용한 clamp 없음 + fx_color 알파 > 0 · rgb ≤ 1 (궤적 소실·번짐 방지)")
+	# ★검출력 — 위 전수는 현 데이터가 통과라 "clamp 분기가 실제로 도는가"를 못 보여준다(칼날 폭 관용구).
+	var fx_probe := SubJobDef.new()
+	failures += _check(is_equal_approx(CombatMath.fx_ghost_mult(fx_probe), 1.0),
+		"★궤적 아이덴티티 검출력: 기본값 = 배율 1.0 = 도입 전과 완전 항등")
+	fx_probe.fx_ghost_mult = 99.0
+	failures += _check(is_equal_approx(CombatMath.fx_ghost_mult(fx_probe), CombatMath.MAX_FX_GHOST_MULT),
+		"★궤적 아이덴티티 검출력: 상한 초과 → clamp (잔상 = 드로우콜이라 웹 프레임 비용이다)")
+	fx_probe.fx_ghost_mult = INF
+	failures += _check(is_equal_approx(CombatMath.fx_ghost_mult(fx_probe), 1.0),
+		"★궤적 아이덴티티 검출력: 비유한 값 → 항등 폴백 (int(round(INF))는 잔상 루프를 얼린다)")
+	failures += _check(is_equal_approx(CombatMath.fx_ghost_mult(null), 1.0),
+		"★궤적 아이덴티티 검출력: null(하위 직업 미장착) → 항등 폴백")
 	failures += _check(degenerate_ok, "퇴화 트립와이어: MAX_HASTE에서도 유효 쿨다운 게이트 > SAME_SWING_MS")
 	failures += _check(lead_ok, "외삽 상한 불변식: LAG_MAX_LEAD_DIST ≥ 최고 이속×구르기×최대 lead (전 직업)")
 	failures += _check(melee_gap_ok,
