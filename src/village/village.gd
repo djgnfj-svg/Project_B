@@ -9,8 +9,8 @@ const PlayerActor := preload("res://src/player/player.gd")
 const SceneFlowNode := preload("res://src/net/scene_flow.gd")
 const UiTheme := preload("res://src/ui/ui_theme.gd")  # UI 톤 단일 소스 (HUD·패널과 같은 테마)
 
-# 훈련소 스프라이트 — 아트 담당 작업 중(2026-07-25). 파일이 임포트되면 자동 교체되고,
-# 없으면 씬에 박아둔 폴백(craft_station.png)을 그대로 쓴다.
+# 훈련소 스프라이트 — 씬이 이 경로를 ext_resource로 직접 물고, 여기서 한 번 더 런타임 로드해
+# **offset을 텍스처 크기에서 유도**한다(아트를 갈아도 씬을 안 만지게 — 발밑 원점 규약).
 # ⚠ .tscn에 없는 경로를 ext_resource로 박으면 씬 로드가 깨지므로 반드시 런타임 검사로 문다.
 const TRAIN_TEX_PATH := "res://assets/sprites/village/train_station.png"
 
@@ -18,11 +18,13 @@ var _local_in_gate: bool = false  # 로컬 플레이어가 게이트 영역 안 
 var _local_in_craft: bool = false  # 로컬 플레이어가 제작대 영역 안 — F로 제작/강화 패널 오픈
 var _local_in_train: bool = false  # 로컬 플레이어가 훈련소 영역 안 — F로 하위 직업 패널 오픈
 
-# 마을 맵 크기 = baked 바닥(640×384) × Ground scale 1.5 — 바닥을 다시 구우면 여기도 같이 갱신 (미러)
+# 마을 맵 크기 = $Ground(TileMapLayer)에 깐 셀 범위 — 30×18셀 × 32px (미러).
+# ⚠ 에디터에서 바닥을 넓히면 여기도 같이 늘려야 카메라가 새 영역을 보여준다. 안 늘리면
+#   에러 없이 "걸어갔는데 화면이 안 따라오는" 상태가 된다.
 const MAP_RECT := Rect2(0, 0, 960, 576)
 
-# 빌드 버전 — 배포할 때마다 갱신. 마을 좌상단에 표시(캐시=구버전 판별 + 인원수 체크용)
-const BUILD_VERSION := "v0725g-menu"
+# 빌드 버전 — 배포할 때마다 갱신. 마을 우상단에 표시(캐시=구버전 판별 + 인원수 체크용)
+const BUILD_VERSION := "v0731a-forest"
 
 var _info_label: Label = null
 var _info_left: float = 0.0

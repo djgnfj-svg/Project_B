@@ -167,7 +167,8 @@ func _setup() -> void:
 
 
 # 보스 전용 빈 아레나 — 무대(stage_boss.tscn)가 깔아 둔 바닥/배경 장식 스프라이트("타일")를 치운다.
-# 🔴 이 프로젝트는 Godot TileMap을 안 쓴다 — 바닥·아레나는 z_index 음수 Sprite2D 두 장이다(rules §5 z 배치표).
+# 🔴 **스테이지**는 Godot TileMap을 안 쓴다 — 바닥·아레나는 z_index 음수 Sprite2D 두 장이다(rules §5 z 배치표).
+#   (⚠ 2026-07-31부터 **마을만** TileMapLayer다. 이 랩이 겨누는 것은 스테이지라 여기 전제는 그대로다.)
 #   그래서 "타일 지우기" = 이 노드들을 숨기는 것. **shipped stage_boss.tscn은 손대지 않는다**(챕터1이 그대로 쓴다) —
 #   랩이 붙을 때 런타임으로만 숨겨 프로덕션 무접촉을 지킨다(TestMode 게이트 · rules §2 "손맛/랩은 표시 전용").
 # ⚠ 이름으로 찾는다 — stage_boss.tscn의 Ground/BossArena와 미러다(그 씬 노드명을 바꾸면 여기도 바꾼다).

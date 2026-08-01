@@ -162,6 +162,49 @@ func _check_boss(file: String, def: BossDef) -> void:
 			% [label, base, p.telegraph_s, LEN_TOLERANCE, ratio])
 
 
+# 원거리 잔몹 = `CombatMath.is_ranged_enemy(def)`(BossDef 제외). data/enemies 전수.
+# 🔴 판별을 여기서 다시 쓰지 않고 **그 함수를 지난다** — 사본을 두면 배우 분기와 이 검사가 갈라져,
+#   "코드는 근접으로 도는데 테스트는 원거리 계약으로 통과"가 된다.
+func _ranged_defs() -> Array:
+	var out: Array = []
+	for f: String in DirAccess.get_files_at(DATA_DIR):
+		var base := f.trim_suffix(".remap")
+		if base.get_extension() != "tres" and base.get_extension() != "res":
+			continue
+		var res: Resource = load("%s/%s" % [DATA_DIR, base])
+		if res is EnemyDef and not (res is BossDef) and CombatMath.is_ranged_enemy(res as EnemyDef):
+			out.append([base, res as EnemyDef])
+	return out
+
+
+# 🔴 원거리 잔몹 데이터 계약 — 넷 다 어기면 **에러 없이** 깨진다.
+#   배우(`mob_melee.gd`)·판정(`combat_authority.gd`)이 씬 글루라 `-s`가 preload를 못 한다 =
+#   그 경로는 스위트의 구조적 사각이다. 그래서 규칙을 데이터 축으로 밀어 여기서 잡는다(리뷰 J-1·J-2).
+func _check_ranged(file: String, def: EnemyDef) -> void:
+	# ⑴ 사거리 안에서 쏴도 화살이 먼저 만료되면 한 발도 안 닿는다.
+	_check(def.proj_range >= def.attack_range,
+		"%s: proj_range %.0f ≥ attack_range %.0f — 작으면 발사 지점에서 만료돼 영원히 못 맞힌다"
+		% [file, def.proj_range, def.attack_range])
+	# ⑵ 명중 반경 0 = 영원히 안 맞음. `swing_arc > 0` 트립와이어의 정확한 미러.
+	_check(def.strike_radius > 0.0,
+		"%s: strike_radius > 0 (%.1f) — 0이면 화살이 통과만 한다" % [file, def.strike_radius])
+	# ⑶ 카이팅 거리가 사거리 이상이면 자기 사거리 밖으로 물러나 영구 진동하며 한 발도 못 쏜다.
+	_check(def.keep_dist < def.attack_range,
+		"%s: keep_dist %.0f < attack_range %.0f — 크면 물러나기만 하고 못 쏜다"
+		% [file, def.keep_dist, def.attack_range])
+	# ⑷ 터널링 불변식(§5·§3 화살 계약의 몹 버전) — 프레임당 전진이 명중 지름보다 크면 통과한다.
+	var step := def.proj_speed / 60.0
+	_check(step < def.strike_radius * 2.0,
+		"%s: 프레임당 전진 %.1fpx < 명중 지름 %.1fpx — 넘으면 플레이어를 관통한다"
+		% [file, step, def.strike_radius * 2.0])
+	# ⑸ 카이팅 후퇴도 move_speed라 몹 좌표 지연 슬랙 유도(MOB_LAG_SLACK_SPEED)에 포함된다.
+	_check(def.move_speed <= CombatMath.MOB_LAG_SLACK_SPEED,
+		"%s: move_speed %.0f ≤ MOB_LAG_SLACK_SPEED %.0f"
+		% [file, def.move_speed, CombatMath.MOB_LAG_SLACK_SPEED])
+	_check(def.proj_texture != null,
+		"%s: proj_texture 지정(§0 — 도형·폴백으로 때우지 않는다)" % file)
+
+
 func _run() -> void:
 	var bosses := _boss_defs()
 	# 스캔이 0건이면 아래 단정이 전부 건너뛰어져 **조용히 통과**한다 (verify §3 침묵 통과 방지)
@@ -173,6 +216,17 @@ func _run() -> void:
 		var def := arr[1] as BossDef
 		print("[%s] %s" % [file, def.display_name])
 		_check_boss(file, def)
+
+	var ranged := _ranged_defs()
+	# 스캔 0건이면 아래 단정이 통째로 건너뛰어져 **조용히 통과**한다(verify §3 침묵 통과 방지)
+	_check(not ranged.is_empty(),
+		"%s 스캔: 원거리 잔몹이 1개 이상 (%d개)" % [DATA_DIR, ranged.size()])
+	for entry: Variant in ranged:
+		var arr := entry as Array
+		var file := str(arr[0])
+		var def := arr[1] as EnemyDef
+		print("[%s] %s (원거리)" % [file, def.display_name])
+		_check_ranged(file, def)
 
 	print("검사 %d건" % _checks)
 	if _fail == 0:

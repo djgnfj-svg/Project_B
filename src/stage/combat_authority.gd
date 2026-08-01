@@ -13,6 +13,10 @@ const PlayerActor := preload("res://src/player/player.gd")
 const HealthComponent := preload("res://src/combat/health_component.gd")
 const PeerSyncNode := preload("res://src/net/peer_sync.gd")
 
+# 🔴 지형 레이어(1 = world) 마스크 — rules §5 배정표가 단일 소스. 투사체의 지형 차단 질의 전용
+#   (설계 ⑹ 층②). 몸 레이어를 넣지 마라 — 명중 판정은 여전히 거리 질의다(물리 레이어 함정 §5).
+const WORLD_MASK := 1 << 0
+
 @export var peer_sync_path: NodePath  # 형제 PeerSync — 공격자 조회(net_anchor·job)에 필요
 
 var _peer_sync: PeerSyncNode = null
@@ -24,6 +28,14 @@ var _stage_over: bool = false  # 클리어↔전멸 상호 배제 + 종료 후 �
 var _boss_strike_frame: Dictionary = {}  # peer_id -> 보스 STRIKE 피격 물리 프레임 — 물뿌리기 원 겹침 시 같은 프레임 중복 확정 방지(per-cast dedup, 보스는 한 프레임에 한 패턴만 발화)
 var _boss_sweep_seq: Dictionary = {}  # peer_id -> 마지막 피격 dash_seq — 🔴 돌진(P3) 스윕은 매 프레임 발화라 여기서 **돌진 1회당 플레이어 1회**로 dedup(프레임 dedup으론 매 프레임 데미지). i-frame으로 안 맞으면 미기록 → 다음 프레임 재판정(구르며 반경 밖으로 빠지면 회피)
 var _arrows: Array = []  # 호스트 권한 화살(궁수 활): [{aid, pos:Vector2, dir:Vector2, life:float, shooter:int}, …] — _physics_process가 전진·명중 판정
+# 호스트 권한 **적** 화살(원거리 잔몹, 2026-08-01): [{aid, pos, dir, speed, life, radius, damage}, …]
+# 🔴 `_arrows`에 얹을 수 없다 — 저쪽 엔트리의 `shooter`는 peer id이고 명중 시 그 아바타에서
+#   job·장비 보너스·레벨 스탯을 꺼내 `confirm_damage`(치명·피흡·콤보)를 지난다. 적 화살은
+#   **공격자·대상·데미지 산식이 셋 다 뒤집힌다**(대상 = 플레이어, 데미지 = def.attack_damage 평문).
+#   ⚠ 평문인 것이 규율 위반이 아니다 — 적→플레이어는 `_on_mob_strike`가 이미 평문이고,
+#     §3의 "`confirm_damage`가 3경로 전부"는 **플레이어→적** 계약이다. 새 데미지 축은 0개.
+# ⚠ 전진·지형 차단·종료 통지는 `_arrows`와 **같은 헬퍼**를 지난다(갈라질 자리를 안 만든다).
+var _mob_arrows: Array = []
 var _last_shot_msec: Dictionary = {}  # peer_id -> 마지막 발사 msec (호스트 전용 — 발사율 스팸 게이트, _last_hit_msec 미러)
 # peer_id -> 호스트가 그 피어에게 **마지막으로 인정한** 평타 콤보 타수 (호스트 전용, 궁수 "평·평·쭉").
 # 🔴 클라 주장(G_SHOOT "cb")을 그대로 믿으면 매 발사가 마무리 타(사거리 2배·데미지 2.5배)가 된다 —
@@ -77,8 +89,38 @@ func _ready() -> void:
 	EventBus.boss_strike.connect(_on_boss_strike)
 	EventBus.boss_sweep.connect(_on_boss_sweep)
 	EventBus.player_shoot.connect(_on_player_shoot)
+	EventBus.mob_shoot.connect(_on_mob_shoot)
+	# 🔴 **자기 씬 하위만 등록한다** — 그룹 스캔은 씬 스왑 프레임에 **이전 씬의 적까지** 돌려준다
+	#   (rules §5). 근본 처방은 `main._swap`의 `remove_child`지만, 이 스캔은 `_ready` **일회**라
+	#   유령이 들어오면 딕셔너리에 영구히 박히고 그 대가가 크다: 다음 프레임에 그 노드가 해제되면
+	#   `_check_clear`의 `entry["health"] as HealthComponent`가 **캐스트에서** 터져
+	#   (`Trying to cast a freed object`) 함수가 중단되고, Dictionary는 삽입 순서라 유령이 늘 첫
+	#   항목이라 **스테이지가 영영 클리어되지 않는다**(2026-08-01 "스테이지2에서 멈춘다" 신고의 원인).
+	#   ⚠ 소비처 12곳에 `is_instance_valid`를 뿌리는 대신 **입구 하나**를 막는다 — 그래야 다음에
+	#     `_enemies`를 읽는 코드가 늘어도 같은 결함이 재발하지 않는다.
+	#   ⚠ 스캔 시점의 유령은 **아직 살아 있어** 캐스트가 안 터진다 — 그래서 이 필터가 성립한다.
+	# 🔴 **기준은 `owner`(그 .tscn의 루트)다 — `get_parent()`가 아니다** (netreview 2026-08-01).
+	#   둘은 지금 같은 노드를 가리키지만(전 씬에서 컴포넌트가 루트의 직계 자식), 누군가 컴포넌트를
+	#   `Systems` 같은 노드로 한 겹만 감싸면 `get_parent()`는 그 껍데기를 반환해 **자기 씬 적이
+	#   하나도 안 통과한다.** 그 실패는 조용하고 증상이 방금 고친 것과 **똑같은데**(클리어 영영 안 됨 ·
+	#   게스트 hit_req 전량 무시 · 드랍·EXP 0) 이번엔 **SCRIPT ERROR조차 안 난다.**
+	#   `owner`는 중첩 깊이와 무관하게 그 씬의 루트다(실측: 4개 씬 전부 `owner=Stage`/`Campfire`).
+	var scene_root: Node = owner if owner != null else get_parent()
+	var passed := 0
 	for node: Node in get_tree().get_nodes_in_group("enemy"):
+		if scene_root == null or not scene_root.is_ancestor_of(node):
+			continue
+		passed += 1
 		_register_enemy(node)
+	# 🔴 **실패 방향이 「전면 무등록」이라 진단을 코드로 박아 둔다.** 위 필터가 어떤 이유로든
+	#   자기 씬 적을 떨어뜨리면 화면에는 "적이 안 죽는다/클리어가 안 된다"로만 나타난다 —
+	#   에러가 없으면 다음 사람이 다시 며칠을 쓴다. 씬 하위 실제 개수와 통과 개수를 대조한다.
+	#   ⚠ `_register_enemy` 자체의 거부(eid 없음·Health 없음)는 그쪽이 이미 push_error를 낸다.
+	if scene_root != null:
+		var under := _count_in_group_under(scene_root, &"enemy")
+		if passed < under:
+			push_error("[CombatAuthority] 씬 하위 적 %d마리 중 %d마리만 등록됐다 — 씬 스캔 필터가 자기 씬을 떨어뜨린다(scene_root=%s)"
+				% [under, passed, scene_root.name])
 	EventBus.peer_left.connect(func(peer_id: int) -> void:
 		_last_hit_msec.erase(peer_id)
 		_roll_grant_msec.erase(peer_id)
@@ -113,6 +155,14 @@ func _on_player_spawned(peer_id: int, player: Node) -> void:
 	var health := p.get_node_or_null("Health") as HealthComponent
 	if health != null and carried != health.hp:
 		health.confirm_hp(carried)
+
+
+# 씬 하위의 그룹 소속 노드 수 — 위 「전면 무등록」 진단 전용. `_ready` 1회라 재귀 비용은 무시할 수준.
+func _count_in_group_under(n: Node, group: StringName) -> int:
+	var c := 1 if n.is_in_group(group) else 0
+	for ch: Node in n.get_children():
+		c += _count_in_group_under(ch, group)
+	return c
 
 
 func _register_enemy(node: Node) -> void:
@@ -240,6 +290,36 @@ func _on_player_shoot(shooter_id: int, origin: Vector2, dir: Vector2, aid: Strin
 	_register_arrow(aid, origin, dir, shooter_id, arrow_range, weapon_id, charge, combo)
 
 
+# 🔴 원거리 잔몹의 발사 — 권한 화살 등록 (호스트 전용, 2026-08-01).
+# 신뢰 경계는 **플레이어 경로보다 좁다**: 이 시그널의 호스트 발화는 자기 AI(`mob_melee._fire_arrow`)뿐이고,
+# 게스트에서도 로컬 emit되지만 아래 `is_host` 가드가 막는다. 즉 **게스트가 적 발사를 주장할 경로가 없다** —
+# `G_MOB_SHOOT`은 호스트만 보내고 수신부(MobSync)가 `from_id != HOST_ID`를 거부한다.
+# 🔴 수치는 전부 **호스트 자기 def**에서 온다(네트워크로 온 것은 eid뿐) — 표시(ArrowField)도 같은 def를
+#   읽으므로 속도·수명이 정확히 일치한다("맞는 곳=보이는 곳", §3).
+# ⚠ `_stage_over` 가드 — 클리어 후 날아가던 화살이 부활한 플레이어를 때리지 않게(`_on_mob_strike` 미러).
+func _on_mob_shoot(_eid: String, origin: Vector2, dir: Vector2, aid: String, def: EnemyDef) -> void:
+	if not Net.is_host() or _stage_over or def == null or aid.is_empty():
+		return
+	# 유한성 가드 — 방향이 NaN/INF면 normalized()가 NaN이 되어 == ZERO를 통과한다(_register_arrow 미러).
+	if not (is_finite(dir.x) and is_finite(dir.y)):
+		return
+	var d := dir.normalized()
+	if d == Vector2.ZERO:
+		return
+	# 🔴 **aid 중복 등록 차단** (netreview ③) — 같은 aid가 두 번 들어오면 권한 화살이 2개가 되어
+	#   **한 발이 두 번 데미지를 확정한다**(그리고 첫 종료 통지가 둘 다의 표시 탄을 지운다).
+	#   지금 도달 경로는 없다(호스트 로컬 emit 1회 + 릴레이/직결 모두 중복 없는 reliable 채널)지만,
+	#   막는 비용이 선형 스캔 한 번(배열 크기 = 비행 중 화살 수)이라 구조로 못 박는다.
+	#   ⚠ 발신 측 유일성 근거는 `mob_melee._fire_arrow` 주석이 정본이다(eid × 단조 seq).
+	for existing: Dictionary in _mob_arrows:
+		if str(existing["aid"]) == aid:
+			return
+	var speed := CombatMath.clamp_projectile_speed(def.proj_speed)
+	_mob_arrows.append({"aid": aid, "pos": origin, "dir": d, "speed": speed,
+		"life": CombatMath.projectile_lifetime_s(def.proj_range, speed),
+		"radius": def.strike_radius, "damage": def.attack_damage})
+
+
 # 속도·수명·폭발 반경은 GameState.projectile_params 단일 소스(§3) — 표시(ArrowField)와 같은 값이라
 # "맞는 곳=보이는 곳"이 유지된다. 게스트 주장(w·r·c)은 그 안에서 allowlist 리졸브·clamp된다.
 func _register_arrow(aid: String, origin: Vector2, dir: Vector2, shooter_id: int,
@@ -272,14 +352,30 @@ func _register_arrow(aid: String, origin: Vector2, dir: Vector2, shooter_id: int
 # 첫 적중에서 멈춤(관통 없음). 폭발탄(차지)은 그 지점에서 반경 판정(여러 적) + 빗나가도 만료 지점에서 폭발.
 # 발사율은 발사 시 is_fire_rate_ok로 이미 강제 — 명중엔 쿨다운 게이트 재적용 안 함(투사체 하나=한 발).
 func _physics_process(delta: float) -> void:
-	if not Net.is_host() or _stage_over or _arrows.is_empty():
+	if not Net.is_host() or _stage_over:
 		return
+	if not _arrows.is_empty():
+		_step_player_arrows(delta)
+	if not _mob_arrows.is_empty():
+		_step_mob_arrows(delta)
+
+
+func _step_player_arrows(delta: float) -> void:
 	var survivors: Array = []
 	for a: Dictionary in _arrows:
-		var pos := (a["pos"] as Vector2) + (a["dir"] as Vector2) * (float(a["speed"]) * delta)
+		var from_pos := a["pos"] as Vector2
+		var pos := from_pos + (a["dir"] as Vector2) * (float(a["speed"]) * delta)
 		a["pos"] = pos
 		a["life"] = float(a["life"]) - delta
 		var blast_r := float(a["blast"])
+		# 🔴 지형 차단 (설계 ⑹ 층②, 2026-08-01) — 적 명중보다 **먼저** 본다: 벽 너머의 적을
+		#   관통해 맞히면 안 된다. 표시 탄(arrow.gd)도 같은 질의를 하므로 결정론이 유지된다.
+		var wall_v: Variant = _terrain_block_point(from_pos, pos)
+		if wall_v != null:
+			if blast_r > 0.0:
+				_confirm_blast(a, wall_v as Vector2)  # 벽에 맞아도 그 자리에서 터진다(폭발탄)
+			_terminate_arrow(str(a["aid"]), wall_v as Vector2)
+			continue
 		var hit_eid := _arrow_probe(pos)
 		if not hit_eid.is_empty():
 			if blast_r > 0.0:
@@ -296,6 +392,72 @@ func _physics_process(delta: float) -> void:
 			continue
 		survivors.append(a)
 	_arrows = survivors
+
+
+# 호스트 전용 — 적 화살 전진 + **플레이어** 명중 판정. 관통 없음(첫 적중에서 소멸, 플레이어 화살 미러).
+# ⚠ `_stage_over` 가드는 호출부(_physics_process)가 이미 진다 — `_on_mob_strike`와 같은 규율이다
+#   (rules §2가 지적한 "G_HIT_REQ엔 그 가드가 없다"는 비대칭을 여기서 새로 만들지 않는다).
+func _step_mob_arrows(delta: float) -> void:
+	var survivors: Array = []
+	for a: Dictionary in _mob_arrows:
+		var from_pos := a["pos"] as Vector2
+		var pos := from_pos + (a["dir"] as Vector2) * (float(a["speed"]) * delta)
+		a["pos"] = pos
+		a["life"] = float(a["life"]) - delta
+		var wall_v: Variant = _terrain_block_point(from_pos, pos)
+		if wall_v != null:
+			_terminate_arrow(str(a["aid"]), wall_v as Vector2)
+			continue
+		if _mob_arrow_probe(a, pos):
+			_terminate_arrow(str(a["aid"]), pos)
+			continue
+		if float(a["life"]) <= 0.0:
+			continue  # 빗나감 — 표시 탄은 각 클라 로컬 수명으로 소멸(브로드캐스트 불필요, 플레이어 화살과 동일)
+		survivors.append(a)
+	_mob_arrows = survivors
+
+
+# 적 화살이 이 지점에서 플레이어를 맞혔는가 — 맞았으면 데미지 확정 후 true(그 화살은 소멸).
+# 🔴 **지연 보상은 잔몹 STRIKE와 완전히 같은 규약**(§3 방어자 우대): 낡은 수신 좌표와 속도로 외삽한
+#   추정 좌표가 **둘 다** 판정 안일 때만 확정한다. 호스트 자신은 두 좌표가 같아 항등이다.
+# 🔴 판정 반경 = `def.strike_radius` — 근접에서 "판정 반경 = 예고 표시 반경"이던 그 필드가 여기선
+#   "판정 반경 = 그려진 화살 크기"다. 개념이 같아 새 필드를 만들지 않았다("맞는 곳=보이는 곳").
+# 🔴 i-frame(구르기)을 반드시 본다 — 전사만 남은 지금 플레이어의 **유일한** 회피 수단이다(GDD §11).
+func _mob_arrow_probe(a: Dictionary, pos: Vector2) -> bool:
+	var radius := float(a["radius"])
+	var dmg := int(a["damage"])
+	for node: Node in get_tree().get_nodes_in_group("player"):
+		var p := node as PlayerActor
+		if p == null or not p.is_alive():
+			continue
+		if not CombatMath.is_strike_hit_lagged(
+				p.net_anchor(), p.net_anchor_lead(Net.one_way_ms(p.peer_id)), pos, radius):
+			continue
+		if _is_iframe_active(p):
+			continue  # 구르기 무적 — 잔몹/보스 예고와 같은 회피 규약
+		(p.get_node("Health") as HealthComponent).apply_damage(dmg)
+		return true
+	return false
+
+
+# 화살 한 스텝이 지형(layer 1 world)에 막혔는가 — 막혔으면 그 충돌 지점, 아니면 null.
+# 🔴 **지형 차단은 호스트만 한다 — 표시 탄(`arrow.gd`)은 로컬로 질의하지 않는다**(리드 결정 2026-08-01).
+#   결정론이라 게스트도 같은 지점을 계산할 수 있지만, 게스트가 **스스로 화살을 지우면** 호스트가 안
+#   막은 경우에 「안 맞았는데 맞았다」가 된다 — 「보이는 것 ⊇ 판정」이 깨지는 방향이다. 그래서 소멸은
+#   항상 호스트의 `G_ARROW_HIT` 통지를 따른다(플레이어 화살의 despawn 규약과 같은 쌍).
+#   ⚠ 그 대가로 게스트 화면에서 화살이 벽을 편도 지연만큼 지나쳐 보일 수 있다 — **안전한 쪽의
+#     어긋남**이다(보이는 것이 판정보다 넓다). 반대로 기울이지 마라.
+# ⚠ 몸 레이어(2 player_body · 3 enemy_body)는 마스크에 없다 — 명중 판정은 여전히 거리 질의다
+#   (물리 레이어 함정 §5 회피 + 단위 테스트 가능성 유지). 여기서 보는 것은 **지형뿐**이다.
+func _terrain_block_point(from_pos: Vector2, to_pos: Vector2) -> Variant:
+	if from_pos.is_equal_approx(to_pos):
+		return null
+	var space := get_viewport().world_2d.direct_space_state
+	var q := PhysicsRayQueryParameters2D.create(from_pos, to_pos, WORLD_MASK)
+	q.collide_with_areas = false
+	q.collide_with_bodies = true
+	var hit := space.intersect_ray(q)
+	return hit["position"] as Vector2 if hit.has("position") else null
 
 
 # 화살 현재 위치에 맞는 살아있는 적 eid (첫 적중, 없으면 ""). 판정 반경 = 화살굵기 + 적 body_radius (§3 거대 적 대응).
@@ -363,12 +525,16 @@ func _terminate_arrow(aid: String, pos: Vector2) -> void:
 func _on_enemy_hp_confirmed(eid: String, hp: int) -> void:
 	# 치명 여부는 Health가 확정 직전에 세팅한 last_crit에서 읽는다(표시 강조 전용 — 굴림은 이미 끝났다).
 	var crit := false
+	# 🔴 실데미지도 **같은 자리에서** 읽는다(2026-08-01) — `hp`만 보내면 게스트가 감소량으로 역산하는데
+	#   그 값은 **오버킬이 잘려** 막타가 실제보다 작게 뜬다. 표시 전용이고 `cr`과 같은 근거·같은 소스다.
+	var dmg := 0
 	var ehp_entry: Variant = _enemies.get(eid)
 	if ehp_entry != null:
 		var eh := (ehp_entry as Dictionary)["health"] as HealthComponent
 		crit = eh != null and eh.last_crit
+		dmg = eh.last_damage if eh != null else 0
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ENEMY_HP, "eid": eid, "hp": hp,
-		"cr": 1 if crit else 0})
+		"cr": 1 if crit else 0, "d": dmg})
 	if hp <= 0:
 		# 드랍 롤 트리거 (호스트 전용 경로) — 죽는 순간 좌표에서 떨어지도록 clear 판정 전에 쏜다.
 		# 실제 롤·산개·브로드캐스트는 DropAuthority가 받는다 (rules §2 책임 분리, §1 호스트 권한).
@@ -386,7 +552,11 @@ func _on_enemy_hp_confirmed(eid: String, hp: int) -> void:
 func _on_player_hp_confirmed(peer_id: int, hp: int) -> void:
 	if not Net.is_host():
 		return
-	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_PLAYER_HP, "pid": peer_id, "hp": hp})
+	# 실데미지도 함께 — ehp "d"와 같은 근거(hp만 보내면 수신 측 역산이 오버킬에서 잘린다).
+	# 🔴 **그 피어의 아바타에서 읽는다** — 확정을 만든 Health가 곧 그 노드다.
+	var php_p := _peer_sync.player(peer_id)
+	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_PLAYER_HP, "pid": peer_id, "hp": hp,
+		"d": php_p.last_damage_taken() if php_p != null else 0})
 	if hp <= 0:
 		_check_wipe()
 
@@ -469,6 +639,19 @@ func _on_boss_sweep(center: Vector2, _angle: float, pattern: BossPatternDef, das
 		_boss_sweep_seq[p.peer_id] = dash_seq
 
 
+# 🔴 스테이지 종료 시 비행 중이던 **적** 화살을 폐기한다 (netreview ④·⑤ 2026-08-01).
+# ⑴ 클리어는 사망자를 HP1로 부활시키는데(_check_clear), 그 직후 착탄한 화살이 1HP를 깎으면
+#    부활하자마자 다시 죽는다 — `_stage_over` 가드가 `_physics_process`에 있어 판정은 이미 멎지만,
+#    엔트리를 남겨 두면 "왜 안 맞지"를 다음 사람이 여기서 다시 유도해야 한다. 의도를 코드로 적는다.
+# ⑵ 표시 탄은 각 클라 `arrow.gd`가 자기 수명으로 스스로 `queue_free`하므로(`:39-41`) 종료 통지를
+#    보낼 필요가 없다 — 그래서 **좀비 화살이 화면에 남지 않는다.** 여기서 G_ARROW_HIT를 쏘면
+#    오히려 종료 지점에 임팩트 연출이 뜬다(맞지도 않았는데).
+# ⚠ 플레이어 화살(`_arrows`)은 건드리지 않는다 — 클리어 후에도 적을 못 때리는 것은 같지만,
+#   그쪽은 폭발탄 FX가 `_confirm_blast`와 엮여 있어 별도 판단이 필요하다(현행 유지 = 기존 동작).
+func _drop_mob_arrows() -> void:
+	_mob_arrows.clear()
+
+
 # i-frame 조회 — 호스트 자신은 로컬 구르기 상태 직접, 원격은 G_ROLL 그랜트 창 (CombatMath 단일 소스)
 func _is_iframe_active(p: PlayerActor) -> bool:
 	if p.is_local:
@@ -493,6 +676,7 @@ func _check_clear() -> void:
 	if required == 0:
 		return  # 비부활 적 없는 씬 — 입장 즉시 클리어 방지 가드
 	_stage_over = true
+	_drop_mob_arrows()  # 비행 중이던 적 화살 폐기 — 아래 함수 주석이 근거
 	# 사망자 HP1 부활 확정 (GDD §5) — php는 player_hp_confirmed 경유로 자동 브로드캐스트
 	for node: Node in get_tree().get_nodes_in_group("player"):
 		var p := node as PlayerActor
@@ -511,6 +695,7 @@ func _check_wipe() -> void:
 		if p != null and p.is_alive():
 			return
 	_stage_over = true
+	_drop_mob_arrows()
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_WIPE})
 	EventBus.stage_wiped.emit()  # 마을 귀환 전환은 ChapterFlow(호스트)가 결정
 
@@ -763,8 +948,10 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 				return  # 권한 스푸핑 차단 — HP 확정은 호스트 발신만 신뢰 (from은 릴레이가 찍음)
 			var entry_hp: Variant = _enemies.get(str(data.get("eid", "")))
 			if entry_hp != null:
+				# "d" = 호스트가 확정한 실데미지(표시 전용). 없으면 0 = 미상 → 글루가 hp 감소량으로
+				# 폴백한다 = 구버전 호스트와 **완전 항등**(cr과 같은 규약).
 				((entry_hp as Dictionary)["health"] as HealthComponent).set_hp_display(
-					int(data.get("hp", 0)), int(data.get("cr", 0)) == 1)
+					int(data.get("hp", 0)), int(data.get("cr", 0)) == 1, int(data.get("d", 0)))
 		NetSchema.G_ROLL:
 			if not Net.is_host():
 				return  # 그랜트 권한은 호스트만
@@ -787,9 +974,11 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			var pid := int(data.get("pid", 0))
 			var target := _peer_sync.player(pid)
 			if target != null:
-				target.confirm_hp_from_net(int(data.get("hp", 0)))
+				target.confirm_hp_from_net(int(data.get("hp", 0)), int(data.get("d", 0)))
 			else:
-				_pending_php[pid] = int(data.get("hp", 0))  # 스폰 전 도착 — player_spawned에서 반영
+				# 스폰 전 도착 — player_spawned에서 반영. ⚠ "d"는 안 들고 간다: 아직 화면에 없는
+				# 아바타의 피격 숫자는 띄울 자리가 없고, 반영 시점엔 0 = 폴백이 옳다.
+				_pending_php[pid] = int(data.get("hp", 0))
 		NetSchema.G_STAGE_CLEAR:
 			if not Net.is_host() and from_id == NetSchema.HOST_ID and not _stage_over:
 				_stage_over = true

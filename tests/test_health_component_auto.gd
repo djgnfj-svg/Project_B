@@ -27,6 +27,15 @@ func _initialize() -> void:
 	h.apply_damage(100)
 	failures += _check(h.hp == 0, "overkill: 0 클램프 (음수 금지)")
 	failures += _check(h.is_dead(), "overkill: is_dead")
+	# 🔴🔴 **오버킬에서도 실데미지가 남는다** (2026-08-01 사용자 신고: *"5 남았을 때 대미지가 5뜨는 거"*).
+	#   HP 7에 100을 넣었으니 hp 감소량은 **7뿐**인데 실제로 들어간 딜은 100이다. 피격 글루가
+	#   `last_damage`를 우선하지 않고 감소량으로 되돌아가면 여기서 빨개진다 — 그 회귀는 화면에서
+	#   **막타에만** 나타나 눈으로는 "원래 그런가" 싶은 종류다(에러 없음).
+	failures += _check(h.last_damage == 100,
+		"★overkill: last_damage = 실제 딜(100) — hp 감소량(7)이 아니다")
+	# ⚠ 나머지 딜 검사는 **별도 인스턴스**로 한다 — `confirm_hp`가 부활 타이머를 해제하고
+	#   `confirmed` 배열에 항목을 더해서, 여기서 부르면 아래 부활 케이스들이 통째로 무너진다.
+	failures += _dmg_side_channel_checks()
 
 	h.apply_damage(5)
 	failures += _check(confirmed == [7, 0], "사망 후 apply_damage 무시 (확정 추가 없음)")
@@ -87,6 +96,32 @@ func _initialize() -> void:
 	else:
 		printerr("TEST_FAIL health_component — %d개 실패" % failures)
 		quit(1)
+
+
+# 🔴 실데미지 사이드채널(`last_damage`) — 데미지 숫자 표시의 단일 소스 (2026-08-01).
+# 신고: *"5 남았을 때 대미지가 5뜨는 거 → 그냥 들어간 딜이 뜨게"*. `hp = maxi(0, hp - dmg)`라
+#   hp 감소량으로 역산하면 **오버킬이 잘려** 막타만 실제보다 작게 떴다.
+# ⚠ 격리된 인스턴스로 도는 이유는 호출부 주석 참조(부활 타이머·confirmed 배열 오염).
+func _dmg_side_channel_checks() -> int:
+	var f := 0
+	var d := _new_health(50, false)
+	d.apply_damage(12)
+	f += _check(d.last_damage == 12, "★deal: 평범한 타격은 감소량과 실딜이 같다(항등 구간)")
+	# **0 = 미상 폴백**이 성립하는가 — `confirm_hp`(부활·피흡·모닥불)엔 데미지 개념이 없다.
+	#   스테일 값이 남으면 회복 직후 타격이 **이전 딜을 물려받아** 거짓 숫자를 띄운다
+	#   (`last_crit` 스테일 함정과 같은 부류, rules §5).
+	d.confirm_hp(40)
+	f += _check(d.last_damage == 0,
+		"★confirm_hp: last_damage 0 리셋 (스테일 딜을 다음 타격이 물려받지 않게)")
+	var g := _new_health(50, false)
+	g.set_hp_display(30, false, 33)
+	f += _check(g.last_damage == 33, "★display: 게스트는 ehp \"d\"로 실데미지를 받는다")
+	g.set_hp_display(28)
+	f += _check(g.last_damage == 0,
+		"★display: 인자 생략 = 0 = 미상 → 감소량 폴백 (구버전 호스트와 항등)")
+	g.set_hp_display(20, false, -5)
+	f += _check(g.last_damage == 0, "★display: 음수 딜은 0으로 (오염 페이로드 방어)")
+	return f
 
 
 func _new_health(max_hp: int, respawns: bool, delay: float = 0.0) -> HealthComponent:

@@ -1036,12 +1036,14 @@ func _initialize() -> void:
 	var thrust := EquipDef.new()
 	thrust.motion_type = "thrust"  # 예약 모션 — 아직 발사형이 아니다
 	failures += _check(CombatMath.is_projectile_weapon(bow), "발사형: shoot = 발사 가능")
-	# ⚠ **charge 갈래는 실제 charge 무기로 겨눈다** — worn_staff는 2026-07-27에 shoot(마법볼)로 갈라져서
-	#   그걸 계속 겨누면 라벨만 "charge"이고 실제로는 shoot 갈래를 두 번 재게 된다(조용히 커버리지 상실).
-	failures += _check(CombatMath.is_projectile_weapon(load("res://data/equipment/iron_staff.tres") as EquipDef),
-		"발사형: charge(철 지팡이) = 발사 가능")
-	failures += _check(CombatMath.is_projectile_weapon(load("res://data/equipment/worn_staff.tres") as EquipDef),
-		"발사형: shoot(낡은 지팡이 = 마법볼) = 발사 가능")
+	# ⚠ **charge 갈래는 합성으로 겨눈다** — 실제 charge 무기(지팡이)는 궁수·법사 폐기와 함께
+	#   2026-08-01에 삭제됐다. `is_projectile_weapon`은 `motion_type` 문자열만 보므로 합성으로 충분하고,
+	#   이렇게 안 하면 charge 갈래가 통째로 안 재진다(라벨만 남고 커버리지가 조용히 사라진다).
+	var charger := EquipDef.new()
+	charger.motion_type = "charge"
+	charger.arrow_range = 150.0
+	failures += _check(CombatMath.is_projectile_weapon(charger),
+		"발사형: charge(합성) = 발사 가능")
 	failures += _check(not CombatMath.is_projectile_weapon(gsword),
 		"★발사형: swing(대검) = 발사 거부 — 새면 전사 공격력짜리 권한 화살이 확정된다")
 	failures += _check(not CombatMath.is_projectile_weapon(thrust), "★발사형: thrust(예약) = 발사 거부")
@@ -1248,6 +1250,9 @@ func _initialize() -> void:
 	var auto_fire_ok := true
 	var melee_gap_ok := true
 	var auto_fire_margin_ok := true
+	var buffer_margin_ok := true
+	var buffer_worst := 1.0e9
+	var buffer_worst_at := ""
 	for jf: String in DirAccess.get_files_at("res://data/jobs"):
 		var jbase := jf.trim_suffix(".remap")
 		if jbase.get_extension() != "tres":
@@ -1323,6 +1328,40 @@ func _initialize() -> void:
 			var af_thresh_ms := CombatMath.effective_cooldown(j, h2) * CombatMath.FIRE_RATE_SLACK * 1000.0
 			if af_gap_ms - af_thresh_ms < CombatMath.AUTO_FIRE_HOST_FRAME_S * 1000.0 - 0.001:
 				auto_fire_margin_ok = false
+		# 🔴🔴 **클릭 발사 경로에도 `auto_fire_gap_s` 대칭이 필요하다** (netreview C-1~C-3, 2026-08-01).
+		#   C2(2026-07-28)가 홀드 연사에만 여유를 붙인 근거는 *"사람의 클릭은 경계에 안 붙는다"* 였다.
+		#   **선입력 버퍼가 그 전제를 깼다** — 버퍼가 살려 낸 클릭은 발사 간격을 `combo_gap_s`에
+		#   **정확히** 못 박으므로 남는 여유가 구조적 마진(`cd × (1 − FIRE_RATE_SLACK)`)뿐인데,
+		#   웹 30fps 호스트의 수신 프레임 양자화가 그중 33.3ms를 먹는다.
+		#   ⚠ **입력을 보존하는 편의 기능이 들어올 때마다 이 전제가 다시 깨진다** — 이 단정이 그 감시자다.
+		# 🔴 위 `melee_gap_ok` ⑴은 **엄격히 크다**만 보므로 15ms도 통과한다. 여기는 예산을
+		#   **호스트 프레임 1주기**로 못 박는다(홀드 경로 ⑵와 같은 기준).
+		# 🔴 실패의 성격이 축마다 다르다 — 셋 다 무증상이다:
+		#   · `advance_combo` 하한 미달 → 콤보 리셋. 호스트 인덱스가 클라보다 **영구히 1 뒤처져**
+		#     마무리 타가 그 교전 내내 평타로 확정된다(해제 = 800ms 이상 정지). 연출은 전부 정상.
+		#   · `is_hit_cooldown_ok` 미달 → 타격 **통째로 소실**(스윙·궤적·소리·반동 다 나오고 HP만 그대로).
+		for bf: String in DirAccess.get_files_at("res://data/equipment"):
+			var bbase := bf.trim_suffix(".remap")
+			if bbase.get_extension() != "tres":
+				continue
+			var be := load("res://data/equipment/%s" % bbase) as EquipDef
+			if be == null or be.slot() != EquipDef.SLOT_WEAPON:
+				continue
+			if not be.job_id.is_empty() and be.job_id != j.id:
+				continue
+			for hb: float in [0.0, 0.19, 0.21, 0.25, float(CombatMath.LEVEL_STAT_MAX["haste"])]:
+				for ib: int in range(CombatMath.combo_len(be)):
+					# 🔴 **클라가 실제로 내는 간격**을 겨눈다 — `player.gd`가 쓰는 것과 **같은 함수**다.
+					#   여기에 `combo_gap_s`를 직접 적으면 "버퍼 여유를 지우는 뮤테이션"을 못 잡는다.
+					var buf_gap := CombatMath.buffered_attack_gap_s(j, be, ib, hb)
+					var lo_b := CombatMath.combo_min_gap_s(j, be, ib, hb)
+					var need_b := CombatMath.effective_cooldown(j, hb) * CombatMath.FIRE_RATE_SLACK
+					var margin := minf(buf_gap - lo_b, buf_gap - need_b)
+					if margin < buffer_worst:
+						buffer_worst = margin
+						buffer_worst_at = "%s/%s h=%.2f i=%d" % [j.id, be.id, hb, ib]
+					if margin < CombatMath.AUTO_FIRE_HOST_FRAME_S - 0.000001:
+						buffer_margin_ok = false
 		for ef: String in DirAccess.get_files_at("res://data/equipment"):
 			var ebase := ef.trim_suffix(".remap")
 			if ebase.get_extension() != "tres":
@@ -1364,6 +1403,7 @@ func _initialize() -> void:
 	var melee_motion_ok := true
 	var melee_weight_ok := true
 	var melee_throttle_ok := true
+	var melee_blade_ok := true
 	var t_hit_min := 1.0e9
 	var t_hit_max := 0.0
 	for mf: String in DirAccess.get_files_at("res://data/equipment"):
@@ -1445,6 +1485,38 @@ func _initialize() -> void:
 		#      값이 조용히 사라지고 모션만 밋밋해진다. 이 단정이 그 창을 닫는다.
 		if mw.motion_type == "thrust" and mw.swing_pull <= 0.0:
 			melee_motion_ok = false
+		# ⑾ 🔴 **칼날 폭 리본 — 날이 무기 안에 드는가** (칼날 폭 리본 2026-08-01).
+		#    리본은 `[칼끝 − blade_length, 칼끝]`만 채운다. 이 값이 **스윕 중 칼끝이 회전 중심에서
+		#    가장 가까워지는 거리**를 넘으면 안쪽 변이 손을 지나 회전 중심까지 내려가고, 거기서
+		#    `player.TRAIL_MIN_INNER_DIST` 하한에 눌려 점들이 겹치면 다각형이 퇴화한다 —
+		#    **리본이 에러 없이 통째로 안 그려진다**(= 07-29 이전의 "궤적이 없다"로 되돌아간다).
+		# 🔴🔴 **경계식 = `텍스처 폭 − grip.x + weapon_hold_dist − swing_pull`** (reviewer I-5 정정).
+		#    ⚠ 초판은 `텍스처 폭 − grip.x`만 보고 *"`hold_dist`는 양변을 같은 방향으로 밀어 안전"*
+		#      이라고 적었는데, **그 근거는 절반만 맞다 — `swing_pull`이 반대 방향으로 민다.**
+		#      찌르기의 스윕 시작점이 `_motion_at`에서 `lerpf(-swing_pull, peak, 0)` = **−pull**이라
+		#      그 순간 칼끝이 `hold_dist − pull`만큼만 나와 있다(창은 12 − 9 = **여유 3px**).
+		#      즉 옛 검사가 충분조건인 것은 `hold_dist ≥ swing_pull`일 때뿐이고, 새 찌르기 무기가
+		#      `swing_pull > hold_dist`로 오면 **트립와이어 초록불인 채 리본이 사라진다** —
+		#      정확히 이 단정이 막으려던 상태다. 그래서 두 항을 다 넣어 조인다.
+		#    ⚠ 베기(swing)는 스윕 lunge가 `peak × sin(u·π) ≥ 0`이라 `pull`이 안 걸린다 — 현 데이터에서
+		#      `swing_pull > 0`인 무기가 창뿐이라 이 식을 전 무기에 그대로 써도 **보수적**이다.
+		#    ⚠ 마지막 1px(`TRAIL_MIN_INNER_DIST`)은 여기서 안 본다 — 그 상수는 `player.gd`에 있어
+		#      씬 글루라 테스트가 못 읽는다(복제하면 두 번째 진실원이 된다). 경계 딱 1px 안쪽은
+		#      코드 clamp가 "안팎 역전 없이 두께 0"으로 안전하게 떨어뜨린다(`_blade_base_global`).
+		# ⑿ 🔴 **조용한 clamp 없음** — `clamped == raw` 관용구(J-1). 상한 값을 여기 복제하지 않고
+		#    코드가 실제로 쓰는 `CombatMath.blade_length()`를 그대로 불러 입출력이 같은지만 본다.
+		# ⒀ 🔴 **근접 무기는 값을 명시했는가** — 빠뜨리면 `DEFAULT_BLADE_LENGTH`(8px) 폴백이라
+		#    "리본이 왜 아직 얇지"가 된다(발사형 `arrow_range` 누락 트립와이어와 같은 관용구).
+		if mw.weapon_texture != null:
+			var fwd_min := float(mw.weapon_texture.get_width()) - mw.weapon_grip.x \
+				+ mw.weapon_hold_dist - maxf(mw.swing_pull, 0.0)
+			if CombatMath.blade_length(mw) > fwd_min:
+				melee_blade_ok = false
+		if mw.blade_length > 0.0 \
+				and not is_equal_approx(CombatMath.blade_length(mw), mw.blade_length):
+			melee_blade_ok = false
+		if mw.blade_length <= 0.0:
+			melee_blade_ok = false
 	failures += _check(melee_arc_ok,
 		"근접 기하 전수: 모든 근접 무기의 swing_arc > 0 (0이면 휘둘러도 안 맞는다)")
 	failures += _check(melee_clamp_ok,
@@ -1472,12 +1544,98 @@ func _initialize() -> void:
 		"★스로틀 상한 전수: t_hit + 상한 ≤ swing_time(창 안 판정) + 상한 ≥ max(t_hit)−min(t_hit)(결손 커버)")
 	failures += _check(melee_weight_ok,
 		"★무게 배율 전수: hit_shake / HIT_SHAKE_REF ≤ HIT_WEIGHT_MAX (조용한 saturation 방지)")
+	failures += _check(melee_blade_ok,
+		"★칼날 폭 전수: blade_length 명시 + ≤ (텍스처폭 − grip.x + hold_dist − swing_pull) + 조용한 clamp 없음")
+	# ★검출력 — 부등식의 **새 두 항**(`hold_dist` · `swing_pull`)이 실제로 도는가. 합성으로 확인한다:
+	#   `pull > hold_dist`인 찌르기 무기는 옛 식(전방 길이만)으로는 통과하고 새 식에서만 걸린다.
+	var pull_probe := EquipDef.new()
+	pull_probe.weapon_grip = Vector2(4, 8)
+	pull_probe.weapon_hold_dist = 0.0
+	pull_probe.swing_pull = 12.0
+	pull_probe.blade_length = 40.0  # 전방 길이 44 안 → 옛 식은 통과 · 새 식 한계는 44 − 12 = 32
+	failures += _check(pull_probe.blade_length > 48.0 - pull_probe.weapon_grip.x
+			+ pull_probe.weapon_hold_dist - pull_probe.swing_pull,
+		"★칼날 폭 검출력: `swing_pull > hold_dist`인 찌르기가 새 식에서만 걸린다 (I-5가 연 구멍)")
+	# ★검출력 — 위 전수는 현 데이터가 통과라 "분기가 실제로 도는가"를 못 보여준다. 합성으로 확인한다.
+	var blade_probe := EquipDef.new()
+	failures += _check(is_equal_approx(CombatMath.blade_length(blade_probe), CombatMath.DEFAULT_BLADE_LENGTH),
+		"★칼날 폭 검출력: 미지정(0) = 기본 폴백(옛 칼끝 리본 굵기 ≈ 7px) — 도입 전 근사 항등")
+	blade_probe.blade_length = 999.0
+	failures += _check(is_equal_approx(CombatMath.blade_length(blade_probe), CombatMath.MAX_BLADE_LENGTH),
+		"★칼날 폭 검출력: 상한 초과(999) → clamp — 🔴 clamp를 지우는 뮤테이션이 여기서 잡힌다")
+	blade_probe.blade_length = INF
+	failures += _check(is_equal_approx(CombatMath.blade_length(blade_probe), CombatMath.DEFAULT_BLADE_LENGTH),
+		"★칼날 폭 검출력: 비유한 값 → 기본 폴백 (리본 좌표가 NaN이 되면 다각형이 통째로 사라진다)")
+
+	# --- 궤적 아이덴티티 전수 (하위 직업별 궤적 색·밀도, 2026-08-01) ---
+	# 🔴 **`clamped == raw`를 단정한다** (리뷰 J-1·J-2의 처방 그대로): 상한 값을 테스트에 복제하지
+	#    않고도 "데이터가 조용히 clamp됐다"를 잡는다. 복제하면 상한을 튜닝할 때 테스트도 같이 고쳐야
+	#    하고, 그러면 트립와이어가 데이터가 아니라 자기 자신을 검사하게 된다.
+	# 🔴 **알파 0 검사가 이 블록의 핵심이다** — 0이면 리본·잔상이 통째로 사라지는데(`_fx_color`가
+	#    곱셈이다) **에러가 없다.** 화면에는 "칼만 도는" 것으로만 보이고 원인이 데이터에 있다는
+	#    단서가 어디에도 없다. 궤적은 §3에서 「표시 ⊇ 판정」을 지는 쪽이라 사라지면 그 계약이 통째로
+	#    무너진다("안 보이는데 맞는다"가 상시가 된다).
+	var subjob_fx_ok := true
+	var subjob_fx_seen := 0
+	for sf: String in DirAccess.get_files_at("res://data/subjobs"):
+		var sbase := sf.trim_suffix(".remap")
+		if sbase.get_extension() != "tres":
+			continue
+		var sd := load("res://data/subjobs/%s" % sbase) as SubJobDef
+		if sd == null:
+			continue
+		subjob_fx_seen += 1
+		if not is_equal_approx(CombatMath.fx_ghost_mult(sd), sd.fx_ghost_mult):
+			subjob_fx_ok = false  # 조용한 clamp = 데이터에 적힌 값과 화면이 갈라진 상태
+		if sd.fx_color.a <= 0.0:
+			subjob_fx_ok = false
+		# ⚠ **RGB 상한도 본다** (netreview Minor). Godot `Color`는 1.0 초과를 허용하므로
+		#   `Color(5, 5, 5, 1)`짜리 .tres가 들어오면 `_fx_color`의 곱셈이 궤적을 흰색으로 태운다
+		#   — 알파 0과 같은 부류(에러 없이 화면만 망가짐)라 같은 자리에서 닫는다.
+		if sd.fx_color.r > 1.0 or sd.fx_color.g > 1.0 or sd.fx_color.b > 1.0:
+			subjob_fx_ok = false
+	failures += _check(subjob_fx_seen > 0, "궤적 아이덴티티 전수: data/subjobs 스캔 성공(0장이면 검사가 빈다)")
+	failures += _check(subjob_fx_ok,
+		"★궤적 아이덴티티 전수: fx_ghost_mult 조용한 clamp 없음 + fx_color 알파 > 0 · rgb ≤ 1 (궤적 소실·번짐 방지)")
+	# ★검출력 — 위 전수는 현 데이터가 통과라 "clamp 분기가 실제로 도는가"를 못 보여준다(칼날 폭 관용구).
+	var fx_probe := SubJobDef.new()
+	failures += _check(is_equal_approx(CombatMath.fx_ghost_mult(fx_probe), 1.0),
+		"★궤적 아이덴티티 검출력: 기본값 = 배율 1.0 = 도입 전과 완전 항등")
+	fx_probe.fx_ghost_mult = 99.0
+	failures += _check(is_equal_approx(CombatMath.fx_ghost_mult(fx_probe), CombatMath.MAX_FX_GHOST_MULT),
+		"★궤적 아이덴티티 검출력: 상한 초과 → clamp (잔상 = 드로우콜이라 웹 프레임 비용이다)")
+	fx_probe.fx_ghost_mult = INF
+	failures += _check(is_equal_approx(CombatMath.fx_ghost_mult(fx_probe), 1.0),
+		"★궤적 아이덴티티 검출력: 비유한 값 → 항등 폴백 (int(round(INF))는 잔상 루프를 얼린다)")
+	failures += _check(is_equal_approx(CombatMath.fx_ghost_mult(null), 1.0),
+		"★궤적 아이덴티티 검출력: null(하위 직업 미장착) → 항등 폴백")
+	# 🔴 **검기 도달 배율이 판정 배율과 같은 함수를 지나는가** — `player._trail_reach_mult()`가
+	#    `1 + clamp_reach(reach)`이고 `effective_attack_range`가 `base × (1 + clamp_reach(reach))`다.
+	#    같은 배율이라는 것이 "리본 길이 = 판정 도달"의 전부라, 여기가 갈라지면 검성에서만
+	#    표시와 판정이 어긋난다(그게 이 변경이 고치려던 결함 자체다).
+	#    ⚠ `player.gd`는 씬 글루라 `-s`가 preload를 못 한다 — **배율의 근거인 `clamp_reach`만** 여기서
+	#      잠그고, 곱하는 자리가 맞는지는 코드 주석이 방어한다(rules §3 「씬 글루 사각」).
+	var jr := load("res://data/jobs/warrior.tres") as JobDef
+	if jr != null:
+		var reach_probe := 0.3
+		var mult_probe := 1.0 + CombatMath.clamp_reach(reach_probe)
+		failures += _check(is_equal_approx(
+				CombatMath.effective_attack_range(jr, reach_probe), jr.attack_range * mult_probe),
+			"★검기 도달: 판정 사거리 = 기본 × (1 + clamp_reach) — 리본이 곱하는 배율과 같은 식")
+		failures += _check(is_equal_approx(1.0 + CombatMath.clamp_reach(0.0), 1.0),
+			"★검기 도달: reach 0 → 배율 1.0 = 리본이 도입 전과 한 픽셀도 다르지 않다(항등)")
+		failures += _check(is_equal_approx(
+				1.0 + CombatMath.clamp_reach(9.0), 1.0 + CombatMath.MAX_REACH_BONUS),
+			"★검기 도달: 과대 reach도 MAX_REACH_BONUS clamp를 지난다(리본만 상한 밖으로 못 나간다)")
 	failures += _check(degenerate_ok, "퇴화 트립와이어: MAX_HASTE에서도 유효 쿨다운 게이트 > SAME_SWING_MS")
 	failures += _check(lead_ok, "외삽 상한 불변식: LAG_MAX_LEAD_DIST ≥ 최고 이속×구르기×최대 lead (전 직업)")
 	failures += _check(melee_gap_ok,
 		"★근접 스로틀 전수: 호스트 게이트 통과 + gate ≤ cd(발산 금지) + 여유 1프레임 + 연출 게이트 반대 부호")
 	failures += _check(auto_fire_ok, "홀드 연사 전수: auto_fire_gap_s가 호스트 is_fire_rate_ok를 통과(직업×haste)")
 	failures += _check(auto_fire_margin_ok, "홀드 연사 전수: 게이트 여유 ≥ 호스트 프레임 1주기 (산발 유실 방어)")
+	failures += _check(buffer_margin_ok,
+		"★선입력 버퍼 전수: 버퍼가 살린 클릭의 여유 ≥ 호스트 프레임 1주기 (최악 %s = %.1fms)"
+			% [buffer_worst_at, buffer_worst * 1000.0])
 
 	# 🔴 **차지 가치 트립와이어 — "모으는 것이 탭 연타보다 나은가"** (법사 무기 분화, 2026-07-27).
 	#    유도: 레벨 L을 모아 쏘는 주기 = `쿨다운 + L×단계시간`, 위력 = `×CHARGE_DAMAGE_MULT[L]`.

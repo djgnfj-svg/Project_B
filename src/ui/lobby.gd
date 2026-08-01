@@ -19,8 +19,6 @@ const DebugBridgeScript := preload("res://src/core/debug_bridge.gd")
 @onready var _status: Label = %Status
 @onready var _job_btns: Dictionary[String, Button] = {  # job id -> 토글 버튼 (ButtonGroup로 라디오)
 	"warrior": %WarriorBtn as Button,
-	"archer": %ArcherBtn as Button,
-	"mage": %MageBtn as Button,
 }
 
 var _pending_autostart: Dictionary = {}  # 초대 링크 자동 시작 — 직업을 고른 뒤에 실행

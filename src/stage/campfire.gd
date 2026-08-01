@@ -68,7 +68,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _local_in_fire:
 		var me := _peer_sync.player(Net.my_id)
 		if me != null and me.is_alive():
-			me.seated = not me.seated
+			# 🔴 **`seated`에 직접 대입하지 마라 — `set_seated()`가 유일한 진입점이다**
+			#   (reviewer C-1, 2026-08-01). 앉는 순간 **앉기 이전의 묵은 선입력 버퍼**를 지워야
+			#   다음 프레임 `player._local_move`가 그걸 "입력이 왔다"로 읽어 즉시 일어나 버리는 것을
+			#   막는다 — 그러면 화면에는 *"F가 안 먹힌다"* 로만 보이고, 여기 `G_SIT`도 on→off 두 통이
+			#   나간다. 근거는 `player.set_seated()` 주석.
+			me.set_seated(not me.seated)
 
 
 func _physics_process(delta: float) -> void:

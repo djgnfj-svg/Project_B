@@ -13,9 +13,9 @@ var _fails := 0
 func _initialize() -> void:
 	var gs := GameStateScript.new() as Node
 	_check("스캔에 warrior 포함", "warrior" in gs.job_ids())
-	_check("스캔에 archer 포함", "archer" in gs.job_ids())
-	_check("스캔에 mage 포함", "mage" in gs.job_ids())
-	_check("정상 id 리졸브", gs.job_def("mage").id == "mage")
+	# ⚠ 궁수·법사는 2026-08-01에 삭제됐다(기획상 폐기 — 전사 계열만 산다). 직업이 하나뿐이라
+	#   "다른 직업"을 **실제 데이터로는 만들 수 없다** — 아래 귀속 테스트가 합성 EquipDef를 쓰는 이유다.
+	_check("정상 id 리졸브", gs.job_def("warrior").id == "warrior")
 	_check("정상 id의 sprite 연결", gs.job_def("warrior").sprite != null)
 	_check("모르는 id → 기본 직업 폴백", gs.job_def("paladin").id == "warrior")
 	_check("경로 조작 시도 → 기본 직업 폴백", gs.job_def("../../src/core/net_schema").id == "warrior")
@@ -24,7 +24,10 @@ func _initialize() -> void:
 	# --- 챕터 리졸버 (G_SCENE c/i 신뢰 경계) ---
 	_check("챕터 스캔에 chapter1 포함", "chapter1" in gs.chapter_ids())
 	var ch1: ChapterDef = gs.chapter_def("chapter1")
-	_check("챕터1 칸 수 = 4 (전투3+보스 직전 모닥불1)", ch1.stage_count() == 4)
+	# ⚠ **모닥불 칸은 2026-08-01에 챕터1에서 빠졌다**(사용자 요청) — 칸 = 전투2 + 보스.
+	#   `campfire.tscn`·`campfire.gd`·`CampfireDef`·`is_rest` 관례는 **코드에 남아 있다**(되살릴 수 있게).
+	_check("챕터1 칸 수 = 3 (전투2 + 보스)", ch1.stage_count() == 3)
+	_check("챕터1에 모닥불 칸 없음", not (ch1.is_rest(0) or ch1.is_rest(1) or ch1.is_rest(2)))
 	_check("모르는 챕터 → 기본 챕터 폴백", gs.chapter_def("chapter99").display_name == ch1.display_name)
 	_check("챕터 경로 조작 → 기본 챕터 폴백",
 		gs.chapter_def("../../src/core/net_schema").display_name == ch1.display_name)
@@ -35,10 +38,30 @@ func _initialize() -> void:
 
 	# --- 칸 성격 판별 (모닥불 관례) + HUD 순번 ---
 	_check("0번 칸 = 전투", not ch1.is_rest(0))
-	_check("2번 칸 = 모닥불 (보스 직전)", ch1.is_rest(2))
-	_check("전투 스테이지 총수 = 3", ch1.combat_total() == 3)
+	# ⚠ **모닥불이 빠져도 전투 총수는 3 그대로다** — 보스 칸도 전투로 센다(빠진 것은 휴식 칸뿐).
+	_check("전투 스테이지 총수 = 3 (보스 포함)", ch1.combat_total() == 3)
 	_check("1번 칸 = 2번째 전투", ch1.combat_ordinal(1) == 2)
-	_check("마지막 칸 = 3번째 전투(보스)", ch1.combat_ordinal(3) == 3)
+	_check("마지막 칸 = 3번째 전투(보스)", ch1.combat_ordinal(2) == 3)
+	# 🔴🔴 **합성 챕터로 `is_rest` 관례를 계속 지킨다** (2026-08-01). 모닥불 칸이 실 데이터에서
+	#   빠지면서 위 검사들이 **휴식 칸을 한 번도 안 지나게 됐다** — 그대로 두면
+	#   ⑴ "파일명이 campfire로 시작하면 휴식 칸"이라는 관례(rules §4)와
+	#   ⑵ `combat_ordinal`/`combat_total`이 **휴식 칸을 건너뛰고 센다**는 로직이
+	#   둘 다 검출력 0이 된다. 모닥불을 되살리는 날 조용히 깨져 있을 자리다.
+	# ⚠ 이것이 정확히 궁수·법사 삭제(2026-08-01)에서 배운 함정이다 — **삭제가 테스트 검출력을
+	#   조용히 없앤다**. 그때도 합성으로 갈아끼웠다.
+	# ⚠ `GameState.chapter_def`는 캐시 없이 매번 `load()`라 합성을 심을 수 없다 → 객체를 직접 만든다.
+	#   그래서 `progress_label()`의 "· 모닥불" 문자열 분기만은 겨눌 수 없다(그 한 줄은 `is_rest`를
+	#   부르는 것이 전부라, 관례가 지켜지면 함께 지켜진다).
+	var synth_ch := ChapterDef.new()
+	synth_ch.display_name = "합성 챕터"
+	synth_ch.stage_scenes = ["res://x/stage_1.tscn", "res://x/campfire.tscn",
+		"res://x/stage_2.tscn", "res://x/stage_boss.tscn"] as Array[String]
+	_check("★합성: campfire로 시작하는 칸 = 휴식 (is_rest 관례)", synth_ch.is_rest(1))
+	_check("★합성: 그 외 칸 = 전투", not synth_ch.is_rest(0) and not synth_ch.is_rest(3))
+	_check("★합성: 전투 총수가 휴식 칸을 제외한다(4칸 중 3)", synth_ch.combat_total() == 3)
+	_check("★합성: 휴식 칸 뒤 순번이 밀리지 않는다(2번 칸 = 2번째 전투)",
+		synth_ch.combat_ordinal(2) == 2)
+	_check("★합성: 마지막 칸 = 3번째 전투(보스)", synth_ch.combat_ordinal(3) == 3)
 
 	# --- 진행 좌표·토큰·이월 HP ---
 	gs.begin_stage("chapter1", 1)
@@ -47,10 +70,8 @@ func _initialize() -> void:
 	_check("1번 칸은 마지막 아님", not gs.is_last_stage())
 	_check("씬 경로 = stage_2", gs.stage_scene_path().get_file() == "stage_2.tscn")
 	_check("진행 표기 = 스테이지 2/3", gs.progress_label().ends_with("스테이지 2/3"))
-	gs.begin_stage("chapter1", 3)
-	_check("마지막 칸 판별", gs.is_last_stage())
 	gs.begin_stage("chapter1", 2)
-	_check("모닥불 진행 표기", gs.progress_label().ends_with("모닥불"))
+	_check("마지막 칸 판별", gs.is_last_stage())
 	_check("이월 기록 없음 = -1", gs.carried_hp(7) == -1)
 	gs.record_party_hp(7, 12)
 	_check("이월 기록 조회", gs.carried_hp(7) == 12)
@@ -98,28 +119,39 @@ func _initialize() -> void:
 	_check("강화 후 레벨 = 1", gs.equip_level("iron_greatsword") == 1)
 	_check("착용 장비 공격이 현재 스탯에 반영", int(gs.current_stats()["attack"]) > 0)
 
-	# --- 직업 귀속 (전사가 활 못 듦 — can_equip_job 단일 소스, equip·can_craft 공용) ---
-	# 공유 gs 오염 방지로 별도 인스턴스. worn_bow(job_id=archer)를 보유시켜도 전사면 착용 거부.
+	# --- 직업 귀속 (남의 직업 무기는 못 듦 — can_equip_job 단일 소스, equip·can_craft 공용) ---
+	# 🔴 **소재가 합성이다** — 궁수·법사 삭제(2026-08-01) 후 `data/equipment`가 전부 전사 귀속이라
+	#   실제 데이터로는 "남의 직업 무기"를 만들 수 없다. 규칙은 `job_id` **문자열 비교**라 그 직업이
+	#   실재하지 않아도 검증에 충분하다. 이렇게 안 하면 이 규칙 전체가 검출력 0으로 침묵 통과한다
+	#   (2026-07-26 실기 신고 "전사로 들어왔는데 마법 지팡이를 쓴다"가 이 규칙이 막는 것이다).
 	var gsjob := GameStateScript.new() as Node
 	gsjob.selected_job_id = "warrior"
-	gsjob.add_equipment("worn_bow")
+	var foreign := EquipDef.new()
+	foreign.id = "test_foreign_weapon"
+	foreign.slot_name = "weapon"
+	foreign.job_id = "test_other_job"       # 전사가 아닌 무언가 — 실재하지 않아도 된다
+	gsjob._equip_cache["test_foreign_weapon"] = foreign   # 리졸버 주입(allowlist 밖 합성 def)
+	gsjob.owned_equipment["test_foreign_weapon"] = 0
 	gsjob.add_equipment("worn_greatsword")
-	gsjob.equip("worn_bow")
-	_check("전사가 활 착용 거부(슬롯 빔)", gsjob.equipped_id(0) == "")
-	_check("can_equip_job: 전사+활 = false", not gsjob.can_equip_job(gsjob.equip_def("worn_bow")))
+	gsjob.equip("test_foreign_weapon")
+	_check("전사가 남의 직업 무기 착용 거부(슬롯 빔)", gsjob.equipped_id(0) == "")
+	_check("can_equip_job: 전사+남의 무기 = false", not gsjob.can_equip_job(foreign))
 	gsjob.equip("worn_greatsword")
 	_check("전사가 대검 착용 성공", gsjob.equipped_id(0) == "worn_greatsword")
-	gsjob.selected_job_id = "archer"  # 직업 바꾸면 귀속 기준도 바뀜(현재 선택 직업)
-	_check("can_equip_job: 궁수+활 = true", gsjob.can_equip_job(gsjob.equip_def("worn_bow")))
-	gsjob.equip("worn_bow")
-	_check("궁수가 활 착용 성공", gsjob.equipped_id(0) == "worn_bow")
-	_check("can_equip_job: 궁수+대검 = false", not gsjob.can_equip_job(gsjob.equip_def("worn_greatsword")))
+	# 직업이 하나뿐이라 "그 직업이면 착용 성공"은 규칙 함수로만 겨눈다(equip 경로는 재현 불가)
+	gsjob.selected_job_id = "test_other_job"
+	_check("can_equip_job: 그 직업이면 true", gsjob.can_equip_job(foreign))
+	_check("can_equip_job: 그 직업+대검 = false", not gsjob.can_equip_job(gsjob.equip_def("worn_greatsword")))
+	gsjob.selected_job_id = "warrior"
+	gsjob.equip("worn_greatsword")
 	# 🔴 직업 전환 뒤처리 (2026-07-26 실기 신고 "전사로 들어왔는데 마법 지팡이를 쓴다").
 	# can_equip_job은 equip() **시점**에만 걸린다 — 직업이 나중에 바뀌면 남의 무기가 착용된 채 남고,
 	# 그 id가 G_STATS로 공지돼 호스트 판정(peer_weapon_id)까지 그 무기가 된다(전사가 차지 폭발).
-	gsjob.selected_job_id = "warrior"  # 활을 낀 채 전사로 전환 (로비 재선택·마을 직업 변경 경로)
-	_check("직업 전환: 남의 직업 무기 자동 해제", gsjob.equipped_id(0) == "")
-	_check("직업 전환: 해제해도 장비는 가방에 남는다", gsjob.equip_level("worn_bow") == 0)
+	gsjob.equipped[0] = "test_foreign_weapon"  # 남의 무기를 낀 상태를 직접 만든다(직업 전환 경로 재현)
+	_check("직업 전환: 남의 직업 무기 자동 해제",
+		gsjob.revalidate_equipped() and gsjob.equipped_id(0) == "")
+	_check("직업 전환: 해제해도 장비는 가방에 남는다",
+		gsjob.owned_equipment.has("test_foreign_weapon"))
 	# 빈 슬롯은 **보유분으로도** 채운다 — 안 그러면 위 해제 뒤 맨손으로 남는다(그 직업을 전에 해봤으면
 	# 가방에 무기가 있는데도). 재지급은 여전히 안 한다(멱등).
 	gsjob.grant_starting_loadout(gsjob.job_def("warrior"))
@@ -139,54 +171,49 @@ func _initialize() -> void:
 	gsjob.owned_equipment["test_generic_armor"] = 0
 	gsjob.equip("test_generic_armor")
 	_check("범용 장비(job_id 빈 값) 착용 성공", gsjob.equipped_id(1) == "test_generic_armor")
-	gsjob.selected_job_id = "mage"
+	gsjob.equipped[0] = "test_foreign_weapon"
 	_check("직업 전환: 범용 장비는 **유지**(해제 대상은 귀속 위반분만)",
 		gsjob.equipped_id(1) == "test_generic_armor")
+	gsjob.revalidate_equipped()
 	_check("직업 전환: 같은 순간 귀속 위반 무기는 해제", gsjob.equipped_id(0) == "")
 	gsjob.free()
-	# 🔴 세이브 로드는 **비파괴**다 (리뷰 I-1). 세이브는 직업을 담지 않고 SaveManager가 로비보다 먼저
-	# 도므로 이 시점 selected_job_id는 항상 기본 직업이다 — 여기서 필터를 걸면 법사의 상위 지팡이가
-	# 부팅 때마다 벗겨지고 시작 무기로 다운그레이드된다. 필터는 직업이 확정되는 경계가 건다.
-	var gsave := GameStateScript.new() as Node
-	gsave.selected_job_id = "mage"
-	gsave.add_equipment("worn_staff")
-	gsave.equip("worn_staff")
-	var jsnap: Dictionary = gsave.to_save_dict()
-	gsave.free()
-	var gload := GameStateScript.new() as Node  # 기본 = warrior (로비 선택 전)
-	gload.from_save_dict(jsnap)
-	_check("세이브 로드: 직업 필터를 걸지 않는다(로드 시점 직업은 기본값이라 거짓 해제)",
-		gload.equipped_id(0) == "worn_staff")
-	# 직업이 확정되는 경계 = apply_job_loadout (로비→마을 진입·마을 직업 변경 단일 소스).
-	gload.apply_job_loadout()  # selected_job_id = warrior
-	_check("직업 확정 경계: 남의 직업 무기 해제 + 내 시작 무기 착용",
-		gload.equipped_id(0) == "worn_greatsword")
-	_check("직업 확정 경계: 해제된 장비는 가방에 남는다", gload.equip_level("worn_staff") == 0)
-	# 그 직업으로 돌아오면 가방에 남아 있던 그 직업 무기를 되찾는다(해제는 파기가 아니다)
-	gload.selected_job_id = "mage"
-	gload.apply_job_loadout()
-	_check("직업 복귀: 가방에 남은 그 직업 무기를 되찾는다", gload.equipped_id(0) == "worn_staff")
-	# 판 도중엔 재검증이 돌지 않는다 — 전투 중 무기 교체 = 그 창의 타격이 무음 거부(리뷰 I-3).
-	# ⚠ 아래 두 줄은 가드의 push_error를 **의도적으로** 찍는다 — 로그의 ERROR 2줄은 정상이다.
-	gload.begin_stage("chapter1", 0)  # 판 진입 (법사 + 지팡이 착용 상태 그대로)
-	gload.selected_job_id = "warrior"  # 판 도중 전환 시도 → 재검증은 무시된다(push_error만)
-	_check("판 도중(in_chapter): 재검증이 돌지 않는다(전투 중 무기 소멸 방지)",
-		gload.equipped_id(0) == "worn_staff" and not gload.revalidate_equipped())
-	gload.leave_chapter()
-	gload.free()
+	# 🔴 세이브 로드 **비파괴** 케이스는 지금 재현할 수 없다 — 직업이 전사 하나뿐이라(궁수·법사
+	#   2026-08-01 폐기) "남의 직업 무기"를 **실제 장비 id로** 만들 수 없고, `from_save_dict`는
+	#   `if eid in equipment_ids()`로 allowlist를 거르므로 합성 id는 왕복에서 폐기된다.
+	#   🔴 **규칙은 살아 있다**(`revalidate_equipped`·`apply_job_loadout`) — 검증만 공백이다.
+	#   두 번째 직업이 생기면 이 블록을 되살려라(git: 2026-08-01 이전 판에 전문이 있다).
+	#   그 규칙이 막는 것: 세이브가 직업을 안 담고 SaveManager가 로비보다 먼저 도는 탓에, 로드
+	#   시점에 직업 필터를 걸면 상위 무기가 부팅마다 벗겨지고 시작 무기로 다운그레이드된다.
 
 	# --- 투사체 파라미터 리졸브 (§3 단일 소스 — 표시 ArrowField = 판정 CombatAuthority) ---
 	# 🔴 **적용 지점 자체**를 겨눈다. CombatMath.effective_projectile_range만 검사하면 "함수는 맞는데
 	#   projectile_params가 그 함수를 안 부른다"가 통과한다 — 그 결함의 증상이 정확히
 	#   "맞는 곳 ≠ 보이는 곳"이고, 화면엔 이유가 안 드러난다(호스트만 짧은 화살로 판정).
-	# 무기 = worn_bow(motion_type shoot). 수명 = 사거리/속도라 수명 비교가 곧 거리 비교다.
-	# ⚠ **사거리 수치를 하드코딩하지 마라** — 밸런스 튜닝(2026-07-27에 220→150)마다 거짓 빨간불이 뜬다.
-	#   .tres에서 읽되 검증은 여전히 독립적이다(projectile_lifetime_s로 다시 계산해 대조한다).
+	# 무기 = **합성 shoot 무기** — 실제 발사형 장비(활·지팡이)는 궁수·법사 폐기와 함께 2026-08-01에
+	# 삭제됐다. `projectile_params`는 id → `equip_def` 리졸브를 지나므로 `_equip_cache` 주입으로
+	# 적용 지점을 그대로 겨눌 수 있다. 수명 = 사거리/속도라 수명 비교가 곧 거리 비교다.
 	var gproj := GameStateScript.new() as Node
-	var bow_range: float = (gproj.equip_def("worn_bow") as EquipDef).arrow_range
-	var pp_base: Dictionary = gproj.projectile_params("worn_bow", 0.0, 0)
-	var pp_zero: Dictionary = gproj.projectile_params("worn_bow", 0.0, 0, 0.0)
-	var pp_bonus: Dictionary = gproj.projectile_params("worn_bow", 0.0, 0, 0.25)
+	var shooter := EquipDef.new()
+	shooter.id = "test_shooter"
+	shooter.motion_type = "shoot"
+	shooter.arrow_range = 150.0
+	# 콤보 필드 — 실제 활이 갖던 값과 같은 역할(3타에서 사거리 2배·데미지 2.5배).
+	# 🔴 이걸 안 채우면 「적용 지점 검출」 케이스들이 통째로 침묵 통과한다.
+	# 🔴 타별 **배열**이다(길이 = 콤보 타수). [1, 1, 2] = 3타만 사거리 2배 — 실제 활이 쓰던 형태.
+	shooter.combo_range_mult = PackedFloat32Array([1.0, 1.0, 2.0])
+	shooter.combo_damage_mult = PackedFloat32Array([1.0, 1.0, 2.5])
+	gproj._equip_cache["test_shooter"] = shooter
+	# 합성 charge 무기 — 차지 반경이 자라는 갈래(과잉 수정 방어)를 겨눈다
+	var charger2 := EquipDef.new()
+	charger2.id = "test_charger"
+	charger2.motion_type = "charge"
+	charger2.arrow_range = 150.0
+	charger2.blast_radius = 40.0
+	gproj._equip_cache["test_charger"] = charger2
+	var bow_range: float = shooter.arrow_range
+	var pp_base: Dictionary = gproj.projectile_params("test_shooter", 0.0, 0)
+	var pp_zero: Dictionary = gproj.projectile_params("test_shooter", 0.0, 0, 0.0)
+	var pp_bonus: Dictionary = gproj.projectile_params("test_shooter", 0.0, 0, 0.25)
 	_check("projectile_params: 특성 인자 생략 = 0 = 도입 전과 항등",
 		is_equal_approx(float(pp_base.get("life", -1.0)), float(pp_zero.get("life", -2.0))))
 	_check("projectile_params: 특성 0의 수명 = arrow_range/속도 (항등 폴백)",
@@ -195,7 +222,7 @@ func _initialize() -> void:
 	_check("projectile_params: proj_range +25% → 수명(=사거리)이 실제로 1.25배 ★적용 지점 검출",
 		is_equal_approx(float(pp_bonus.get("life", -1.0)), float(pp_zero.get("life", -2.0)) * 1.25))
 	# 상한 초과 주장은 TRAIT_MAX에서, 그 뒤 사거리는 MAX_ARROW_RANGE에서 잘린다(이중 방어)
-	var pp_over: Dictionary = gproj.projectile_params("worn_bow", 0.0, 0, 9.0)
+	var pp_over: Dictionary = gproj.projectile_params("test_shooter", 0.0, 0, 9.0)
 	_check("projectile_params: 과대 특성 주장 → TRAIT_MAX(+50%)까지만",
 		is_equal_approx(float(pp_over.get("life", -1.0)), float(pp_zero.get("life", -2.0)) * 1.5))
 	# 무기 리졸브 실패(모르는 id) 경로에도 같이 걸린다 — fallback_range 쪽만 특성이 빠지면 갈라진다
@@ -208,9 +235,9 @@ func _initialize() -> void:
 	# 🔴 CombatMath.combo_*만 검사하면 "함수는 맞는데 projectile_params가 안 부른다"가 통과한다.
 	#   그 결함의 증상이 정확히 "3타가 화면에선 멀리 나가는데 판정은 평타"이고 화면엔 이유가 안 드러난다.
 	# worn_bow = 사거리 150 · 콤보 [1, 1, 2] · 데미지 [1, 1, 2.5]. 수명 = 사거리/속도라 수명 비교가 곧 거리 비교다.
-	var pp_c0: Dictionary = gproj.projectile_params("worn_bow", 0.0, 0, 0.0, 0)
-	var pp_c1: Dictionary = gproj.projectile_params("worn_bow", 0.0, 0, 0.0, 1)
-	var pp_c2: Dictionary = gproj.projectile_params("worn_bow", 0.0, 0, 0.0, 2)
+	var pp_c0: Dictionary = gproj.projectile_params("test_shooter", 0.0, 0, 0.0, 0)
+	var pp_c1: Dictionary = gproj.projectile_params("test_shooter", 0.0, 0, 0.0, 1)
+	var pp_c2: Dictionary = gproj.projectile_params("test_shooter", 0.0, 0, 0.0, 2)
 	_check("projectile_params: 콤보 인자 생략 = 0타 = 도입 전과 항등",
 		is_equal_approx(float(pp_zero.get("life", -1.0)), float(pp_c0.get("life", -2.0))))
 	_check("projectile_params: 1타·2타는 같은 사거리(평·평)",
@@ -223,7 +250,7 @@ func _initialize() -> void:
 		is_equal_approx(float(pp_c0.get("combo_dmg", -1.0)), 1.0))
 	# 범위 밖 타수 주장은 항등으로 떨어진다(표시 경로는 발신자 주장을 그대로 넘기므로 여기가 마지막 방어)
 	_check("projectile_params: 범위 밖 타수 주장(99) → 항등 사거리",
-		is_equal_approx(float(gproj.projectile_params("worn_bow", 0.0, 0, 0.0, 99).get("life", -1.0)),
+		is_equal_approx(float(gproj.projectile_params("test_shooter", 0.0, 0, 0.0, 99).get("life", -1.0)),
 			float(pp_c0.get("life", -2.0))))
 	# 콤보 없는 무기(법사 지팡이)는 어떤 타수를 실어도 그대로 — 사용자 확정 "법사는 그대로 둔다"
 	var pp_staff0: Dictionary = gproj.projectile_params("worn_staff", 0.0, 0, 0.0, 0)
@@ -246,14 +273,14 @@ func _initialize() -> void:
 		is_equal_approx(staff_r3, CombatMath.charge_blast_radius(staff_r0, 0)))
 	# ⚠ 반대 방향 회귀 방어 — **차지 무기는 여전히 자란다.** 위 게이트를 `is_charge` 없이 0으로
 	#   못 박으면(과잉 수정) 여기가 빨개진다. 기대값은 .tres가 아니라 CombatMath에서 유도한다.
-	var iron_r0 := float(gproj.projectile_params("iron_staff", 0.0, 0).get("blast", -1.0))
-	var iron_r3 := float(gproj.projectile_params("iron_staff", 0.0, 3).get("blast", -1.0))
-	_check("projectile_params: 철 지팡이(charge)는 c=3에서 반경이 자란다 ★과잉 수정 방어",
+	var iron_r0 := float(gproj.projectile_params("test_charger", 0.0, 0).get("blast", -1.0))
+	var iron_r3 := float(gproj.projectile_params("test_charger", 0.0, 3).get("blast", -1.0))
+	_check("projectile_params: 차지 무기(합성)는 c=3에서 반경이 자란다 ★과잉 수정 방어",
 		iron_r3 > iron_r0 and is_equal_approx(iron_r3, CombatMath.charge_blast_radius(iron_r0, 3)))
 	# 특성(proj_range)과 콤보가 **함께** 곱해지되 MAX_ARROW_RANGE clamp를 우회하지 않는가(심층 방어).
 	# ⚠ 기대값도 .tres에서 유도한다 — 사거리를 조일 때마다 여기가 거짓으로 빨개지지 않게.
 	_check("projectile_params: 3타 × proj_range 상한이 함께 곱해진다(clamp 우회 없음)",
-		is_equal_approx(float(gproj.projectile_params("worn_bow", 0.0, 0, 0.5, 2).get("life", -1.0)),
+		is_equal_approx(float(gproj.projectile_params("test_shooter", 0.0, 0, 0.5, 2).get("life", -1.0)),
 			CombatMath.projectile_lifetime_s(bow_range * 2.0 * 1.5,
 				float(pp_c0.get("speed", 0.0)))))
 	gproj.free()
@@ -351,17 +378,8 @@ func _initialize() -> void:
 	_check("계열 목록 = order 정렬(검사 → 광전사 → 검성)",
 		series.size() == 3 and series[0] == "warrior_swordsman" and series[1] == "warrior_berserker" \
 		and series[2] == "warrior_swordmaster")
-	# 궁수 계열(2026-07-27 신설) — 전사와 **같은 관용구로** 전수 단정한다. 계열이 늘어도 이 줄이
-	# 자동으로 커버하지는 않으므로, 새 계열을 만들면 여기 블록을 하나 더 추가해라(느슨하게 두면
-	# order 뒤집힘·id 오타가 해금 체인을 조용히 어긋나게 한다 — 위 전사 주석과 같은 이유).
-	var a_series: Array = gg.sub_jobs_of_series("archer")
-	_check("궁수 계열 목록 = order 정렬(사수 → 속사수 → 저격수)",
-		a_series.size() == 3 and a_series[0] == "archer_marksman" and a_series[1] == "archer_ranger" \
-		and a_series[2] == "archer_sniper")
-	var m_series: Array = gg.sub_jobs_of_series("mage")
-	_check("법사 계열 목록 = order 정렬(술사 → 비전학자 → 마도사)",
-		m_series.size() == 3 and m_series[0] == "mage_adept" and m_series[1] == "mage_arcanist" \
-		and m_series[2] == "mage_magus")
+	# ⚠ 궁수·법사 계열은 2026-08-01에 삭제됐다(기획상 폐기 — 전사 계열만 산다). 아래 「계열 목록을
+	#   data/jobs 스캔에서 파생해 전수로 돈다」가 그 자리를 대신한다 — 직업이 늘면 자동으로 커버된다.
 	# 🔴 3계열이 전부 채워졌다(2026-07-27) — 이제 "미작성 계열" 단정은 없다. 대신 **계열 목록 자체**를
 	#   `data/jobs` 스캔에서 파생해 전수로 돈다: 직업이 늘었는데 하위 직업을 안 만들면 여기가 빨개진다
 	#   (`add_exp`가 보유 0이면 즉시 return 해서 **성장 축이 통째로 안 도는데 에러가 안 난다** — 궁수·법사가
@@ -537,6 +555,47 @@ func _initialize() -> void:
 	_check("슬롯: 전환 후에도 장착은 3개(중복 없음)", gg.equipped_sub_jobs().size() == 3)
 	_check("슬롯: 전환 후 서브에 검성이 남지 않음",
 		"warrior_swordmaster" not in [gg.sub_slot_id(0), gg.sub_slot_id(1)])
+	# --- 궤적 아이덴티티 리졸브 (표시 전용, 2026-08-01) ---
+	# 🔴 **traits_of와 같은 게이트를 지나는가**가 이 블록의 전부다. 색만 통과하고 특성이 막히면
+	#   "메인 특성은 안 켜지는데 색은 바뀐" 상태가 되고, 화면만 보고는 어느 쪽이 틀렸는지 알 수 없다.
+	var fx_master: Dictionary = gg.main_fx_of("warrior_swordmaster", "warrior")
+	_check("궤적 fx: 검성 리졸브 — 데이터의 색이 그대로 나온다",
+		(fx_master.get("color", Color(1, 1, 1, 1)) as Color) == gg.sub_job_def("warrior_swordmaster").fx_color)
+	# 🔴 계열 불일치 폐기 — 남의 계열 메인을 공지해도 색을 못 얻는다(traits_of와 같은 부호)
+	var fx_wrong: Dictionary = gg.main_fx_of("warrior_swordmaster", "mage")
+	_check("궤적 fx: 계열 불일치 → 항등(흰색) 폐기",
+		(fx_wrong.get("color", Color()) as Color) == Color(1, 1, 1, 1)
+			and is_equal_approx(float(fx_wrong.get("ghost", -1.0)), 1.0))
+	# 🔴 공유 하위 직업은 **메인 자리에 못 온다** — SubJobDef.trait_at(true)가 특성을 막는 것과 같은 근거.
+	#   여기서만 통과시키면 곡예사를 메인으로 주장한 공지가 특성은 못 얻고 색만 얻는다.
+	# 🔴🔴 **합성으로 검사하는 것이 이 케이스의 전부다** (2026-08-01 뮤테이션이 잡아냈다). 실 데이터
+	#   `shared_acrobat`은 `fx_color`가 기본 흰색이라, 게이트를 **통째로 지워도** 결과가 흰색으로 같아
+	#   검사가 초록으로 남는다 = 검출력 0. 색을 명시한 합성 공유 하위 직업을 캐시에 심어야
+	#   "게이트가 실제로 도는가"를 묻게 된다(`_equip_cache["test_charger"]` 관용구와 같은 자리).
+	var fx_fake := SubJobDef.new()
+	fx_fake.id = "test_shared_fx"
+	fx_fake.series_id = SubJobDef.SERIES_SHARED
+	fx_fake.max_level = 5
+	fx_fake.fx_color = Color(1, 0, 0, 1)   # 흰색이 아니어야 게이트 유무가 결과를 가른다
+	fx_fake.fx_ghost_mult = 2.5
+	gg._sub_job_cache["test_shared_fx"] = fx_fake
+	var fx_shared: Dictionary = gg.main_fx_of("test_shared_fx", "warrior")
+	_check("★궤적 fx: 공유 하위 직업은 메인 자리 불가 → 항등 폐기 (색을 명시한 합성으로 검출력 확보)",
+		(fx_shared.get("color", Color()) as Color) == Color(1, 1, 1, 1)
+			and is_equal_approx(float(fx_shared.get("ghost", -1.0)), 1.0))
+	# 대조군 — 같은 def를 계열 것으로 바꾸면 통과해야 한다(게이트가 "전부 거부"로 퇴화하지 않았는가).
+	fx_fake.series_id = "warrior"
+	_check("★궤적 fx 대조군: 같은 def가 계열 일치면 색이 나온다(게이트가 전부 거부로 퇴화 안 함)",
+		(gg.main_fx_of("test_shared_fx", "warrior").get("color", Color()) as Color) == Color(1, 0, 0, 1))
+	gg._sub_job_cache.erase("test_shared_fx")  # 뒷정리 — 이후 케이스가 합성 id를 보지 않게
+	_check("궤적 fx: 모르는 id → 항등 폐기(경로 조작·오타)",
+		(gg.main_fx_of("../../etc/passwd", "warrior").get("color", Color()) as Color) == Color(1, 1, 1, 1))
+	_check("궤적 fx: 빈 id(미장착) → 항등 = 도입 전과 완전히 같다",
+		(gg.main_fx_of("", "warrior").get("color", Color()) as Color) == Color(1, 1, 1, 1))
+	# active_main_fx는 announced_main_id를 지난다 — active_traits와 같은 입력이어야 갈라지지 않는다
+	_check("궤적 fx: active_main_fx == main_fx_of(공지 메인, 계열) — 근거 통일",
+		(gg.active_main_fx().get("color", Color()) as Color)
+			== (gg.main_fx_of(gg.announced_main_id(), gg.selected_job_id).get("color", Color()) as Color))
 	# 🔴 예산이 슬롯에 묶이는 자리 — 낀 것만 5스탯에 들어간다(보유 전부가 아니라)
 	gg.set_sub_slot(0, "")
 	gg.set_sub_slot(1, "")

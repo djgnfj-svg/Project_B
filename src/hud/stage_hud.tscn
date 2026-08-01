@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://src/hud/stage_hud.gd" id="1"]
+[ext_resource type="Script" path="res://src/hud/enemy_pointer.gd" id="2"]
 
 [node name="StageHUD" type="CanvasLayer"]
 script = ExtResource("1")
@@ -154,3 +155,9 @@ mouse_filter = 2
 theme_type_variation = &"ToastLabel"
 horizontal_alignment = 1
 vertical_alignment = 1
+
+[node name="EnemyPointers" type="Control" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+script = ExtResource("2")
