@@ -29,6 +29,10 @@ signal enemy_hp_confirmed(eid: String, hp: int)  # 호스트 전용 emit(enemy �
 signal player_hp_confirmed(peer_id: int, hp: int)  # 확정 HP 통지 — 호스트=Health 권한 경로, 게스트=php 수신 경로. 호스트일 때만 stage가 php 브로드캐스트
 signal mob_telegraph(eid: String, center: Vector2)  # 호스트 전용 emit(잔몹 AI WINDUP) — MobSync가 matk 브로드캐스트
 signal mob_strike(eid: String, center: Vector2)     # 호스트 전용 emit(잔몹 AI STRIKE) — CombatAuthority가 데미지 확정
+# 원거리 잔몹 발사 — 호스트 AI가 emit(MobSync가 G_MOB_SHOOT 브로드캐스트 + CombatAuthority가 권한 화살 등록),
+# 게스트는 G_MOB_SHOOT 수신 시 **로컬 emit**한다(mob_telegraph→matk와 같은 미러 규약) → 양쪽 ArrowField가
+# 같은 경로로 표시 탄을 낸다. def를 동봉하는 것은 enemy_killed·boss_strike 선례와 같다(수치는 각자 로컬 리졸브).
+signal mob_shoot(eid: String, origin: Vector2, dir: Vector2, aid: String, def: EnemyDef)
 
 # --- 투사체 (궁수 활 2026-07-24 / 법사 차지 지팡이 확장) — 발사는 로컬 선언, 표시 탄은 각 클라 로컬 시뮬, 명중 확정은 호스트만 ---
 signal player_shoot(shooter_id: int, origin: Vector2, dir: Vector2, aid: String, arrow_range: float, weapon_id: String, charge: int, combo: int)  # 로컬 발사 선언(player emit) — ArrowField가 표시 투사체 스폰, CombatAuthority(호스트 자기 발사)가 권한 투사체 등록. arrow_range = 무기 사거리(EquipDef.arrow_range) · weapon_id = 착용 무기 id(수신 측이 allowlist 리졸브해 탄 겉모습/속도/폭발 반경을 얻는다) · charge = 차지 레벨(0~3, 비차지 무기는 0) · combo = 평타 콤보 타수(궁수 "평·평·쭉" — 사거리/데미지 배율은 EquipDef.combo_*를 각 클라가 로컬 리졸브, 타수만 오간다). player가 G_SHOOT도 송신(원격 표시용)

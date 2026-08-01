@@ -334,13 +334,15 @@ static func is_hit_in_reach_lagged(anchor: Vector2, lead_pos: Vector2, enemy_pos
 
 
 # 대상(잔몹) 좌표가 게스트 화면에서 낡은 만큼의 **횡변위 예산(px)** — 각 슬랙 전용.
-# 유도 = 최대 몹 이속 × (몹 송신 주기 + 편도 지연). 실측(2026-07-28): 최대 `move_speed` 70
-#   (chaser·goblin_melee) · `MobSync.SEND_RATE` 10Hz. 배포본 편도 70~108ms에서 약 12~15px.
+# 유도 = 최대 몹 이속 × (몹 송신 주기 + 편도 지연). 실측(2026-08-01): 최대 `move_speed` **74**
+#   (mino_sword) · `MobSync.SEND_RATE` 10Hz. 배포본 편도 70~108ms에서 약 12~16px.
+#   ⚠ 옛 주석은 "최대 70(chaser·goblin_melee)"였는데 **그 두 적은 2026-08-01에 삭제됐다** — 없는
+#   파일을 근거로 상수를 조이지 않게 갱신했다. 여유는 20 → 16으로 줄었다.
 # 🔴 **왜 창에서만 문제가 되나**: 각 오차 = `asin(변위/거리)`인데 창은 반각이 17°로 좁고 사거리가
 #   80px로 길다. 14px 변위가 80px에서 10°를 만들어 예산(반각 17.2 + 몸통 슬랙 7.2 = 24.4°)의 40%를
 #   먹는다. 검(109~137°)·도끼(160°)는 각 예산이 커서 무해하고, 보스는 `body_radius` 42가
 #   `asin(42/80)` = 31.6° 슬랙을 주므로 이미 덮인다 — **창 × 잔몹**에서만 상시가 된다.
-const MOB_LAG_SLACK_SPEED := 90.0  # 유도 상한(px/s) — 실측 최대 70 + 새 적 여지. 초과 시 트립와이어
+const MOB_LAG_SLACK_SPEED := 90.0  # 유도 상한(px/s) — 실측 최대 74 + 새 적 여지. 초과 시 트립와이어
 const MOB_POS_PERIOD_S := 0.1      # ⚠ `MobSync.SEND_RATE`(10Hz)와 **미러** — 그 값을 바꾸면 여기도 고친다
 
 
@@ -861,6 +863,15 @@ static func is_charge_time_ok(last_shot_msec: int, now_msec: int, level: int, st
 # is_strike_hit 재사용(같은 거리 질의) — 물리 레이어 대신 매 프레임 거리 질의라 물리 레이어 함정(§5) 회피 + 단위 테스트 가능.
 static func is_arrow_hit(arrow_pos: Vector2, enemy_pos: Vector2, enemy_radius: float = 0.0) -> bool:
 	return is_strike_hit(arrow_pos, enemy_pos, ARROW_HIT_RADIUS + enemy_radius)
+
+
+# 이 적이 원거리인가 — **값에서 유도한다**(별도 bool 플래그 금지).
+# 🔴 플래그를 두면 두 번째 진실원이 되어, 배우 분기(mob_melee)와 데이터 트립와이어가 서로 다른
+#   기준을 보게 된다. 한 함수를 같이 지나면 "속도·사거리가 있는 적 = 원거리"가 구조로 보장된다.
+# ⚠ 몹 화살 명중 판정은 `is_arrow_hit`(적을 겨눈 점-원, 지연 보상 없음)이 아니라
+#   `is_strike_hit_lagged`를 쓴다 — 대상이 **플레이어**이므로 §3 「방어자 우대」가 강제된다.
+static func is_ranged_enemy(def: EnemyDef) -> bool:
+	return def != null and def.proj_speed > 0.0 and def.proj_range > 0.0
 
 
 # 호스트의 발사 쿨다운 검증 — 발사 간격은 공격자 job 쿨다운(지터 여유 0.9배) 강제. 스팸해도 정직한 발사율 이상 못 얻는다.

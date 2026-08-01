@@ -32,6 +32,7 @@ func _ready() -> void:
 	if _peer_sync == null:
 		push_error("[ArrowField] peer_sync_path 미배선 — 발사자 특성 리졸브 불능(사거리가 기본값으로 떨어진다)")
 	EventBus.player_shoot.connect(_on_player_shoot)
+	EventBus.mob_shoot.connect(_on_mob_shoot)
 	EventBus.arrow_gone_local.connect(_on_arrow_gone)
 	EventBus.net_msg.connect(_on_net_msg)
 
@@ -68,26 +69,79 @@ func _on_arrow_gone(aid: String, world_pos: Vector2) -> void:
 
 func _spawn(aid: String, origin: Vector2, dir: Vector2, arrow_range: float,
 		weapon_id: String, charge: int, shooter_id: int, combo: int) -> void:
-	if aid.is_empty() or _arrows.has(aid):
-		return
 	# 무기 파라미터 = 로컬 데이터 리졸브(단일 소스 §3) — 호스트 판정과 같은 값(결정론).
 	# 사거리 특성(proj_range)도 호스트 판정과 **같은 소스**(발사자 아바타)에서 읽는다 — 아래 헬퍼.
 	# 콤보 타수는 표시 쪽만 주장값을 쓴다(위 _on_net_msg 주석 — 갈라짐은 안전한 방향으로만).
 	var p := GameState.projectile_params(weapon_id, arrow_range, charge,
 		_shooter_proj_range(shooter_id), combo)
+	_instantiate(aid, origin, dir, float(p["speed"]), float(p["life"]),
+		p["texture"] as Texture2D, float(p["scale"]), bool(p["spin"]),
+		float(p["blast"]), p["tint"] as Color, str(p["blast_sfx"]))
+
+
+# 🔴 원거리 잔몹의 발사 — 호스트는 자기 AI가 emit, 게스트는 G_MOB_SHOOT 수신 → 배우 → 같은 시그널.
+#   **양쪽이 같은 함수로 수렴하므로 표시 경로가 하나뿐이다**(플레이어의 player_shoot와 같은 구조).
+# 🔴 **호스트는 자기 화살을 이 로컬 emit으로 만든다 — 브로드캐스트 수신에 기대지 않는다**
+#   (netreview ① 2026-08-01). Net에는 **루프백이 없어서** 호스트는 자기 G_MOB_SHOOT를 되받지
+#   못한다 — 수신부에서만 스폰하면 **호스트 화면에만 화살이 안 뜬다**(에러 0·로그 0).
+#   `swamp_spawn_local`·`rock_spawn_local`·`arrow_gone_local`이 전부 이 이유로 존재하는 로컬
+#   미러이고, 2026-07-25 공속 Critical과 같은 부류다.
+# 🔴 파라미터는 **전송값이 아니라 def(로컬 .tres)** 에서 온다 — 네트워크로는 eid만 왔다.
+#   호스트 판정(CombatAuthority)도 같은 def를 읽으므로 속도·수명이 정확히 일치한다("맞는 곳=보이는 곳").
+# 🔴 **표시 탄만 자기 편도 지연만큼 앞당겨 스폰한다** (설계 ⑸ 축②). 안 하면 게스트 화면의 화살이
+#   권한 화살보다 영구히 `편도 × 속도` px 뒤처져(200ms·200px/s = 40px) **화면상 아직 멀리 있는
+#   화살에 맞는다** = §3이 금지하는 "안 보이는데 맞는다". 기존 「방어자 우대」(is_strike_hit_lagged)는
+#   플레이어의 *이동*을 용서하는 규약이라 **가만히 선 게스트에겐 아무 효과가 없다** — 다른 축이다.
+#
+# 🔴🔴 **유도 — 두 구간이 각각 다른 값에 앵커된다. 하나로 합치려 하지 마라** (netreview ② 2026-08-01:
+#   폐기 구현이 정합했던 유일한 이유가 이 불변식이었는데 코드 어디에도 안 적혀 있었다).
+#   `T` = 호스트가 화살을 놓는 벽시계 시각 · `d` = 이 클라와 호스트 사이 편도 지연.
+#     ⑴ **조준 구간** — 호스트 WINDUP은 `telegraph_s + strike_delay_s(max_remote_one_way)`,
+#        게스트는 G_MOB_ATK를 `d` 늦게 받아 자기 `telegraph_s`만 돈다. 두 창의 **끝이 T에서 만난다**
+#        (근접 예고와 같은 규약 — `mob_melee._host_ai`). 즉 게스트도 온전한 조준 시간을 본다.
+#     ⑵ **비행 구간** — G_MOB_SHOOT은 `T + d`에 도착한다. 그때 원점을 `속도 × d`만큼 앞으로
+#        밀면 게스트 표시 위치 = `O + dir·s·t`이고 호스트 권한 위치도 `O + dir·s·t`라
+#        **모든 벽시계 시각에 정확히 일치**한다.
+#   ⚠ ⑴은 `max_remote_one_way`(가장 느린 피어), ⑵는 `이 클라의 d`를 쓴다 — **다른 값이 맞다.**
+#     2인에선 같지만 4인에선 갈린다: 조준은 모두가 온전한 창을 가져야 하므로 최댓값, 비행은
+#     각자 자기 화면을 맞추는 것이라 자기 값이다. 하나로 통일하면 둘 중 하나가 반드시 깨진다.
+#   🔴 **경과 시간·고정 상수로 바꾸지 마라** — 호스트 시계를 실어 보내면 시계 동기화가 필요해지고
+#     (이 프로젝트는 의도적으로 안 한다, `G_PING` 주석), 고정 상수는 RTT 가변성을 못 따라간다.
+#   ⚠ **`dev_local.sh`(13.8ms)에선 이 갈래가 한 줄도 안 돈다** — 배포 릴레이(편도 70~108ms)에서만
+#     드러난다. 헤드리스도 못 잡는다. 고칠 때 실기 확인 없이 "돌아간다"고 결론 내지 마라.
+#   ⚠ **수명은 앞당기지 않는다(원본 그대로).** 그러면 게스트 화살이 호스트 만료보다 편도만큼 더
+#     오래·더 멀리 남아 오차가 **"보이는데 안 맞는다"**(안전한 쪽)로만 떨어진다. 수명까지 깎으면
+#     RTT 지터 한 번에 꼬리 구간이 "안 보이는데 맞는다"로 뒤집힌다 — **이 한 줄이 부호를 정한다.**
+#   ⚠ 신뢰 대가 0: 이 값은 전송되지 않고 각 클라가 재는 자기 RTT다. 부풀리면 화살이 자기 화면에서
+#     더 앞서 그려져 **자기 경고 시간만 줄어든다**(자해). 호스트는 자기 id의 RTT가 없어 0 = 항등.
+func _on_mob_shoot(_eid: String, origin: Vector2, dir: Vector2, aid: String, def: EnemyDef) -> void:
+	if def == null:
+		return
+	var speed := CombatMathLib.clamp_projectile_speed(def.proj_speed)
+	var lead_s := CombatMathLib.clamp_one_way_ms(Net.one_way_ms(NetSchema.HOST_ID)) / 1000.0
+	_instantiate(aid, origin + dir * (speed * lead_s), dir, speed,
+		CombatMathLib.projectile_lifetime_s(def.proj_range, speed),
+		def.proj_texture, 1.0, false, 0.0, Color(1, 1, 1, 1), "")
+
+
+# 표시 탄 생성·등록 — 플레이어/잔몹 공용 꼬리. 종료(_despawn·G_ARROW_HIT)도 완전 공용이라
+# 이 노드에서 발사 주체가 갈리는 곳은 **파라미터를 어디서 리졸브하느냐** 한 군데뿐이다.
+func _instantiate(aid: String, origin: Vector2, dir: Vector2, speed: float, life: float,
+		tex: Texture2D, orb_scale: float, spin: bool,
+		blast_r: float, tint: Color, blast_sfx: String) -> void:
+	if aid.is_empty() or _arrows.has(aid):
+		return
 	var arrow := ArrowScene.instantiate() as Node2D
 	_arrows[aid] = arrow
-	var blast_r := float(p["blast"])
 	if blast_r > 0.0:
 		# 폭발탄 — 종료(적중/만료) 시 이 반경으로 FX. 반경은 전송 안 하고 각 클라가 여기서 기억한다
-		_blasts[aid] = {"radius": blast_r, "tint": p["tint"] as Color, "sfx": str(p["blast_sfx"])}
+		_blasts[aid] = {"radius": blast_r, "tint": tint, "sfx": blast_sfx}
 		arrow.expired.connect(func(pos: Vector2) -> void: _blast_fx(aid, pos))  # 빗나감도 그 자리에서 폭발
 	arrow.tree_exited.connect(func() -> void:
 		_arrows.erase(aid)
 		_blasts.erase(aid))  # 자연 소멸(수명 만료)도 맵 정리 — expired가 먼저 FX를 띄운 뒤
 	get_parent().add_child(arrow)  # 부모 = 스테이지 Node2D. 런타임 add_child라 안전 (rules §5 _ready 함정 무관)
-	arrow.setup(origin, dir, float(p["speed"]), float(p["life"]),
-		p["texture"] as Texture2D, float(p["scale"]), bool(p["spin"]))
+	arrow.setup(origin, dir, speed, life, tex, orb_scale, spin)
 
 
 # 발사자 아바타의 「투사체 사거리」(proj_range) 특성 — 미스폰/미상이면 0(항등 = 보너스 없음).

@@ -37,6 +37,15 @@ const G_SCENE := "scene"              # {k, scene, c, i} 호스트 → 전원: �
 const G_ROLL := "roll"                # {k, dx, dy}   발신자=본인: 구르기 시작 선언 — 호스트가 쿨다운 검증 후 i-frame 창 부여. dx/dy = 원격 구르기 연출(peer_sync가 소비, 표시 전용)
 const G_MOB_POS := "mpos"             # {k, m}        호스트 → 전원: 잔몹 위치 배치 (m = [[eid, x, y, f], …], 10Hz). ⚠ 릴레이 2곳 로그 제외 목록에 등록 (고빈도)
 const G_MOB_ATK := "matk"             # {k, eid, x, y} 호스트 → 전원: 잔몹 텔레그래프 시작(타격 중심). 타격 시각은 def.telegraph_s를 각자 로컬 리졸브
+# {k, eid, ox, oy, dx, dy, aid} 호스트 → 전원: 원거리 잔몹 발사. (ox,oy)=원점·(dx,dy)=정규화 방향·aid=투사체 고유 id.
+# 🔴 **수치는 하나도 싣지 않는다** — 속도·사거리·데미지·명중 반경은 각 클라가 `eid`로 찾은 자기 씬의
+#   EnemyDef에서 리졸브한다(peer_weapon_id·projectile_params와 같은 철학). 스푸핑 표면 0.
+# 🔴 **RTC_FAST_KINDS에 절대 넣지 마라** — 사건 kind다. 한 통 유실이면 화살이 안 보이는데 데미지만 온다.
+# 🔴 aid 네임스페이스 = "m:<eid>:<seq>". 플레이어는 "<피어id>:<seq>"이고 G_SHOOT 수신부가
+#   `aid.begins_with(str(from_id) + ":")`로 검증한다 — 나중에 같은 검증을 몹에 미러하려는 사람이
+#   이 접두사를 모르면 **정직한 화살이 조용히 거부된다.**
+# 신뢰 경계: 수신부가 `from_id != HOST_ID`면 폐기(MobSync 최상단). 게스트는 이 kind를 발신하지 않는다.
+const G_MOB_SHOOT := "mshoot"
 const G_PLAYER_HP := "php"            # {k, pid, hp}  호스트 → 전원: 플레이어 HP 확정 (hp<=0 = 사망 → 관전, 사망자에게 hp 1 = 클리어 부활). 자기 HP도 이것만 믿는다 (§3)
 const G_STAGE_CLEAR := "clear"        # {k}           호스트 → 전원: 스테이지 클리어 (부활 자체는 php로 — clear는 흐름/배너)
 const G_WIPE := "wipe"                # {k}           호스트 → 전원: 전멸 (배너 후 호스트가 G_SCENE village 송신)

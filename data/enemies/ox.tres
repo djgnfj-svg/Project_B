@@ -1,0 +1,55 @@
+[gd_resource type="Resource" script_class="EnemyDef" load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://src/core/enemy_def.gd" id="1"]
+[ext_resource type="SpriteFrames" path="res://assets/sprites/enemies/ox_frames.tres" id="2"]
+[ext_resource type="Script" path="res://src/core/drop_table.gd" id="3"]
+[ext_resource type="Script" path="res://src/core/drop_entry.gd" id="4"]
+
+[sub_resource type="Resource" id="d_gold"]
+script = ExtResource("4")
+kind = "gold"
+gold_min = 12
+gold_max = 24
+
+[sub_resource type="Resource" id="d_core"]
+script = ExtResource("4")
+kind = "material"
+ref_id = "brute_core"
+chance = 0.6
+qty_min = 1
+qty_max = 1
+
+[sub_resource type="Resource" id="d_fang"]
+script = ExtResource("4")
+kind = "material"
+ref_id = "sharp_fang"
+chance = 1.0
+qty_min = 1
+qty_max = 2
+
+[sub_resource type="Resource" id="d_bp"]
+script = ExtResource("4")
+kind = "blueprint"
+ref_id = "iron_greatsword"
+chance = 0.35
+
+[sub_resource type="Resource" id="d_table"]
+script = ExtResource("3")
+entries = Array[DropEntry]([SubResource("d_gold"), SubResource("d_core"), SubResource("d_fang"), SubResource("d_bp")])
+
+[resource]
+script = ExtResource("1")
+display_name = "들소"
+max_hp = 55
+respawns = false
+body_radius = 13.0
+frames = ExtResource("2")
+move_speed = 50.0
+aggro_range = 200.0
+attack_range = 36.0
+strike_radius = 28.0
+attack_damage = 12
+telegraph_s = 0.85
+attack_cooldown_s = 1.7
+exp = 26
+drop_table = SubResource("d_table")
