@@ -81,6 +81,7 @@ const CHARGE_HIT_DUR := 0.3       # 바위 충돌 리코일(튕김) 지속(s) �
 const CHARGE_RECOIL_SPEED := 180.0  # 바위 충돌 시 뒤로 튕기는 초기 속도(px/s)
 const CHARGE_TIMEOUT_MARGIN := 0.4  # 돌진 타임아웃 = 이동시간 + 이 여유(벽에 낀 채 무한 돌진 방지)
 const CHARGE_SPIN_TIME := 1.0       # 돌진+회전 총 지속(s). 이동은 앞부분(속도로 0.5s쯤 도달)
+const WHIRL_OFFSET_Y := -13.0       # F7 회오리 시트(128px, 발밑 y96)를 방향 시트 발 높이에 맞추는 오프셋
 
 @export var eid: String = ""
 @export var def: BossDef
@@ -128,8 +129,10 @@ var _charge_seq: int = 0               # 돌진(P3) 회차 id — 스윕 dedup �
 var _charge_start: Vector2 = Vector2.ZERO  # 이번 돌진 시작 위치 — 이동거리(travel_max) 판정 기준
 var _c1_frames: SpriteFrames = null    # C1 코옵 전용 클립 시트(roar/grab/groggy — mino_boss_c1) 지연 로드
 var _spin_frames: SpriteFrames = null  # 돌진 회전 전용 풀캐릭터 시트(mino_spin_full) 지연 로드
+var _whirl_frames: SpriteFrames = null # F7 제자리 회오리 전용 시트(mino_whirl, 128px + 황금 에너지) 지연 로드
 var _hitfall_frames: SpriteFrames = null  # 바위 충돌·그로기 클립 시트(mino_hit_fall) 지연 로드
 var _hitfall_active: bool = false          # 충돌/그로기 클립 재생 중 — 그로기 끝나면 end_c1_clip으로 복귀
+var _spin_anim_active: bool = false        # 제자리 회오리(pat_spin=F7) 클립 재생 중 — RECOVER 끝에 방향 시트 복귀
 var _c1_active: bool = false           # C1 클립 재생 중 — 생명감 눕기 포즈를 건너뛴다(클립이 곧 포즈)
 var coop_locked: bool = false          # C1 결박 중 — 패턴 AI 정지(외부=coop_authority가 설정). 페이즈2 자동 늪도 멈춤(설계 §9)
 
@@ -296,6 +299,9 @@ func _update_life_feel(delta: float) -> void:
 	# 그로기 끝 — 회전 원위치로 복구
 	if not is_zero_approx(_sprite.rotation):
 		_sprite.rotation = lerp_angle(_sprite.rotation, 0.0, minf(1.0, delta * 9.0))
+	# 클립(회전/충돌/회오리) 재생 중엔 클립이 곧 포즈 — 생명감 드리프트(offset·skew)를 건너뛴다(회오리 오프셋 유지).
+	if _c1_active:
+		return
 	_life_t += delta
 	# 사인 드리프트(정처 없이) + 노이즈 지터(지직거림). 노이즈는 x/y 표본 좌표를 멀리 떨어뜨려 상관 제거.
 	var nx := _noise.get_noise_1d(_life_t * NOISE_SPEED) if _noise != null else 0.0
@@ -382,6 +388,14 @@ func play_hitfall_clip(clip: StringName) -> void:
 	_hitfall_active = true
 
 
+# F7 제자리 회오리 — 128px 황금 에너지 시트(mino_whirl). 프레임이 커서 발밑을 오프셋으로 맞춘다.
+func play_whirl_clip(clip: StringName) -> void:
+	if _whirl_frames == null:
+		_whirl_frames = load("res://assets/sprites/fx/mino_whirl_frames.tres") as SpriteFrames
+	_play_alt_clip(_whirl_frames, clip)
+	_sprite.offset = Vector2(0, WHIRL_OFFSET_Y)
+
+
 # 돌진 회전 시작 — 풀캐릭터 회전 시트(mino_spin_full)의 spin 클립(루프)로 몸통을 통째 갈아끼운다.
 func _start_spin_axe() -> void:
 	play_spin_clip(&"spin")
@@ -396,6 +410,7 @@ func end_c1_clip() -> void:
 	if not _c1_active:
 		return
 	_c1_active = false
+	_sprite.offset = Vector2.ZERO           # 회오리 발밑 오프셋 원복
 	if def != null and def.frames != null:
 		_sprite.sprite_frames = def.frames   # 방향 시트 복구
 	_play(&"idle", 1.0, true)
@@ -482,6 +497,8 @@ func _host_ai(delta: float) -> void:
 					_enter_charge_dash()
 				else:
 					_fire_strike()
+					if _spin_anim_active:
+						play_whirl_clip(&"whirl_burst")  # 느린 회전 끝 → 황금 대폭발→감속→후딜(F7).
 					_state = State.RECOVER
 					# 회복은 짧게(recover_s) — 재사용 쿨다운(cooldown_s)은 _pattern_last_msec가 따로 막는다.
 					# 둘을 분리하지 않으면 슬램 후 쿨다운(4s)만큼 멈춰 서 "빈틈"이 생긴다.
@@ -517,6 +534,9 @@ func _host_ai(delta: float) -> void:
 		State.RECOVER:
 			velocity = Vector2.ZERO   # 후딜에도 정지 유지 (스윙 마무리 프레임 동안 안 미끄러진다)
 			if _state_left <= 0.0:
+				if _spin_anim_active:
+					_spin_anim_active = false
+					end_c1_clip()      # F7 제자리 회오리 끝 → 방향 시트 복귀
 				_state = State.CHASE
 
 
@@ -590,6 +610,10 @@ func _begin_windup(pat: BossPatternDef, anchor: Vector2) -> void:
 		# 돌진 예비 자세 — 회전 시트(mino_spin_full)의 spin_prep(도끼 치켜듦→웅크림)을 예고 동안 재생.
 		# 예고(좁은 cone)는 "경로 예고(긁힘 선)"로 이미 _show_telegraph_visual이 그렸다.
 		play_spin_clip(&"spin_prep")
+	elif pat.id == "spin":
+		# F7 제자리 회오리 — 예고 동안 황금 링이 천천히 여러 바퀴(whirl_spin 루프 6fps). 타격 순간 폭발(STRIKE 분기).
+		play_whirl_clip(&"whirl_spin")
+		_spin_anim_active = true
 	else:
 		_play_attack_anim(pat)  # 공격 애니(swing/slam) — 예고 길이에 맞춰 재생 속도를 늘린다
 	if Net.is_host():
