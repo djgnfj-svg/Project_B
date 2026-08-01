@@ -22,6 +22,7 @@ const PlayerActor := preload("res://src/player/player.gd")
 const HitStop := preload("res://src/feel/hit_stop.gd")
 const HitFlash := preload("res://src/feel/hit_flash.gd")
 const Flinch := preload("res://src/feel/flinch.gd")
+const NavGrid := preload("res://src/enemies/nav_grid.gd")
 
 # 연출값 (rules §0 예외)
 const REMOTE_LERP_SPEED := 12.0
@@ -35,8 +36,21 @@ const REMOTE_MOVE_EPS := 1.0      # 게스트 표시: 목표점과 이만큼 이
 # 조건이 없으면 그 한 프레임이 영구 추격으로 굳는다 (챕터1 실기에서 발견, 간헐 레이스)
 const LEASH_MULT := 1.5
 # 🔴 지형 레이어(1 = world) 마스크 — rules §5 배정표가 단일 소스. `player.ENEMY_BODY_MASK`와 같은 관용구.
-#   원거리 몹의 사선(LOS) 질의 전용: 몸(2·3)·픽업(6)은 마스크에 없어 자기 자신·플레이어를 안 맞는다.
+#   사선(LOS) 질의·길찾기 굽기 전용: 몸(2·3)·픽업(6)은 마스크에 없어 자기 자신·플레이어를 안 맞는다.
 const WORLD_MASK := 1 << 0
+# --- 길찾기 (호스트 전용 · 표시·네트워크와 무관 — 설계 근거·실측은 nav_grid.gd 머리말) ---
+# 🔴 **직진이 통하면 길찾기를 안 쓴다.** 사선이 뚫려 있으면 예전 그대로 직진하고, 막혔을 때만
+#   A* 경로를 탄다 — 열린 벌판(대부분의 프레임)에서 비용이 사실상 0이고, 도입 전 움직임이
+#   **그 경우에 한해 완전 항등**이라 회귀 표면이 「막혔을 때」로 좁혀진다.
+const NAV_LOS_INTERVAL_S := 0.2      # 사선 재확인 주기(초) — 매 프레임 레이캐스트를 피한다
+const NAV_REPATH_S := 0.6            # 경로 재계산 주기(초). 매 프레임 굽지 않는다
+const NAV_GOAL_MOVE_PX := 40.0       # 목표가 이만큼 움직이면 주기를 안 기다리고 다시 낸다
+const NAV_WAYPOINT_REACH_PX := 10.0  # 웨이포인트 도달 판정 반경
+# 갇힘 감지 — 사선은 **선**이라 몸 굵기를 모른다(뚫려 보이는데 모서리에 걸려 못 가는 경우).
+const NAV_STUCK_WINDOW_S := 0.45
+const NAV_STUCK_MIN_PX := 6.0
+# 물러나다 벽에 몰린 원거리 몹이 CHASE↔BACKOFF를 매 프레임 오가지 않게 후퇴를 잠그는 시간(초).
+const NAV_BACKOFF_BLOCK_S := 1.5
 # 발사 원점 여유(px) — 화살이 몸 안에서 태어나지 않게. 🔴 상수를 크기로 쓰지 않는다:
 #   실제 오프셋은 `body_radius + strike_radius + 이 값`이라 몹이 커지든 화살이 굵어지든 자동 추종한다.
 const MUZZLE_PAD := 4.0
@@ -76,6 +90,24 @@ var _aim_total: float = 0.0               # 이번 조준의 총 길이 — 선�
 # 🔴 스프라이트 배속의 **유일한 대입 지점**이 쥐는 의도값 (boss._apply_anim_scale 관용구, rules §2).
 #   HitStop.punch가 speed_scale을 무조건 1.0으로 리셋하므로 소유자가 매 프레임 재주장해야 한다.
 var _anim_scale: float = 1.0
+# 🔴 길찾기 격자는 **씬 전체가 하나를 공유한다** — 칸당 3840회 물리 질의를 몹마다 반복하면
+#   4~6마리 × 3~4ms(웹)가 그대로 히치가 된다. 무효화는 열쇠로 한다: 바닥 TileMapLayer의
+#   instance id가 바뀌면(= 다른 씬) 통째로 다시 굽는다. `main._swap`이 `add_child`라
+#   `current_scene`은 계속 main이므로 **그것을 열쇠로 쓰면 스테이지가 바뀌어도 옛 격자가 남는다.**
+static var _nav_shared: NavGrid = null
+static var _nav_key: int = 0
+
+var _nav_layer: TileMapLayer = null   # 이 몹이 찾은 바닥 레이어(없으면 길찾기 자체가 꺼진다)
+var _nav_resolved: bool = false
+var _path := PackedVector2Array()
+var _path_i: int = 0
+var _path_goal := Vector2.ZERO
+var _repath_left: float = 0.0
+var _los_left: float = 0.0
+var _los_clear: bool = true           # 초기값 true = 도입 전(직진)과 같은 첫 프레임
+var _stuck_ref := Vector2.ZERO
+var _stuck_left: float = 0.0
+var _backoff_block_left: float = 0.0
 
 @onready var _sprite: AnimatedSprite2D = $Sprite
 @onready var _collision: CollisionShape2D = $Collision
@@ -227,6 +259,12 @@ func _physics_process(delta: float) -> void:
 
 func _host_ai(delta: float) -> void:
 	_state_left -= delta
+	_backoff_block_left -= delta
+	# 갇힘 감지는 **실제로 걷는 상태에서만** 의미가 있다 — 예고(WINDUP)로 서 있는 0.6~1.1s를
+	# "안 움직였다"로 읽으면 매 공격마다 헛되이 경로를 다시 낸다.
+	if _state != State.CHASE and _state != State.BACKOFF:
+		_stuck_left = NAV_STUCK_WINDOW_S
+		_stuck_ref = global_position
 	match _state:
 		State.IDLE:
 			var t := _nearest_alive_player()
@@ -246,7 +284,10 @@ func _host_ai(delta: float) -> void:
 				return
 			# 🔴 원거리: 너무 붙으면 물러난다(카이팅). keep_dist = 0이면 이 분기가 통째로 꺼져
 			#   제자리 사격(포탑형)이 된다 — 근접 개체는 _is_ranged가 false라 애초에 안 온다.
-			if _is_ranged and def.keep_dist > 0.0 and dist < def.keep_dist:
+			# ⚠ `_backoff_block_left` — 벽에 몰려 못 물러난 직후에는 후퇴를 잠근다. 없으면
+			#   BACKOFF(갇힘 → CHASE) ↔ CHASE(가까움 → BACKOFF)를 매 프레임 오가며 영영 못 쏜다.
+			if _is_ranged and def.keep_dist > 0.0 and dist < def.keep_dist \
+				and _backoff_block_left <= 0.0:
 				_state = State.BACKOFF
 				return
 			# 🔴 원거리는 **사선(LOS)이 뚫려 있어야** 쏜다 (설계 ⑹ 층①, 2026-08-01).
@@ -271,9 +312,13 @@ func _host_ai(delta: float) -> void:
 				show_telegraph(_strike_center, telegraph_total)
 				EventBus.mob_telegraph.emit(eid, _strike_center)
 				return
-			velocity = (anchor - global_position).normalized() * def.move_speed
+			# 🔴 길찾기에 맡기는 것은 **방향뿐이다 — 속력은 여전히 `def.move_speed`다.**
+			#   이속을 건드리면 `CombatMath.MOB_LAG_SLACK_SPEED`(90)에서 유도한 각 슬랙이
+			#   과소평가되어 창의 팁 타격이 게스트에서 조용히 거부된다(rules §3 「대상 좌표 각 슬랙」).
+			velocity = _chase_dir(anchor, delta) * def.move_speed
 			move_and_slide()
 			_face(anchor)
+			_tick_stuck(delta, false)
 		State.BACKOFF:
 			# 원거리 전용 — 사거리를 되찾을 때까지 뒷걸음. 물러나는 중엔 쏘지 않는다(붙으면 사격이
 			# 멎는다 = 근접 직업의 접근 보상). 리시를 넘어가면 추격 상태로 돌려 IDLE 판단에 맡긴다.
@@ -291,6 +336,8 @@ func _host_ai(delta: float) -> void:
 			velocity = (global_position - bpos).normalized() * def.move_speed
 			move_and_slide()
 			_face(bpos)  # 물러나면서도 플레이어를 본다(조준 자세 유지 — 뒷모습으로 걷지 않는다)
+			# 물러날 곳이 없으면(벽·물가) 그 자리에서 갈리는 대신 추격으로 돌아가 그냥 쏜다.
+			_tick_stuck(delta, true)
 		State.WINDUP:
 			if _state_left <= 0.0:
 				if _is_ranged:
@@ -302,6 +349,115 @@ func _host_ai(delta: float) -> void:
 		State.RECOVER:
 			if _state_left <= 0.0:
 				_state = State.CHASE
+
+
+
+# --- 길찾기 (호스트 전용) ---
+#
+# 🔴 **네트워크 메시지가 0개다.** 여기서 나오는 것은 이번 프레임의 이동 **방향**뿐이고, 그 결과는
+#   지금처럼 `G_MOB_POS`(10Hz 좌표)로만 게스트에 간다 — 경로도, 목표도, 격자도 전송하지 않는다.
+#   그래서 새 kind·채널 분류·신뢰 경계가 하나도 늘지 않는다(rules §1 "AI는 호스트에서만 돈다").
+#
+# 규칙은 두 줄이다:
+#   ⑴ 사선이 뚫려 있으면 **예전 그대로 직진**한다 — 열린 벌판(대부분의 프레임)에서 비용 ≈ 0이고
+#      도입 전 움직임과 그 경우에 한해 **완전 항등**이다.
+#   ⑵ 막혔을 때만 A* 경로를 낸다. 경로가 안 나오면(격자 없음·도달 불가) 역시 직진으로 떨어진다 —
+#      즉 **어떤 실패도 "예전 동작"으로만 떨어진다.**
+func _chase_dir(anchor: Vector2, delta: float) -> Vector2:
+	var to_target := anchor - global_position
+	var direct := to_target.normalized() if to_target.length() > 0.001 else Vector2.RIGHT
+	_los_left -= delta
+	if _los_left <= 0.0:
+		_los_left = NAV_LOS_INTERVAL_S
+		_los_clear = _has_line_of_sight(anchor)
+	if _los_clear:
+		_path.resize(0)
+		return direct
+	var nav := _nav()
+	if nav == null:
+		return direct   # 바닥 TileMapLayer가 없는 씬(보스방·시험장) = 도입 전과 완전 항등
+	_repath_left -= delta
+	if _path.is_empty() or _repath_left <= 0.0 \
+			or anchor.distance_to(_path_goal) > NAV_GOAL_MOVE_PX:
+		_repath_left = NAV_REPATH_S
+		_path_goal = anchor
+		# ⚠ `direct_space_state`는 물리 프레임 안에서만 유효하다 — 보관하지 않고 그때그때 넘긴다.
+		#   (`_host_ai`는 `_physics_process`에서만 불린다.)
+		_path = nav.find_path(global_position, anchor, def.body_radius,
+			get_world_2d().direct_space_state, WORLD_MASK)
+		_path_i = 0
+	while _path_i < _path.size() \
+			and global_position.distance_to(_path[_path_i]) <= NAV_WAYPOINT_REACH_PX:
+		_path_i += 1
+	if _path_i >= _path.size():
+		_path.resize(0)
+		return direct
+	var seg := _path[_path_i] - global_position
+	return seg.normalized() if seg.length() > 0.001 else direct
+
+
+# 갇힘 감지 — 사선(LOS)은 **선**이라 몸 굵기를 모른다. 뚫려 보이는데 모서리에 몸이 걸려 못 가는
+# 경우가 있고, 그때 화면에는 이유가 안 드러난다(제자리에서 걷는 애니만 돈다).
+#   추격 중이면 → "직진은 실제로 안 통한다"로 보고 경로 추종으로 넘긴다.
+#   후퇴 중이면 → 물러날 곳이 없는 것이므로 추격으로 돌려 그냥 쏘게 한다(잠시 후퇴 잠금).
+func _tick_stuck(delta: float, backing_off: bool) -> void:
+	_stuck_left -= delta
+	if _stuck_left > 0.0:
+		return
+	_stuck_left = NAV_STUCK_WINDOW_S
+	var moved := global_position.distance_to(_stuck_ref)
+	_stuck_ref = global_position
+	if moved >= NAV_STUCK_MIN_PX:
+		return
+	if backing_off:
+		_backoff_block_left = NAV_BACKOFF_BLOCK_S
+		velocity = Vector2.ZERO
+		_state = State.CHASE
+		return
+	_los_clear = false
+	_los_left = NAV_LOS_INTERVAL_S   # 다음 재확인까지 이 판단을 유지한다
+	_path.resize(0)
+
+
+# 씬이 공유하는 길찾기 격자. 바닥 TileMapLayer를 못 찾으면 null = 길찾기 비활성(기존 동작).
+# 🔴 굽기는 **첫 "막힘"에서 지연 실행**된다 — `_ready`에서 구우면 물리 서버가 아직 그 프레임의
+#   바디를 동기화하지 않아 **전부 통행 가능한 격자**가 조용히 만들어진다(에러 0).
+func _nav() -> NavGrid:
+	if not _nav_resolved:
+		_nav_resolved = true
+		_nav_layer = _find_ground_layer()
+	if _nav_layer == null or _nav_layer.tile_set == null:
+		return null
+	var key := int(_nav_layer.get_instance_id())
+	if _nav_shared != null and _nav_key == key:
+		return _nav_shared
+	var used := _nav_layer.get_used_rect()
+	if used.size.x <= 0 or used.size.y <= 0:
+		return null
+	var ts := _nav_layer.tile_set.tile_size
+	var area := Rect2(_nav_layer.global_position + Vector2(used.position * ts),
+		Vector2(used.size * ts))
+	var ng := NavGrid.new()
+	ng.setup(area, NavGrid.DEFAULT_CELL)
+	_nav_shared = ng
+	_nav_key = key
+	return ng
+
+
+# 바닥 레이어 찾기 — 하드코딩 경로 대신 **형제/조상의 자식 중 TileMapLayer**를 훑는다.
+# 잔몹은 스테이지 루트의 직계 자식이라(gen_stage.py) 첫 홉에서 잡힌다. 씬 파일을 안 고치는 것이
+# 이 방식의 값이다 — `stage_1.tscn`/`stage_2.tscn`은 생성물이라 손으로 고치면 재생성 때 날아간다.
+func _find_ground_layer() -> TileMapLayer:
+	var n := get_parent()
+	var hops := 0
+	while n != null and hops < 3:
+		for c: Node in n.get_children():
+			var t := c as TileMapLayer
+			if t != null and t.tile_set != null:
+				return t
+		n = n.get_parent()
+		hops += 1
+	return null
 
 
 # 추격/조준 좌표는 표시 좌표가 아니라 net_anchor — 호스트 판정 기준과 일치 (rules §3)
