@@ -63,7 +63,7 @@ signal screen_shake(strength: float)  # 명시적 셰이크 트리거 (사망·�
 #   그런 상태라 셰이크는 남의 피격에도 난다 — 킥까지 따라가면 원인 모를 화면 흔들림이 된다).
 signal camera_kick(dir: Vector2, strength: float)
 # 소리/연출 트리거 (표시·소리 전용, 각 클라 로컬) — Audio가 SFX로, 필요시 연출이 구독.
-signal player_swing(world_pos: Vector2, sfx: String)   # 플레이어 공격 스윙(로컬·원격 연출 시점) — sfx = 무기 스윙음 id(EquipDef.swing_sfx). ⚠ 발사(EquipDef.swing_sfx)·**차지 단계 상승(charge_sfx)**도 이 훅을 재사용한다 = "소리 낼 순간" 훅에 가깝다. 여기에 스윙 궤적 같은 **시각** 연출을 매달면 기 모을 때마다 검을 휘두른다 — 시각을 붙일 땐 sfx id로 갈라내거나 별도 시그널을 파라
+signal player_swing(world_pos: Vector2, sfx: String, pitch: float)   # 플레이어 공격 스윙(로컬·원격 연출 시점) — sfx = 무기 스윙음 id(EquipDef.swing_sfx). ⚠ 발사(EquipDef.swing_sfx)·**차지 단계 상승(charge_sfx)**도 이 훅을 재사용한다 = "소리 낼 순간" 훅에 가깝다. 여기에 스윙 궤적 같은 **시각** 연출을 매달면 기 모을 때마다 검을 휘두른다 — 시각을 붙일 땐 sfx id로 갈라내거나 별도 시그널을 파라. 🔴 **pitch = 근접 콤보 타수의 리듬**(2026-08-01, 사용자 요구 *"리듬감이 티가 났으면"*): 평타는 타수마다 오르고 마무리만 뚝 떨어져 "타-타-쾅"이 된다. 유도는 `player._swing_pitch()` **단일 소스** — 발사·차지 경로는 1.0(항등)을 실어라. ⚠ GDScript 시그널엔 기본값이 없어 **emit 전부가 이 인자를 넘겨야 한다**(빠뜨리면 런타임에서 조용히 안 불린다)
 signal player_roll(world_pos: Vector2)    # 플레이어 구르기 시작
 # kind = "enemy"|"player" — 사망 확정 표시.
 # 🔴 `respawns` = 그 적이 **되살아나는가**(EnemyDef.respawns — 훈련용 허수아비). 소리에는 무의미하지만

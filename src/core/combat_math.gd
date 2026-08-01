@@ -518,6 +518,27 @@ static func weapon_weight(equip: EquipDef) -> float:
 	return clampf(hs / HIT_SHAKE_REF, HIT_WEIGHT_MIN, HIT_WEIGHT_MAX)
 
 
+# --- 칼날 폭 리본 (2026-08-01) — 🔴 **판정을 만들지 않는다.** ---
+# `motion_phases`·`weapon_weight`와 **같은 자리**다: 표시 전용인데도 여기 있는 이유는 오직
+#   "`data/equipment` 전수 트립와이어가 닿아야 하기 때문"이다(J-1·J-2). `player.gd`에 두면 씬 글루라
+#   `-s` preload가 안 돼 테스트가 코드보다 느슨한 근사만 쓸 수 있다. **판정 함수와 헷갈리지 마라.**
+#
+# 리본이 채우는 띠 = `[칼끝 − blade_length, 칼끝]`. 🔴 **칼끝 바깥으로는 절대 안 나간다** —
+#   나가면 도달 거리를 실제보다 길게 오해하게 만든다. 안쪽으로 넓어지는 것은 언제나 안전한 방향이고
+#   (판정 부채꼴을 **더** 덮는다), 그래서 폭이 커지는 이 변경 자체가 §3 「표시 ⊇ 판정」에 안전하다.
+# ⚠ 상한(`MAX_BLADE_LENGTH`)은 "데이터 오타 방어"이고, 진짜 경계(= 무기의 전방 길이)는 텍스처 폭에서
+#   나오므로 여기서 못 본다 — `test_combat_math_auto`의 「★칼날 폭 전수」가 그 축을 전수로 지킨다.
+const DEFAULT_BLADE_LENGTH := 8.0  # 미지정(0) 폴백 — 옛 칼끝 리본 굵기(7px)와 거의 같다 = 근사 항등
+const MIN_BLADE_LENGTH := 2.0
+const MAX_BLADE_LENGTH := 64.0     # 최장 근접 무기(창 텍스처 73px) 안에 드는 상한
+
+
+static func blade_length(equip: EquipDef) -> float:
+	if equip == null or not is_finite(equip.blade_length) or equip.blade_length <= 0.0:
+		return DEFAULT_BLADE_LENGTH
+	return clampf(equip.blade_length, MIN_BLADE_LENGTH, MAX_BLADE_LENGTH)
+
+
 # 유효 투사체 사거리 — proj_range 특성 + 콤보 타별 배율만큼 길어진다. 둘 다 기본값(0 / 1.0)이면
 # **도입 전과 완전 항등**이다.
 # 🔴 근접의 effective_attack_range와 같은 자리다: 표시(ArrowField)와 판정(CombatAuthority)이 **같은
@@ -877,6 +898,31 @@ const AUTO_FIRE_HOST_FRAME_S := 1.0 / 30.0  # 호스트 수신 처리의 최악 
 static func auto_fire_gap_s(job: JobDef, haste: float = 0.0) -> float:
 	var cd := effective_cooldown(job, haste)
 	return maxf(cd / FIRE_RATE_SLACK, cd * FIRE_RATE_SLACK + AUTO_FIRE_HOST_FRAME_S)
+
+
+# --- 클릭 발사 경로의 `auto_fire_gap_s` 대칭 (선입력 버퍼, netreview C-1~C-3 2026-08-01) ---
+# 🔴 **C2(2026-07-28)가 홀드에만 여유를 붙인 근거가 깨졌다.** 그 근거는 *"사람의 클릭은 경계에 안
+#   붙는다"* 였는데, 선입력 버퍼가 살려 낸 클릭은 발사 간격을 `combo_gap_s`에 **정확히 못 박는다.**
+#   그러면 남는 여유가 구조적 마진(`cd × (1 − FIRE_RATE_SLACK)`)뿐이고, **웹 30fps 호스트의 수신
+#   프레임 양자화**(`AUTO_FIRE_HOST_FRAME_S`)가 그중 33.3ms를 먹어 전사 haste 0의 실예산이 6.7ms다.
+# 🔴 실패는 셋 다 **무증상**이다:
+#   · `advance_combo` 하한 미달 → 콤보 리셋 뒤 호스트 인덱스가 클라보다 **영구히 1 뒤처져** 마무리
+#     타가 그 교전 내내 평타로 확정된다(해제 = 800ms 이상 정지). 연출은 전부 정상.
+#   · `is_hit_cooldown_ok` 미달 → 타격 **통째로 소실**(스윙·궤적·소리·반동 다 나오고 적 HP만 그대로).
+# 🔴 **클라가 물러선다 — 호스트 게이트를 넓히지 않는다.** `FIRE_RATE_SLACK`은 근접·발사율·차지·콤보
+#   **네 게이트 공유**라 넓히면 스팸 상한이 같이 오른다(`auto_fire_gap_s`가 세운 그 선례 그대로).
+# 🔴 **여유는 「버퍼가 살려 낸 클릭」에만 문다 — 즉시 클릭은 완전 항등이다.** 쿨다운이 이미 끝난 뒤에
+#   누른 클릭은 사람의 반응 지연 덕에 간격이 이미 `combo_gap_s`보다 크다. 새로 연 경로만 새 비용을
+#   낸다는 부호이고, §3 「오차는 누가 대가를 치르는가로 기울인다」와 같은 자리다.
+#   ⚠ 그래서 이 함수는 **DPS 상한을 안 내린다** — 프레임 완벽하게 치는 사람은 여전히 `combo_gap_s`다.
+static func buffered_attack_grace_s() -> float:
+	return AUTO_FIRE_HOST_FRAME_S
+
+
+# 버퍼가 살려 낸 클릭의 **실제 발사 간격**(s) — `player.gd`가 쓰는 값이자 트립와이어가 겨누는 값.
+# ⚠ 트립와이어가 `combo_gap_s`를 직접 적으면 "여유 항을 지우는 뮤테이션"을 못 잡는다(J-1 관용구).
+static func buffered_attack_gap_s(job: JobDef, equip: EquipDef, index: int, haste: float = 0.0) -> float:
+	return combo_gap_s(job, equip, index, haste) + buffered_attack_grace_s()
 
 
 # --- 근접 스윙의 두 게이트 (선딜/후딜 축 2026-07-28, netreview I-3) ---

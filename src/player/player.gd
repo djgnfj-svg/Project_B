@@ -43,6 +43,30 @@ const ATTACK_FX_TIME := CombatMath.MELEE_TRAIL_FADE_S  # 스윕 완료 뒤 궤�
 #   아니라, 가까운 적은 칼이 몸을 지나가는 것으로 읽힌다).
 const TRAIL_SUBSTEPS := 4       # 프레임 사이 각 보간 — 60fps 스윕이 5~7프레임뿐이라 없으면 각진다
 const TRAIL_MAX_POINTS := 48    # 점 상한(안전판) — 스윕 길이 × SUBSTEPS를 넉넉히 덮는다
+# --- 칼날 폭 리본 (2026-08-01) — 🔴 칼끝 **한 점**이 아니라 칼끝~칼밑 **면**이다 ---
+# 사용자 요구: *"리본도 칼날에 맞게 두꺼웠으면 좋겠음"*. 07-29 리본은 칼끝 좌표만 이은 7px `Line2D`라
+#   무기 굵기와 무관했다. 이제 같은 배치식에서 **칼밑 궤적**을 하나 더 뽑아 두 궤적 사이를 채운다.
+# 🔴 **바깥 변 = 칼끝 그 자체다 — 넘어가면 안 된다.** 리본이 칼끝보다 밖으로 나가면 도달 거리를
+#   실제보다 길게 오해하게 만든다. 안쪽으로 넓어지는 것만 안전하다(판정 부채꼴을 **더** 덮는다) —
+#   그래서 이 변경 자체는 §3 「표시 ⊇ 판정」에 안전한 방향이고, 각 창은 **전혀 안 건드린다**.
+# 🔴 **`Line2D.width`를 키우는 방식은 안 된다** — 그 폭은 「선 진행 방향의 수직」이라 베기(호)에서는
+#   우연히 radial이 되지만 찌르기(창)에서는 **칼 옆으로 퍼진다**(칼날 밖 = 금지 방향). 면이면 두 변이
+#   각각 칼끝·칼밑이라 어떤 모션에서도 칼 안에 머문다.
+# 🔴 리본 폭의 단일 소스 = `CombatMath.blade_length(equip)` (→ `EquipDef.blade_length`).
+const TRAIL_TAIL_WIDTH := 0.35   # 꼬리 폭 비율 — 오래된 자국일수록 칼끝 쪽으로 좁아진다(1.0 = 균일)
+# 안쪽 변의 최소 반지름 — 🔴 **하는 일을 정확히 적는다**(reviewer m-1 정정). 이 하한이 막는 것은
+#   **0으로 나누기와 정확한 점 중복**뿐이고, 퇴화 자체를 못 막는다: 겹침이 없어지는 게 아니라
+#   반지름 1px 원으로 **옮겨 갈** 뿐이라 인접 점 간격이 최악 0.04px까지 좁아진다.
+# 🔴 **퇴화를 실제로 막는 것은 데이터 쪽 전수 트립와이어다**(`test_combat_math_auto`의 「★칼날 폭 전수」
+#   — `blade_length ≤ 텍스처폭 − grip.x + hold_dist − swing_pull`). 이 상수를 키워서 고치려 하지 마라:
+#   키우면 리본이 칼밑보다 안쪽에서 시작해 **칼날 폭이 데이터와 갈라진다.**
+const TRAIL_MIN_INNER_DIST := 1.0
+# 선에서 면이 되면서 칠해지는 면적이 5배 가까이 늘었다 — 알파 1.0이면 잔상·칼과 겹쳐 하얗게 탄다.
+const TRAIL_ALPHA_MAX := 0.72
+# 꼬리 알파 곡선 — 옛 씬 `Gradient`(0 / 0.45→0.55 / 1)와 **같은 모양**을 코드로 옮긴 것이다
+# (면 리본은 정점 색을 직접 넣어야 해서 Line2D의 gradient를 쓸 수 없다).
+const TRAIL_FADE_MID := 0.45
+const TRAIL_FADE_MID_A := 0.55
 # 칼 잔상 장수 — 🔴 **시간이 아니라 스윕 진행(u) 간격으로 센다.** 시간 타이머로 돌리면 프레임률과
 #   무기 속도(0.24~0.34s)에 따라 장수가 들쭉날쭉해져 "빠른 무기는 잔상이 한 장"이 된다.
 const GHOST_STEPS := 4
@@ -130,6 +154,16 @@ const REMOTE_CHARGE_SFX_MIN_MS := 250  # 원격 차지음 최소 간격 — G_PO
 # 🔴 방향의 단일 소스는 **조준각(_aim_angle)** 이다: 로컬은 마우스, 원격은 G_POS "a"라 **네트워크 필드 0개**로
 #   원격도 같은 방향을 얻는다. flip_h를 여기 말고 다른 곳에서 대입하면 프레임마다 서로 덮어써 깜빡인다.
 const DIR_SUFFIX: Array[String] = ["e", "s", "w", "n"]  # _facing_index 순서와 미러
+# --- 몸통 공격 애니 (콤보 타수별 3종, 2026-08-01) ---
+# 🔴 **애니 길이는 `swing_time`과 미러가 될 수 없다 — 그래서 미러를 만들지 않고 매 스윙 유도한다.**
+#   시트는 speed 16 = 0.25s **고정**인데 `swing_time`은 무기별 0.24~0.36s이고 haste가 더 줄인다
+#   (최대 haste 0.5에서 0.24 → 0.16s). 손으로 맞추는 미러는 원리적으로 불가능하고, 어긋나면
+#   **몸 애니가 스윙 창보다 길어져 잘린다**(에러 없이 화면만 어긋난다).
+#   준거 = `boss.gd`의 `_telegraph_duration()`/`_apply_anim_scale()` — 같은 문제를 같은 방식으로 푼다
+#   (rules §3 「공격 애니 길이 ↔ 예고 시간」). 프레임 수·speed를 **시트에서 읽으므로** 아트가 프레임을
+#   늘려도 자동 추종한다.
+# 🔴 speed_scale 하한 — 0/음수는 애니를 세우거나 거꾸로 돌린다. 히트스톱 정지(0.0) 판별과도 안 겹치게.
+const MIN_ANIM_SPEED_SCALE := 0.01
 # --- 대쉬 손맛 (구르기 = 잔상 대쉬, 사용자 확정 2026-07-26 "연출만") ---
 # 🔴 i-frame·쿨다운·거리는 **그대로다** — CombatMath.ROLL_TIME_S/effective_roll_*(§3 단일 소스,
 #   호스트 검증과 같은 값)를 건드리지 않는다. 바뀐 것은 화면에 보이는 것뿐(잔상·먼지·카메라 킥).
@@ -163,8 +197,89 @@ const COMBO_POSE_RETURN_SPEED := 18.0 # 입력이 끊긴 뒤 끝 포즈에서 �
 #      여유(`COMBO_FINISH_SHOW_MARGIN`)로 오면 그 방향이 구조로 닫힌다.
 # ⚠ _swing_time을 콤보로 늘리지 마라: 스윙 창 < attack_cooldown 미러 계약(§3)이 깨지면 원격
 #   창-잠금 가드가 정당한 연속 공격의 연출을 삼킨다.
-const COMBO_FINISH_LUNGE := 1.7 # 마무리 타의 내지르기 배율 (연출 — 무기 스프라이트만 움직인다)
+# 🔴 **마무리 타의 내지르기 배율** (연출 — 무기 스프라이트만 움직인다. `velocity`에 안 들어간다).
+#   2026-08-01에 1.7 → 2.3. 사용자 요구 *"3타때 범위가 눈에 뛰게증가"* 에 실제로 쓸 수 있는 축이
+#   **반경뿐**이었기 때문이다(각은 아래 주석의 계산대로 화면 변화가 0이다).
+# ⚠ 이 배율은 **`swing_lunge`(무기 데이터)에 곱해진다** — 무기마다 절대 증분이 다르다
+#   (낡은 대검 4 → 9.2px · 철 대검 9 → 20.7 · 도끼 10 → 23 · 창 15 → 34.5).
+# ⚠ 칼끝이 **판정 도달보다 밖으로** 더 나간다(이미 그랬다 — 스프라이트가 길어서다). 리본은 여전히
+#   칼끝을 안 넘으므로 §3 계약은 유지되지만, 더 키우면 "칼은 닿는데 안 맞는" 오해가 커진다.
+const COMBO_FINISH_LUNGE := 2.3
+# 🔴🔴 **찌르기는 이 배율을 안 쓴다 — 두 모션에서 `swing_lunge`의 역할이 다르기 때문이다.**
+#   베기: `peak × sin(uπ)`라 **판정 프레임(u = 1)에 정확히 0**이다 → 키워도 부풀어 보이는 것은
+#         스윕 중간뿐이고 "칼끝 vs 판정 도달"의 관계는 안 변한다(낡은 대검 칼끝 44 vs 도달 42 불변).
+#   찌르기: `lerpf(-pull, peak, u)`라 **판정 프레임에 peak 그 자체**다 → 배율이 곧 그 순간의
+#         칼끝 거리다. 창을 2.3으로 올리면 칼끝 88.5 → 97.5px인데 판정 도달은 80 그대로라,
+#         *"겨눈 한 줄 밖은 스치지도 않는다"* 는 그 무기에서 **오차가 11% → 22%로 두 배**가 된다.
+# ⚠ 같은 이름의 값이 둘이라 미러처럼 보이지만 **미러가 아니다** — 위 두 곡선이 다른 것을 뜻한다.
+#   창의 마무리를 더 뻗게 하고 싶으면 이 값이 아니라 `combo_dash`(몸이 같이 나간다)를 본다.
+const COMBO_FINISH_THRUST_LUNGE := 1.7
 const COMBO_FINISH_KICK := 2.6  # 마무리 타의 카메라 반동 (연출)
+# 🔴🔴 **마무리 각(`EquipDef.combo_finish_arc`)을 올려 "범위"를 키우려 하지 마라 — 화면 변화가 0이다**
+#   (2026-08-01 실측). 어깨걸치기 `cap`(`_begin_swing`)이 리본 span을 `TAU − 0.02`로 **포화**시키기
+#   때문이다: span = arc × (1 + mult)이고 `arc > 2.505`면 mult가 cap으로 눌려 span이 항상 6.2632다.
+#     낡은 대검 평타 4.75rad(272°) → 마무리(2.4) **6.2632rad(358.9°)**
+#     철 대검   평타 6.00rad(344°) → 마무리(2.9) **6.2632rad(358.9°)**
+#     도끼      평타 6.2632(359°) → 마무리(2.8) **6.2632(358.9°)**  ← 평타부터 이미 포화
+#   즉 마무리 각을 2.4 → 2.9로 올려도 **그려지는 호는 한 픽셀도 안 변하고 판정 부채꼴만 넓어진다**
+#   = "눈에 띄게"의 정반대(안 보이는 버프). 게다가 철 대검 2.9는 blind wedge가 13.8°뿐이라
+#   `asin(고블린 반경 10 ÷ 도달 42)` = 13.8°와 같아 **등 뒤 적이 이미 맞는다** — 07-28에 없앤 그 상태다.
+#   → 마무리를 "커 보이게" 하는 축은 **반경(위 LUNGE) · 몸 이동(`combo_dash`) · 아래 표시 강조** 셋이다.
+# 마무리 타 리본의 알파 상한 (평타 = `TRAIL_ALPHA_MAX` 0.72). 1.0은 잔상·칼과 겹쳐 하얗게 탄다.
+const COMBO_FINISH_TRAIL_ALPHA := 0.88
+# 마무리 타의 칼 잔상 장수 (평타 = `GHOST_STEPS` 4) — 호를 더 촘촘히 채워 "크게 휘둘렀다"가 읽힌다.
+const COMBO_FINISH_GHOSTS := 6
+# 마무리 타의 벤 자국이 남아 있는 시간 배율 (평타 = `ATTACK_FX_TIME` 그대로).
+# ⚠ 페이드 정규화가 `_fx_total`을 지난다 — 여기만 키우고 나눗셈을 `ATTACK_FX_TIME`으로 두면 자국이
+#   1.0을 넘는 알파로 clamp돼 **앞부분이 통째로 안 흐려진다**(뚝 끊기는 것처럼 보인다).
+const COMBO_FINISH_FX_TIME_MULT := 1.5
+# --- 마무리 직전 타의 젖힘 (2026-08-01 사용자 요구: *"2타때 검을 살짝 뒤로했다가 3타떄"*) ---
+# 🔴 **문제는 "예비 동작이 없다"가 아니라 "예비 동작이 마무리 타 안에 갇혀 있다"였다.** 마무리의
+#   선딜은 이미 직전 타 끝각에서 시작각까지 젖히는데(낡은 대검 −1.9 → −3.713 = **104°**), 그 선딜이
+#   0.048s(0.24 × 0.2)뿐이라 순간이동으로 읽힌다 — 그래서 3타가 "갑자기 튀어나온다".
+# 🔴 **처방 = 그 젖힘의 일부를 「대기 자세」로 앞당긴다.** 마무리 직전 타의 후딜~콤보 대기 동안
+#   자세를 끝각에서 **다음 타의 선딜 시작 자세** 쪽으로 천천히 민다. 낡은 대검은 그 구간이 488ms라
+#   시간이 충분하다(스윕 종료 0.132s → 다음 클릭 가능 0.62s).
+# 🔴 **젖힘 목표는 새 자세가 아니다 — 다음 타가 실제로 지나는 자세다**(`_swing_entry_angle` ·
+#   `-_swing_pull`). 그래서 이 연출은 **새 각 범위를 만들지 않는다**: 스윙 창 밖이라 판정과 무관하고,
+#   `_combo_entry_from_previous` 보간이 남은 거리를 이어받아 이음매도 안 생긴다.
+# 🔴 **젖힘은 콤보로 이어지는 「모든 타」 사이에 걸린다** (2026-08-01 2차 — 사용자 재신고
+#   *"2타하기 전에 검이 살짝 뒤로 빠진다거나"*). 1차 구현은 **마무리 직전 타에만** 걸어서, 3타 대검의
+#   1타 → 2타 사이에는 예비 동작이 아예 없었다 — 사용자가 지목한 바로 그 자리다.
+# 🔴 **양은 뒤 타로 갈수록 커진다**(MIN → RATIO) = "점점 크게 감아친다". 두 배로 벌어진다:
+#   낡은 대검 1→2타 **27.2°**(비율 0.50) · 2→마무리 **67.5°**(비율 0.65) — 마무리 각이 더 넓어
+#   젖힐 거리 자체가 이미 1.9배(0.95 → 1.813 rad)라, 비율 점증이 그 위에 곱해진다.
+const COMBO_WINDBACK_RATIO := 0.65      # 마무리 직전 타 — 다음 타 시작 자세까지 미리 가 있는 비율
+const COMBO_WINDBACK_RATIO_MIN := 0.35  # 첫 타 — 0에 가까우면 그 타만 예비 동작이 없어 리듬이 끊긴다
+# 🔴🔴 **젖힘에 쓸 시간은 상수가 아니라 「그 타의 실제 빈 구간」에서 유도한다** (2026-08-01 2차).
+#   빈 구간 = `combo_gap_s(다음 타) − 스윕 완료 시각`이고 **타마다·haste마다 4배 넘게 벌어진다**:
+#     낡은 대검 1→2타 268ms / 2→마무리 **488ms** · 철 대검 0→1타 196ms / 1→마무리 416ms
+#     최대 haste 최악 = 도끼 마무리→1타 **123ms** · 철 대검 0→1타 131ms
+#   고정 상수(옛 0.18s)를 쓰면 짧은 구간의 타에서 **젖힘이 68%만 진행된 채 다음 타가 나가** 칠 때마다
+#   자세가 달라진다 — "리듬이 아니라 들쭉날쭉"이 된다. 빈 구간에 비례시키면 **모든 타·모든 haste에서
+#   끝까지 젖히고 잠깐 머문 뒤** 나가므로 박자가 일정해진다.
+# ⚠ 뜸(`combo_delay`)이 마무리 **직전**에 붙어 있어서(대검 0.22 · 도끼 0.25) 빈 구간이 마무리 타에서
+#   자동으로 가장 길다 — 가장 크게 젖혀야 할 타에 시간이 가장 많다. 데이터가 이미 그 모양이다.
+const COMBO_WINDBACK_FILL := 0.7    # 빈 구간의 이 비율에 걸쳐 젖힌다 — 나머지 30%는 젖힌 채 머무는 「멈춤」
+const COMBO_WINDBACK_MIN_S := 0.05  # 너무 짧으면 순간이동으로 읽힌다
+const COMBO_WINDBACK_MAX_S := 0.22  # 너무 길면 굼떠 보인다(빈 구간이 488ms까지 벌어지므로 상한이 필요)
+# --- 타별 감각 점증 (2026-08-01 2차) — 🔴 **전부 표시 전용. 판정·화력·쿨다운 무관.** ---
+# 사용자 요구는 *"리듬감이 티가 나는 것"* 이지 젖힘 그 자체가 아니다. 그래서 **하나의 진행값
+#   (`_combo_ramp`, 0 = 첫 타 → 1 = 마무리)** 이 눈(리본·잔상)·손(반동)·무게(박힘)를 **함께** 민다.
+# 🔴 값 하나가 전부를 몰아야 한다 — 축마다 따로 두면 다음 튜닝에서 "리본만 커지고 반동은 그대로"가 된다.
+# ⚠ `_combo_ramp = 0`이면 전부 **도입 전과 완전 항등**이고, `= 1`이면 1차 구현의 마무리 값과 같다
+#   (즉 이 확장은 마무리 타를 안 건드리고 **중간 타에만** 새 값을 준다).
+const COMBO_SWING_KICK := 0.6       # 첫 타의 스윙 반동 (마무리 = COMBO_FINISH_KICK 2.6까지 점증)
+# 🔴 **콤보 타수 → 스윙음 피치** (2026-08-01, 사용자 요구 *"리듬감이 티가 났으면"*).
+#   젖힘·반동이 리듬을 **눈**에 준다면 이쪽은 **귀**에 준다 — 실기에서 가장 싸게 체감이 오르는 레버다.
+#   평타는 타수마다 반음쯤 오르고 **마무리만 뚝 떨어진다** → "타-타-쾅". 올리기만 하면 마무리가
+#   가볍게 들려 「묵직한 마지막 타」와 정반대가 된다.
+# ⚠ **표시 전용이다** — `EventBus.player_swing`은 로컬·원격 공용이라 두 화면이 같은 리듬을 듣는다
+#   (원격도 `play_attack_fx` → `_begin_swing(combo)`로 `_combo_index`가 서 있다).
+# ⚠ 발사·차지 경로는 이 훅을 **재사용**하므로 그쪽엔 1.0(항등)을 싣는다 — `event_bus.gd`가 근거.
+const COMBO_PITCH_STEP := 0.07     # 평타 한 타당 상승분 (≈ 반음 1.0595에 가깝게)
+const COMBO_PITCH_FINISH := 0.86   # 마무리 타 — 낮을수록 묵직하다
+const COMBO_FINISH_BITE_MULT := 1.6 # 마무리 타의 적중 박힘 배율 — ⚠ SWING_BITE_MAX_S·후딜 창 clamp는 그대로다
 # `job`이 없는 비정상 상태에서 `_swing_attack`이 돌려주는 쿨다운(s). 🔴 **0을 돌려주면 안 된다** —
 #   쿨다운이 사라져 클라가 매 물리 프레임 reliable 채널로 `G_ATK`를 쏜다(netreview m-4). 값 자체는
 #   중요하지 않고 "0이 아닐 것"만 중요하다(그 상태에선 스윙을 시작하지 않는다).
@@ -173,13 +288,38 @@ const COMBO_FINISH_KICK := 2.6  # 마무리 타의 카메라 반동 (연출)
 const NO_JOB_SWING_CD_S := 0.4
 const HIT_KICK := 1.7           # 근접 적중 시 때린 방향 반동 — 셰이크(무작위)와 달리 "밀어냈다"가 읽힌다
 const SHOOT_KICK := 1.5         # 발사 시 **반대** 방향 반동 (총·활의 반동)
+# 🔴🔴 **공격 선입력 버퍼** (2026-08-01) — 쿨다운·구르기 때문에 지금 못 내는 클릭을 이 시간만큼 들고
+#   있다가 조건이 열리는 **첫 프레임에** 발동한다.
+#   왜 필요했나: 전에는 `_local_combat`이 `_attack_queued`를 **무조건** 비워서, 사람이 스윙을 보며
+#   리듬을 타는 바로 그 타이밍(= 쿨다운 중)에 누른 클릭이 통째로 버려졌다. 그래서 콤보 창
+#   (`EquipDef.combo_grace` 0.4s) 안에 **정확히** 재클릭해야만 콤보가 이어지고, 못 이으면
+#   `_combo_pose_active`가 꺼져 무기가 중립으로 복귀했다 — 사용자 신고 *"공격마다 무기가 제자리로
+#   돌아가는 게 이상하다"* 의 정체다. 콤보 이어가기(`_combo_entry_from_previous`)는 이미 구현돼
+#   있었고 **도달을 못 하고 있었다.**
+# 🔴 **DPS 상한은 안 움직인다 — 이것이 이 값의 전제이자 GDD §6 🔒 예산 무변경의 근거다.**
+#   발동 조건(`_attack_cd_left <= 0.0`)도 쿨다운(`CombatMath.combo_gap_s`)도 그대로다. 버퍼가 바꾸는
+#   것은 "이미 낼 수 있었던 타를 놓치지 않는 것"뿐이라, `auto_fire` 특성이 예산 밖으로 인정받은 것과
+#   **같은 논거**다(여는 것은 입력 유지 방식이지 상한이 아니다 — `CombatMath.TRAIT_MAX` 주석).
+# 🔴🔴 **그러나 간격이 `combo_gap_s`에 딱 붙는 것 자체가 결함이었다** (netreview C-1~C-3, 2026-08-01).
+#   사람의 반응 지연이 메워 주던 여유가 사라지고 구조적 마진(`cd × (1 − FIRE_RATE_SLACK)`)만 남는데,
+#   **웹 30fps 호스트의 수신 프레임 양자화**가 그중 33.3ms를 먹어 전사 haste 0의 실예산이 6.7ms다.
+#   실측 탈락(수정 전): 궁수 10.0ms · 전사 26.7ms · 창은 위험 전이가 둘이라 발생률 두 배.
+#   → 처방 = `CombatMath.buffered_attack_grace_s()`(그 함수 주석이 정본). **버퍼가 살려 낸 클릭에만**
+#     여유를 물고 즉시 클릭은 **완전 항등**이다 — 구현은 `_attack_buf_grace`(멤버 주석).
+# 🔴 **이 값은 쿨다운으로 묶인다**(`_unhandled_input`). 상수만으로는 직업마다 뜻이 갈린다 —
+#   전사(cd 0.4)는 쿨다운의 마지막 62%지만 법사(0.5)는 50%, **궁수(0.15)는 167%** 라 쿨다운 전
+#   구간이 버퍼 안 = 사실상 클릭 오토파이어가 된다. 묶어 두면 "쿨다운의 마지막 일부"가 전 직업에서 참이다.
+# ⚠ 그래서 **너무 일찍 누른 클릭은 여전히 버려진다** — 그게 의도다(무한 선입력이 아니라 리듬 보정).
+const ATTACK_BUFFER_S := 0.25
 
 @export var job: JobDef
 
 var peer_id: int = 0
 var is_local: bool = false
 var scene_id: String = ""  # 소속 씬 (net_schema SCENE_*) — G_POS에 실어 다른 씬 피어의 유령 스폰 방지
-var seated: bool = false  # 모닥불 앉기 (campfire 씬이 켠다) — 이동·구르기·공격 입력이 들어오면 스스로 풀린다. 공지(G_SIT)는 campfire가 상태 변화를 보고 송신
+# 모닥불 앉기 — 이동·구르기·공격 입력이 들어오면 스스로 풀린다. 공지(G_SIT)는 campfire가 상태 변화를
+# 보고 송신. 🔴 **쓰기는 반드시 `set_seated()`를 지난다**(그 함수 주석이 근거 — 선입력 버퍼 회귀).
+var seated: bool = false
 var equip_atk_bonus: int = 0  # 착용 장비 공격 보너스 (G_STATS 공지/수신) — 호스트가 calc_damage에 더한다
 var equip_hp_bonus: int = 0   # 착용 장비 체력 보너스 — max_hp = job.max_hp + 이 값 (set_max_hp로 이월 HP 보존)
 # 직업 레벨 5스탯 {crit, crit_dmg, haste, move, leech} (G_STATS "lv" 공지/수신, 성장축 GDD v1.8).
@@ -239,13 +379,32 @@ var _roll_cd_left: float = 0.0
 var _roll_dir: Vector2 = Vector2.RIGHT
 var roll_suppressed: bool = false   # 외부(테스트 랩)가 켜면 구르기 입력 무시 — 돌진 중 F=카운터가 구르기와 안 겹치게. 기본 false=프로덕션 무영향
 var _fx_left: float = 0.0           # 스윕 완료 뒤 궤적 페이드 잔여(s)
+# 🔴 이번 자국의 **총** 페이드 시간(s) — 마무리 타만 `COMBO_FINISH_FX_TIME_MULT`배다.
+#   페이드 알파가 `_fx_left / _fx_total`이라 **분모가 같이 커져야** 한다(그 상수 주석이 근거).
+var _fx_total: float = ATTACK_FX_TIME
 var _swing_fx_armed: bool = false   # 이번 스윙의 궤적이 아직 그려지는 중인가(스윕 완료 시 꺼진다)
 # 리본에 마지막으로 찍은 진행값 — 프레임 사이를 보간해 각지지 않게 한다. 음수 = 이번 스윙 첫 점 이전.
 var _trail_last_u: float = -1.0
+# 🔴 리본의 두 변 — **칼밑(안쪽)·칼끝(바깥)의 월드 좌표를 같은 인덱스로** 쌓는다(칼날 폭 리본).
+#   둘을 한 배열의 짝수/홀수로 섞지 않는 이유: 다각형 고리를 만들 때 바깥 변만 **역순**으로 붙여야
+#   하는데, 섞어 두면 그 역순 조립이 인덱스 산술로 숨어 다음 사람이 반드시 어긋나게 적는다.
+var _trail_base: PackedVector2Array = PackedVector2Array()
+var _trail_tip: PackedVector2Array = PackedVector2Array()
 # 다음 칼 잔상을 남길 스윕 진행값 — `_arm_swing_trail`이 0으로 되돌린다.
 var _ghost_next_u: float = 0.0
 # 검기 파형 진행 상태 (표시 전용) — 방향·출발/도착 거리를 스윙 시점에 굳혀 두고 선형 보간한다.
-var _attack_queued: bool = false
+# 🔴 **공격 선입력 버퍼 잔여(s). > 0 = 아직 살아 있는 클릭** (2026-08-01 — 옛 `_attack_queued: bool`).
+#   근거는 `ATTACK_BUFFER_S` 상수 주석이 정본. ⚠ **소진(`= 0.0`)은 실제로 발동한 자리에서만 한다** —
+#   `_local_combat` 첫 줄에서 비우면 옛 동작(쿨다운 중 클릭 유실)으로 그대로 되돌아간다.
+var _attack_buf_left: float = 0.0
+# 🔴 **버퍼가 살려 낸 클릭이 추가로 기다리는 시간(s)** (netreview C-1~C-3, 2026-08-01).
+#   > 0 = 버퍼는 살아 있지만 아직 못 낸다. 🔴 **쿨다운이 끝난 뒤에만 흐른다** — 쿨다운과 겹쳐 흘리면
+#   여유가 통째로 사라져 처방이 조용히 무효가 된다(그게 이 값이 별도 타이머인 이유다).
+# 🔴 **무는 조건 = "쿨다운이 막 끝난 프레임에 버퍼가 아직 살아 있다"** — 그 클릭은 버퍼 없이는
+#   버려졌을 것이고, 그때만 발사 간격이 `combo_gap_s`에 정확히 붙는다. 쿨다운이 이미 끝난 뒤에 누른
+#   **즉시 클릭에는 안 붙는다 = 완전 항등**(사람의 반응 지연이 이미 간격을 벌려 놓았다).
+# ⚠ 구르기로 미뤄진 클릭에도 안 붙는다 — 그 경우 간격이 이미 `쿨다운 + 구르기 잔여`라 더 크다.
+var _attack_buf_grace: float = 0.0
 var _shot_seq: int = 0          # 로컬 발사 카운터 — 투사체 고유 id "my_id:seq" 생성 (shoot/charge 무기)
 var _recoil_left: float = 0.0   # 발사 반동 잔여(s) — _update_weapon이 활을 뒤로 당김 (로컬·원격 공용 연출)
 # 차지(charge 무기) — 로컬은 입력에서, 원격은 G_POS "c"에서. 레벨 자체는 표시용이고 실제 발사 레벨은 호스트가 재검증(§3).
@@ -268,6 +427,11 @@ var _remote_moving: bool = false
 var _afterimage_left: float = 0.0   # 다음 잔상까지 남은 시간(s) — 대쉬 중에만 돈다
 var _was_dashing: bool = false      # 직전 프레임 대쉬 여부 — 종료 순간(되튐 킥)을 잡는 엣지 감지
 var _stance_sway: float = 0.0       # 현재 적용 중인 무기 스탠스 각(rad) — 목표로 부드럽게 따라간다
+# 지금 몸통 스프라이트에 걸려 있어야 할 `speed_scale`. 공격 애니만 1.0이 아니다.
+# 🔴 **소유자가 매 물리 프레임 재주장해야 한다** — `HitStop.punch()`가 `speed_scale`을 **무조건 1.0으로
+#   리셋**하기 때문이다(rules §2 · 그 함수 주석이 근거). 재주장이 없으면 스윙 중 한 대 맞는 순간
+#   늘려둔 배율이 날아가 **몸 애니만 스윙 창과 어긋난다**(에러 없음, 화면만). 보스가 밟은 그 자리다.
+var _anim_scale: float = 1.0
 # 이 스윙이 시작될 때의 스탠스 각 — 🔴 **선딜 동안 0까지 끌어내리는 기준점**이다(`_tick_stance`).
 #   lerp로 흘려보내면 프레임률에 따라 잔량이 달라져 "칼만 몇 도 기울어진 채 궤적이 시작"된다.
 var _stance_enter_sway: float = 0.0
@@ -350,6 +514,19 @@ var _combo_pose_active: bool = false
 var _combo_entry_off: float = 0.0
 var _combo_entry_lunge: float = 0.0
 var _combo_entry_from_previous: bool = false
+# 🔴 **마무리 직전 타의 젖힘 진행(0~1)** — 위 `COMBO_WINDBACK_*` 주석이 정본.
+#   ⚠ **스윕이 끝난 뒤에만 흐른다**(`_tick_combo_windback`의 `_swing_fx_armed` 가드) — 스윕 중에
+#     흐르면 대기 자세가 아니라 **스윙 중인 칼**을 밀어 궤적이 판정 각과 갈라진다.
+#   ⚠ 리셋은 `_begin_swing`·`_cancel_swing` 둘뿐이다. 조건이 잠깐 거짓이 될 때 0으로 되돌리면
+#     (예: 콤보 창이 닫히는 프레임) 자세가 **한 프레임 튄다**.
+var _windback_t: float = 0.0
+# 🔴 이번 타의 젖힘 **소요 시간**(s) — `_begin_swing`이 그 타의 실제 빈 구간에서 유도한다
+#   (상수 주석이 정본). 상수로 두면 짧은 구간의 타에서 젖힘이 덜 진행된 채 다음 타가 나간다.
+var _windback_time: float = COMBO_WINDBACK_MAX_S
+# 🔴 **타별 감각 점증의 단일 진행값** (0 = 첫 타 · 1 = 마무리). 리본 알파·잔상 장수·자국 지속·
+#   스윙 반동·적중 박힘이 **전부 이것 하나**를 지난다 — 축마다 따로 두면 다음 튜닝에서 갈라진다.
+# ⚠ 콤보 없는 무기(n = 1)는 항상 0 = 도입 전과 완전 항등이다.
+var _combo_ramp: float = 0.0
 # 🔴🔴 **이 스윙이 태어날 때 굳힌 시간 축** (netreview M-1, 2026-07-28).
 #   `t`를 **살아 있는** `_swing_time`/`_swing_windup`에서 구하면 스윙 도중 그 값이 바뀔 때
 #   **판정 시점이 움직인다.** 그리고 판 도중 장비 변경 경로는 **열려 있다** — 내가 "F1뿐"이라고
@@ -372,7 +549,7 @@ var _swamp_factors: Array[float] = []  # 현재 겹친 늪들의 이동 배율 (
 var _prev_hp: int = 0  # 피격 손맛(combat_impact 감소량) 계산용 — hp_changed 표시 경로 추적
 
 @onready var _sprite: AnimatedSprite2D = $Sprite
-@onready var _swing_trail: Line2D = $SwingTrail  # 칼끝 리본 궤적 — 표시 전용(판정 무관)
+@onready var _swing_trail: Polygon2D = $SwingTrail  # 칼날 폭 리본 궤적 — 표시 전용(판정 무관)
 @onready var _health: HealthComponent = $Health
 @onready var _weapon_pivot: Node2D = $WeaponPivot
 @onready var _weapon: Sprite2D = $WeaponPivot/Weapon
@@ -421,7 +598,17 @@ func set_job(j: JobDef) -> void:
 	job = j
 	if j.frames != null:
 		_sprite.sprite_frames = j.frames
-		_sprite.play("idle")
+		# 🔴 **`play("idle")` 직접 호출 금지 — 방향 시트엔 무접미사 `idle`이 없다**(2026-08-01).
+		#   새 전사 시트는 `idle_e`/`_s`/`_n`뿐이라 그대로 두면 **한 프레임짜리 에러 로그**가 났다.
+		#   다음 프레임에 `_update_anim`이 회복시켜 **화면은 멀쩡하므로 더 안 보인다.**
+		#   `_play_dir_anim`을 지나면 조회 규칙이 한 곳으로 모이고 무접미사 폴백도 그 안에 있다.
+		# ⚠ `_aim_angle`은 이 시점에 유효하다 — 기본값 0.0이 곧 동쪽이고(`_facing_index(0)` = 0),
+		#   `setup()`이 `set_job`을 부른 다음 프레임부터 `_update_aim`이 실값을 넣는다.
+		_play_dir_anim(&"idle")
+		# 시트가 바뀌면 이전 시트에 걸려 있던 배율도 초기화한다 — 안 하면 새 시트 idle이
+		# 옛 공격 배율로 돈다(`speed_scale`은 클립이 아니라 **노드** 속성이다).
+		_anim_scale = 1.0
+		_apply_anim_scale()
 	# 무기 겉모습은 착용 무기(EquipDef)에서만 그린다(무기 = 장비). 직업 재공지/재합류로 set_job이
 	# 다시 불려도 override(마지막 착용) 재적용해 겉모습 유지. 미착용이면 무장 해제(무기 미표시).
 	set_weapon_visual(_weapon_override)
@@ -466,6 +653,24 @@ func set_traits(t: Dictionary) -> void:
 # 이 아바타의 특성값 — 모르는 키/미설정은 0(항등).
 func trait_value(key: String) -> float:
 	return float(traits.get(key, 0.0))
+
+
+# 🔴🔴 **모닥불 앉기의 유일한 진입점** (reviewer C-1, 2026-08-01). `seated`에 직접 대입하지 마라.
+#   선입력 버퍼가 만든 회귀를 닫는다: 쿨다운 중에 누른 클릭이 **0.25s 동안 살아 있으므로**,
+#   그 창 안에 F로 앉으면 ⑴ 다음 프레임 `_local_move`가 그 묵은 버퍼를 "입력이 왔다"로 읽어 즉시
+#   기상시키고 ⑵ 같은 프레임 `_local_combat`이 버퍼를 소진하며 **스윙까지 나가고** ⑶ `campfire`가
+#   `G_SIT` on→off 두 통을 쏜다. 화면에는 ***"F가 안 먹힌다"*** 로만 보인다.
+#   ⚠ 옛 코드에선 `_attack_queued`가 매 프레임 비워져 이 창이 **1프레임**(사실상 도달 불가)이었다 —
+#     버퍼가 그 창을 250배로 넓혔고, **전투 직후 모닥불은 챕터1 정규 동선**이다.
+# 🔴 지우는 것은 **앉기 이전의 묵은 클릭뿐**이다. 앉은 **뒤에** 새로 누른 클릭은 `_unhandled_input`이
+#   버퍼를 다시 채우므로 여전히 기상시킨다 = GDD §5 *"입력이 오면 스스로 일어난다"* 유지.
+# 🔴 **`_local_move`의 조건을 `Input.is_action_just_pressed("attack")`으로 되돌려 고치지 마라** —
+#   공격 입력이 `_unhandled_input`인 이유(UI가 소비한 클릭은 안 온다 = `mouse_filter` 규약)를 깬다.
+func set_seated(on: bool) -> void:
+	seated = on
+	if on:
+		_attack_buf_left = 0.0
+		_attack_buf_grace = 0.0
 
 
 # 「광란」(kill_move) — 적이 쓰러지면 잠깐 빨라진다. **로컬 아바타만** 굴린다(원격은 좌표를 수신으로 받는다).
@@ -572,8 +777,12 @@ func set_weapon_visual(equip: EquipDef) -> void:
 
 
 # 무기 손맛(궤적 색·SFX·타격 셰이크·스윙 모션) 반영 — 착용 무기가 지정하면 그 값, 아니면 대검 기본.
-# ⚠ 궤적의 **형태**는 여기서 안 정한다 — 리본(`SwingTrail`)이 칼끝 좌표를 그대로 잇고, 잔상은 칼
-#   스프라이트를 그대로 복제한다. 즉 형태를 정하는 데이터가 **존재하지 않는다**(2026-07-29).
+# ⚠ 궤적의 **각·반지름·회전중심**은 여기서 안 정한다 — 리본은 칼끝·칼밑 좌표를 그대로 잇고 잔상은 칼
+#   스프라이트를 그대로 복제하므로, 그 축을 정하는 데이터가 **존재하지 않는다**(2026-07-29).
+# 🔴 **그러나 폭은 데이터다 — `EquipDef.blade_length`**(칼날 폭 리본 2026-08-01). 여기서 멤버로 캐시하지
+#   않고 `_blade_base_global`이 `CombatMath.blade_length()`로 **매번 리졸브**한다(단일 소스 유지).
+#   ⚠ *"형태를 정하는 데이터가 존재하지 않는다"* 는 옛 서술은 **거짓이 됐다** — 리본이 칼끝 한 점일
+#     때의 이야기이고, 면이 되면서 「어디까지가 날인가」가 데이터가 됐다.
 # set_weapon_visual이 로컬·원격 모두 부르므로 무기 교체 시 손맛도 자동으로 갈린다 (표시 전용, 판정 무관).
 func _apply_weapon_feel(equip: EquipDef) -> void:
 	_swing_color = equip.swing_color if equip != null else Color(1, 1, 1, 1)
@@ -682,11 +891,90 @@ func _motion_at(t: float, u: float) -> Vector2:
 		return Vector2(_swing_angle_at(u), peak * sin(u * PI))
 	# 콤보 무기는 후딜에 끝 포즈를 유지한다. 입력이 끊겨 콤보 창이 닫힐 때만
 	# `_tick_swing_motion`에서 기본 자세로 복귀한다.
+	# 🔴 대기 자세는 `_combo_hold_pose()` **한 곳**에서 나온다 — 후딜(여기)과 창이 닫힌 뒤
+	#   (`_tick_swing_motion`의 else 갈래)가 같은 값을 써야 그 경계에서 자세가 안 튄다.
 	if _combo_pose_active:
-		return Vector2(_swing_to, peak if thrust else 0.0)
+		return _combo_hold_pose()
 	# 단발은 기존 복귀를 유지한다.
 	var r := (t - w - s) / maxf(1.0 - w - s, 0.0001)
 	return Vector2(_swing_to * (1.0 - r), (peak * (1.0 - r * r)) if thrust else 0.0)
+
+
+# 이 콤보에서 **다음에 나올** 타수. `_swing_attack`의 `idx` 산식과 같은 자리를 봐야 하므로
+# 여기 하나로 모은다(콤보 창이 살아 있을 때만 뜻이 있다 — 끊기면 다음은 0이다).
+func _next_combo_index() -> int:
+	return (_combo_index + 1) % maxi(_combo_len(), 1)
+
+
+# 🔴 **그 타의 시작 각 오프셋(rad) — `_begin_swing`과 젖힘 목표가 같은 이 함수를 지난다.**
+#   사본을 두면 젖힘이 "다음 타가 실제로 출발하는 각"과 갈라져, 마무리 선딜이 **되돌아가는**
+#   구간을 갖는다(칼이 젖혔다가 앞으로 갔다가 다시 젖히는 것처럼 보인다).
+# ⚠ 어깨걸치기 `cap`도 여기 안에 있다 — 밖으로 빼면 젖힘 목표만 상한을 안 받아 span이 2π를 넘는다.
+func _swing_entry_angle(index: int) -> float:
+	var arc := CombatMath.melee_show_half_angle(_weapon_override, _is_combo_finish(index))
+	var from := arc if CombatMath.is_combo_swing_reversed(index) else -arc
+	if _weapon_motion() == "thrust":
+		return from  # 찌르기는 좌우로 훑지 않아 젖힘 상한이 필요 없다(`_begin_swing`과 같은 갈래)
+	# span = arc × (1 + 배율) < 2π — 근거는 `SWING_WINDUP_ARC_MULT` 상수 주석이 정본.
+	var cap := (TAU - 0.02) / maxf(arc, 0.0001) - 1.0
+	return from * clampf(maxf(1.0, _windup_arc_mult), 1.0, maxf(1.0, cap))
+
+
+# 이번 스윙의 스윙음 피치 — 콤보 리듬을 귀로 들리게 한다(`COMBO_PITCH_*` 상수 주석이 정본).
+# 🔴 **`_swing_is_finish`를 본다 — `is_combo_finish`를 여기서 다시 부르지 마라.** 그 값은
+#   `_begin_swing`이 굳힌 것이라 각·표시·판정이 **같은 판단**을 쓰고 있고, 소리만 따로 물으면
+#   스윙 도중 무기 교체에서 "각은 마무리인데 소리는 평타"로 갈라진다(M-1 방어의 미러).
+# ⚠ 로컬·원격 공용이다 — 원격도 `play_attack_fx` → `_begin_swing(combo)`로 두 값이 서 있다.
+func _swing_pitch() -> float:
+	if _swing_is_finish:
+		return COMBO_PITCH_FINISH
+	return 1.0 + COMBO_PITCH_STEP * float(_combo_index)
+
+
+# 이 타 뒤의 젖힘 비율 — 뒤 타로 갈수록 크다(상수 주석이 정본). 인덱스는 **다음 타**다.
+func _windback_ratio() -> float:
+	var n := _combo_len()
+	if n <= 1:
+		return 0.0
+	var t := float(_next_combo_index()) / float(n - 1)
+	return lerpf(COMBO_WINDBACK_RATIO_MIN, COMBO_WINDBACK_RATIO, clampf(t, 0.0, 1.0))
+
+
+# 🔴 **콤보 대기 자세 (각 오프셋, 내지르기) — 표시 전용, 스윙 창 밖이다.**
+#   기본은 이번 타의 끝각이고, 콤보가 이어지는 동안 **다음 타의 선딜 시작 자세** 쪽으로
+#   `_windback_ratio()`만큼 미리 젖힌다(그 상수 주석이 정본).
+# 🔴 목표가 `_swing_entry_angle(다음)`·`-_swing_pull`이라 **다음 타가 어차피 지나는 자세**다 —
+#   새 각 범위를 만들지 않으므로 §3 「표시 ⊇ 판정」에 손대지 않는다(판정은 스윕 창 안에서만 난다).
+# 🔴🔴 **다음 타가 반대쪽에서 출발하면 젖히지 않는다 — 그건 젖힘이 아니라 앞을 가로지르는 이동이다.**
+#   방향이 패리티(`index % 2`)라 끝각과 다음 시작각은 보통 같은 쪽인데, **홀수 타수의 마지막 → 첫 타**
+#   에서만 패리티가 같아져 부호가 뒤집힌다(대검 3타: 끝 +2.55 → 다음 시작 −2.85). 거길 천천히
+#   보간하면 칼이 조준선을 가로질러 **108°를 느리게 흘러가** 젖힘이 아니라 "칼이 떠다니는" 것으로
+#   읽힌다. 그 전이만 지금처럼 선딜의 빠른 보간(`_combo_entry_from_previous`)에 맡긴다.
+func _combo_hold_pose() -> Vector2:
+	var lunge := (_swing_lunge * _swing_lunge_mult) if _weapon_motion() == "thrust" else 0.0
+	if _windback_t <= 0.0:
+		return Vector2(_swing_to, lunge)
+	var entry := _swing_entry_angle(_next_combo_index())
+	if entry * _swing_to < 0.0:
+		entry = _swing_to  # 반대쪽 출발 = 각 젖힘 없음(내지르기 회수만 남는다)
+	var ratio := _windback_ratio()
+	# smoothstep — 젖힘이 등속이면 기계적으로 보인다(들었다 멈추는 예비 동작이라 감속이 맞다).
+	var a := _windback_t * _windback_t * (3.0 - 2.0 * _windback_t)
+	var back_off := lerpf(_swing_to, entry, ratio)
+	var back_lunge := lerpf(lunge, -_swing_pull, ratio)
+	return Vector2(lerpf(_swing_to, back_off, a), lerpf(lunge, back_lunge, a))
+
+
+# 젖힘 진행 — 🔴 **스윕이 끝난 뒤부터만 흐른다.** `_swing_fx_armed`가 스윙 시작~스윕 완료 구간에
+#   정확히 true라 그것 하나로 가려낸다(별도 타이머를 두면 두 시계가 갈라진다).
+#   ⚠ 그래서 젖힘은 **후딜부터** 쓴다 — 판정은 스윕 완료에 이미 났고 후딜은 순수 표시라, 빈 구간이
+#     `쿨다운 − 스윙 창`이 아니라 **`쿨다운 − 스윕 완료`** 다(철 대검 마무리 앞: 60ms가 아니라 416ms).
+# ⚠ **마무리 직전 타로 한정하지 않는다** (2026-08-01 2차) — 사용자가 1타 → 2타 사이도 요구했다.
+#   양은 `_windback_ratio()`가 타별로 가른다.
+func _tick_combo_windback(delta: float) -> void:
+	if _swing_fx_armed or not _combo_pose_active or _combo_left <= 0.0:
+		return
+	_windback_t = minf(1.0, _windback_t + delta / maxf(_windback_time, 0.0001))
 
 
 # 이 무기의 타격 무게 배율 — 유도는 `CombatMath.weapon_weight` 단일 소스(위 주석 참조).
@@ -775,7 +1063,7 @@ func _update_life_state(p_hp: int) -> void:
 	if now_alive == _alive:
 		return
 	_alive = now_alive
-	seated = false  # 사망/부활 어느 쪽이든 앉기 해제 — 시체가 앉아서 회복받는 상태 방지
+	set_seated(false)  # 사망/부활 어느 쪽이든 앉기 해제 — 시체가 앉아서 회복받는 상태 방지
 	if _alive:
 		collision_layer = _saved_layer
 		collision_mask = _saved_mask
@@ -789,8 +1077,7 @@ func _update_life_state(p_hp: int) -> void:
 		_dust.emitting = false
 		_cancel_swing()       # 진행 중이던 스윙(선딜·스윕·판정 예약)을 통째로 끊는다
 		_fx_left = 0.0        # 궤적 잔상도 즉시 정리 — 시체에서 자국이 뜨지 않게
-		_swing_trail.visible = false
-		_swing_trail.clear_points()  # 리본도 같이 — 남기면 시체 옆에 자국이 굳는다
+		_trail_clear()        # 리본도 같이 — 남기면 시체 옆에 자국이 굳는다
 		_roll_time_left = 0.0
 		_remote_roll_left = 0.0
 		_was_dashing = false     # 사망으로 끊긴 대쉬가 되튐 킥을 남기지 않게(엣지 감지 리셋)
@@ -870,6 +1157,9 @@ func _dash_burst(dir: Vector2) -> void:
 
 
 func _tick_timers(delta: float) -> void:
+	# 🔴 **감산 전의 쿨다운을 기억한다** — 아래 버퍼 여유 무장이 "쿨다운이 **막** 끝난 프레임"이라는
+	#   엣지를 봐야 하는데, 감산 후 값만 보면 그 엣지와 "원래 0이었다"를 구분할 수 없다.
+	var cd_was_running := _attack_cd_left > 0.0
 	_attack_cd_left = maxf(0.0, _attack_cd_left - delta)
 	_roll_cd_left = maxf(0.0, _roll_cd_left - delta)
 	_remote_roll_left = maxf(0.0, _remote_roll_left - delta)
@@ -879,6 +1169,17 @@ func _tick_timers(delta: float) -> void:
 	_orb_pop_left = maxf(0.0, _orb_pop_left - delta)
 	_combo_left = maxf(0.0, _combo_left - delta)
 	_swing_bite_left = maxf(0.0, _swing_bite_left - delta)
+	# 선입력 버퍼도 여기서 흐른다 — 🔴 **쿨다운(`_attack_cd_left`)과 반드시 같은 자리여야** 두 시계가
+	#   같은 프레임 격자를 쓰고, "쿨다운이 열리는 첫 프레임에 발동"이 프레임률과 무관해진다.
+	_attack_buf_left = maxf(0.0, _attack_buf_left - delta)
+	# 🔴 **버퍼 여유 무장 — 쿨다운이 막 끝난 프레임에 버퍼가 아직 살아 있는 경우에만** (멤버 주석이 근거).
+	# ⚠ 여유를 문 클릭이 여유 도중에 **만료되면 안 된다** — "버퍼는 있는데 안 나간다"가 되어 이 작업
+	#   전으로 부분 회귀한다(그러면 처방이 결함을 하나 고치고 하나 만드는 셈이다). 그래서 버퍼 수명을
+	#   여유만큼 함께 늘린다. `+ delta`는 바로 아래 감산이 같은 프레임에 한 번 빼는 것을 상쇄한다.
+	if cd_was_running and _attack_cd_left <= 0.0 and _attack_buf_left > 0.0:
+		_attack_buf_grace = CombatMath.buffered_attack_grace_s()
+		_attack_buf_left = maxf(_attack_buf_left, _attack_buf_grace + delta)
+	_attack_buf_grace = maxf(0.0, _attack_buf_grace - delta)
 	# 🔴 판정 카운트다운은 **스윙 창과 반드시 같은 자리에서** 흐른다 — 근거는 멤버 주석(락스텝).
 	if _swing_hit_armed:
 		_swing_hit_left -= delta
@@ -912,6 +1213,9 @@ func _tick_timers(delta: float) -> void:
 #   「표시 ⊇ 판정」(집합 포함)과 동치인 것은 **양쪽으로 훑는 모션에서만**이고, thrust에서는 공허하게
 #   통과한다. 즉 그 단정의 초록불을 찌르기의 근거로 쓰지 마라.
 func _tick_swing_motion(delta: float) -> void:
+	# 🔴 **`_motion_at`보다 먼저 흘린다** — 후딜 갈래가 `_combo_hold_pose()`를 통해 이 진행을 읽으므로,
+	#   뒤에 두면 대기 자세가 한 프레임 늦게 따라와 젖힘 시작이 눈에 띄게 끊긴다.
+	_tick_combo_windback(delta)
 	if _attack_anim_left > 0.0:
 		# 🔴 **굳힌 시간 축에서만 파생한다** — 살아 있는 `_swing_time`을 쓰면 스윙 도중 무기 교체·
 		#   레벨업이 판정 시점을 움직인다(netreview M-1, 멤버 주석이 근거).
@@ -932,11 +1236,15 @@ func _tick_swing_motion(delta: float) -> void:
 				_swing_onset_pending = false
 				# 휘두름 소리는 **칼이 움직이기 시작할 때** 난다(클릭이 아니라). 로컬·원격 공용 —
 				# 양쪽이 같은 오프셋으로 이 지점에 도달하므로 두 화면의 소리 시점이 자동으로 맞는다.
-				EventBus.player_swing.emit(global_position, _swing_sfx)
+				EventBus.player_swing.emit(global_position, _swing_sfx, _swing_pitch())
 				# ⚠ 카메라 킥은 **로컬만** — EventBus는 전역이라 원격 아바타가 emit하면 남이 휘두를
 				#   때 내 화면이 밀린다(event_bus.gd가 명시한 함정).
-				if is_local and _swing_is_finish:
-					EventBus.camera_kick.emit(_swing_dir, COMBO_FINISH_KICK * _weapon_weight())
+				# 🔴 반동을 **모든 타**에 주되 타별로 점증시킨다 (2026-08-01 2차) — 리듬이 눈뿐 아니라
+				#   손으로도 읽히게. `_combo_pose_active`(= n > 1) 가드라 **콤보 없는 무기는 도입 전과
+				#   완전 항등**(반동 0)이고, `_combo_ramp = 1`인 마무리는 1차 값 그대로다.
+				if is_local and _combo_pose_active:
+					var kick := lerpf(COMBO_SWING_KICK, COMBO_FINISH_KICK, _combo_ramp)
+					EventBus.camera_kick.emit(_swing_dir, kick * _weapon_weight())
 			# 궤적 마무리 = 스윕 완료 순간. 판정은 아래 카운트다운이 따로 낸다.
 			if p >= 1.0:
 				_finalize_swing_sweep(delta)
@@ -948,8 +1256,11 @@ func _tick_swing_motion(delta: float) -> void:
 		# ⚠ 취소·사망은 `_cancel_swing()`이 플래그를 이미 내려서 여기로 새지 않는다.
 		_finalize_swing_sweep(delta)
 		if _combo_pose_active and _combo_left > 0.0:
-			_motion_off = _swing_to
-			_motion_lunge = (_swing_lunge * _swing_lunge_mult) if _weapon_motion() == "thrust" else 0.0
+			# 🔴 후딜 갈래(`_motion_at`)와 **같은 함수**를 지난다 — 스윙 창이 닫히는 프레임에 자세가
+			#   튀지 않는 것이 이 한 줄에 걸려 있다.
+			var hold := _combo_hold_pose()
+			_motion_off = hold.x
+			_motion_lunge = hold.y
 		else:
 			# 콤보 입력이 끊긴 경우에만 자연스럽게 기본 자세로 복귀한다.
 			_motion_off = move_toward(_motion_off, 0.0, COMBO_POSE_RETURN_SPEED * delta)
@@ -969,10 +1280,11 @@ func _tick_swing_motion(delta: float) -> void:
 	if _fx_left > 0.0:
 		_fx_left -= delta
 		# 자국은 칼이 회수돼도 그 자리에 남았다가 흩어진다("벤 자국").
-		_swing_trail.modulate = _fx_color(clampf(_fx_left / ATTACK_FX_TIME, 0.0, 1.0))
+		# 🔴 분모는 `_fx_total`이다 — 마무리 타는 자국이 더 오래 남으므로(`COMBO_FINISH_FX_TIME_MULT`)
+		#   상수로 나누면 앞구간이 1.0에 clamp돼 **안 흐려지다가 뚝 끊긴다**.
+		_swing_trail.modulate = _fx_color(clampf(_fx_left / maxf(_fx_total, 0.0001), 0.0, 1.0))
 		if _fx_left <= 0.0:
-			_swing_trail.visible = false
-			_swing_trail.clear_points()
+			_trail_clear()
 
 
 # 스윕 마무리 — 궤적을 완성된 부채꼴로 굳히고 판정을 확정한다. **멱등이다**(플래그를 내린다).
@@ -986,19 +1298,103 @@ func _finalize_swing_sweep(delta: float) -> void:
 		# 완성된 부채꼴을 잔상 페이드로 넘긴다. `+ delta`는 위 페이드 블록이 **같은 프레임에** 한 번
 		# 빼는 것을 상쇄한다 — 그래야 **판정이 나는 그 프레임의 궤적 알파가 정확히 1.0**이다
 		# (스로틀로 미뤄진 경우에만 그보다 낮은 알파에서 판정이 난다 — 최대 44ms 뒤 = 약 0.76).
-		_fx_left = ATTACK_FX_TIME + delta
+		# ⚠ 마무리 타만 자국이 더 오래 남는다 — 분모(`_fx_total`)를 **같이** 세워야 페이드 곡선이 산다.
+		_fx_total = ATTACK_FX_TIME * lerpf(1.0, COMBO_FINISH_FX_TIME_MULT, _combo_ramp)
+		_fx_left = _fx_total + delta
 
 
 # 애니 상태: roll > attack > run > idle. 로컬은 자기 상태, 원격은 수신 신호(G_POS 변위·G_ROLL/G_ATK 창)로 판단.
 func _update_anim() -> void:
 	var next: StringName = &"idle"
+	# 🔴 몸통 공격 클립은 **콤보 타수가 고른다**(`_attack_anim_base`). 시트에 없으면 빈 이름이 돌아와
+	#   run/idle로 떨어진다 = **도입 전과 완전 항등**(궁수·법사 시트가 그 상태다).
+	var atk := _attack_anim_base() if _attack_anim_left > 0.0 else StringName()
 	if _roll_time_left > 0.0 or _remote_roll_left > 0.0:
 		next = &"roll"
-	elif _attack_anim_left > 0.0 and _has_attack_anim():
-		next = &"attack"
+	elif not atk.is_empty():
+		next = atk
 	elif (is_local and velocity.length_squared() > 1.0) or (not is_local and _remote_moving):
 		next = &"run"
 	_play_dir_anim(next)
+	# 🔴 **배율은 `_play_dir_anim`이 실제로 고른 클립에서 유도한다**(`_sprite.animation`) — 방향 접미사
+	#   선택 규칙(서=동 flip · 북 폴백)을 여기서 사본으로 다시 쓰면 두 규칙이 갈라진다.
+	# 🔴 목표 길이는 **굳힌 창**(`_swing_win_total`)이다 — 살아 있는 `_swing_time`을 쓰면 스윙 도중
+	#   무기 교체가 몸 애니 속도만 바꿔 창과 어긋난다(`_tick_swing_motion`과 같은 M-1 방어).
+	_anim_scale = 1.0
+	if next == atk and not atk.is_empty():
+		_anim_scale = _anim_speed_scale_for(_sprite.animation, _swing_win_total)
+	_apply_anim_scale()
+
+
+# 🔴🔴 **콤보 타수 → 몸통 공격 클립** (전사 3종 애니 2026-08-01).
+#   · 마무리 타 = `attack3` — 판단은 `_swing_is_finish`, 즉 `_begin_swing`이 **`CombatMath.is_combo_finish`
+#     하나에서** 래치한 값이다. 사본을 만들면 "판정은 마무리인데 몸은 평타"가 되고, 그건 §3이 구조로
+#     막아 온 표시/판정 갈라짐의 **몸통 판**이다. 래치를 쓰는 것이 재계산보다 강하다 — 스윙 도중
+#     무기 교체가 판정 각과 몸 애니를 갈라놓지 못한다(netreview M-1 미러).
+#   · 그 외 = **패리티**(`is_combo_swing_reversed`) — true면 `attack2`(되돌려 베기), false면 `attack1`.
+#     🔴 **절대 위치(`index == 1`)로 쓰지 마라** — 창(4타)에서 index 0과 2가 같은 방향이 되어 두 타가
+#     같은 클립을 쓰게 된다. 그 함수가 존재하는 이유가 여기에도 그대로 걸린다.
+#   이 규약이면 **2타(도끼)·3타(대검)·4타(창)가 전부 `attack1~3` 세 클립으로 덮인다** — 타수만큼
+#   클립을 그릴 필요가 없다.
+# 🔴 **로컬·원격 공용이다** — 원격은 `play_attack_fx(dir, combo)` → `_begin_swing(combo)`로 `_combo_index`·
+#   `_swing_is_finish`가 이미 서 있으므로 두 화면이 같은 클립을 재생한다(네트워크 필드 0개).
+# 🔴 **폴백 사슬 = 도입 전 항등.** 새 이름이 없는 시트(궁수·법사·옛 `warrior_frames.tres`)에서는
+#   ⑴ 있는 콤보 클립 → ⑵ 옛 단일 `attack` → ⑶ 빈 이름(몸통 애니 없이 무기만 도는 현행 동작)으로 떨어진다.
+func _attack_anim_base() -> StringName:
+	var want := &"attack1"
+	if _swing_is_finish:
+		want = &"attack3"
+	elif CombatMath.is_combo_swing_reversed(_combo_index):
+		want = &"attack2"
+	if _has_anim_base(want):
+		return want
+	if _has_anim_base(&"attack1"):
+		return &"attack1"  # 3종 중 일부만 있는 시트(작화 중) — 있는 것으로 떨어진다
+	if _has_anim_base(&"attack"):
+		return &"attack"   # 옛 단일 클립 = 도입 전 동작
+	return StringName()    # 몸통 애니 없음 — 무기만 돈다
+
+
+# `_play_dir_anim`이 실제로 찾는 이름 집합에 이 base가 있는가(방향 접미사판 또는 무접미사판).
+# 🔴 **그 함수의 조회 규칙과 미러다** — 한쪽만 고치면 "있다고 판단했는데 아무것도 안 나온다"가 된다.
+func _has_anim_base(base: StringName) -> bool:
+	var f := _sprite.sprite_frames
+	if f == null:
+		return false
+	if f.has_animation(base):
+		return true
+	for s: String in DIR_SUFFIX:
+		if f.has_animation(StringName(String(base) + "_" + s)):
+			return true
+	return false
+
+
+# 목표 길이에 맞춘 speed_scale = 기본 길이 ÷ 목표 길이. 못 구하면 1.0 = 항등 폴백(도입 전 동작).
+# 🔴 프레임 수·speed·프레임별 duration을 **전부 시트에서 읽는다** — 상수 미러를 만들지 않으므로
+#   아트가 프레임을 4 → 6으로 늘려도 배율이 자동 추종한다(`boss._anim_base_length` 관용구).
+func _anim_speed_scale_for(anim: StringName, target_s: float) -> float:
+	var f := _sprite.sprite_frames
+	if f == null or not f.has_animation(anim) or target_s <= 0.0:
+		return 1.0
+	var spd := f.get_animation_speed(anim)
+	var count := f.get_frame_count(anim)
+	if spd <= 0.0 or count <= 0:
+		return 1.0
+	var total := 0.0
+	for i: int in count:
+		total += f.get_frame_duration(anim, i)
+	return maxf(total / spd / target_s, MIN_ANIM_SPEED_SCALE)
+
+
+# 원하는 배율을 스프라이트에 심는다 — 🔴 **`speed_scale`의 유일한 대입 지점**(boss `_apply_anim_scale` 미러).
+# ⚠ **정지(0.0) 중에는 건드리지 않는다** — 히트스톱이 세워 둔 것을 덮으면 히트스톱 자체가 사라진다.
+#   손실은 최대 1프레임이고, 히트스톱이 끝나며 1.0으로 리셋한 것을 다음 프레임에 여기가 되돌린다.
+# ⚠ **`hit_stop`을 meta 저장 방식으로 "고치지" 마라 — 더 나빠진다**(그 함수 주석이 근거).
+func _apply_anim_scale() -> void:
+	if _sprite.speed_scale <= 0.0:
+		return
+	if not is_equal_approx(_sprite.speed_scale, _anim_scale):
+		_sprite.speed_scale = _anim_scale
 
 
 # 조준각 → 4분면 인덱스 (0=동 1=남 2=서 3=북). Godot는 y+가 아래라 남쪽이 +PI/2다.
@@ -1040,12 +1436,15 @@ func _play_dir_anim(base: StringName) -> void:
 		_sprite.play(base)
 
 
-# 몸통 공격 애니 보유 여부 — 현재 어느 직업도 없어(공격 연출은 무기 스윙 = _update_weapon 담당) 항상 false다.
-# 4방향 시트가 attack_e/_n/_s를 들고 오면 자동으로 켜진다.
-# 몸통 attack 애니를 되살리면 애니 길이 ↔ _swing_time 미러(rules §3)도 같이 되살릴 것.
+# 몸통 공격 애니 보유 여부 — ⚠ **주석이 낡아 있던 자리다**(2026-08-01 정정). 옛 서술 *"현재 어느
+# 직업도 없어 항상 false"* 는 전사가 `attack`을 갖게 된 시점에 이미 거짓이었고, 지금은 전사 시트에
+# `attack1~3` × 3방향 **9클립**이 있다(궁수·법사 시트는 여전히 없어 false다 = 도입 전 항등).
+# 🔴 판단을 `_attack_anim_base()` **하나로 모았다** — 이름 조회 규칙이 둘이면 "있다고 했는데 다른 것을
+#   재생한다"가 생긴다. 여기는 그 결과가 비었는지만 본다.
+# 🔴 애니 길이 ↔ `_swing_time` 미러(rules §3 부채)는 **미러가 아니라 유도로 갚았다** —
+#   `_anim_speed_scale_for()`가 매 스윙 배율을 계산한다(그 함수·`MIN_ANIM_SPEED_SCALE` 주석이 근거).
 func _has_attack_anim() -> bool:
-	var f := _sprite.sprite_frames
-	return f != null and (f.has_animation(&"attack") or f.has_animation(&"attack_e"))
+	return not _attack_anim_base().is_empty()
 
 
 # 조준각 갱신 — 몸 방향(4분면 애니·flip)과 무기 표시가 **둘 다** 여기서 파생하는 단일 소스.
@@ -1161,8 +1560,11 @@ func _local_move(delta: float) -> void:
 	var dir := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	if seated:
 		# 앉는 동안 무방비·정지 (GDD §5 모닥불) — 몸을 움직이려는 입력이 오면 스스로 일어난다
-		if dir != Vector2.ZERO or Input.is_action_just_pressed("roll") or _attack_queued:
-			seated = false
+		# ⚠ 버퍼가 살아 있는 동안 계속 참이지만 **멱등**이다(이미 일어났으면 이 블록에 안 들어온다).
+		# 🔴 여기서 읽는 버퍼는 **앉은 뒤에 새로 누른 것뿐**이다 — 앉기 이전의 묵은 클릭은
+		#   `set_seated(true)`가 지운다(reviewer C-1). 그게 없으면 F가 씹힌 것처럼 보인다.
+		if dir != Vector2.ZERO or Input.is_action_just_pressed("roll") or _attack_buf_left > 0.0:
+			set_seated(false)
 		else:
 			velocity = Vector2.ZERO
 			return  # 뒤집기는 _play_dir_anim이 조준각에서 파생한다(단일 소스)
@@ -1205,7 +1607,17 @@ func _local_move(delta: float) -> void:
 # 공격은 폴링이 아니라 _unhandled_input — UI(Control)가 소비한 클릭은 여기 안 온다 (mouse_filter 존중)
 func _unhandled_input(event: InputEvent) -> void:
 	if is_local and event.is_action_pressed("attack"):
-		_attack_queued = true
+		# 🔴 대입(갱신)이지 누적이 아니다 — 연타해도 버퍼가 쌓여 여러 타가 몰아 나가지 않는다.
+		#   ⚠ 여기는 여전히 **엣지 트리거**다(홀드 반복 없음). 홀드 경로는 `auto_fire`(shoot)·차지뿐이다.
+		# 🔴 **쿨다운으로 묶는다** (netreview 보완 C, 2026-08-01). 상수만 쓰면 뜻이 직업마다 갈린다 —
+		#   궁수(cd 0.15)는 버퍼 0.25가 쿨다운의 **167%** 라 쿨다운 전 구간이 버퍼 안에 들어가고,
+		#   그러면 "리듬 보정"이 아니라 **클릭 오토파이어**가 된다(한 번 누르면 다음 타가 무조건 나간다).
+		#   묶어 두면 상수 주석의 "쿨다운의 마지막 일부"가 **전 직업에서 참**이 된다.
+		# ⚠ 뜸(`combo_delay`)이 아니라 `effective_cooldown`으로 묶는다 — 둘 중 **작은 쪽**이라 보수적이다.
+		var cap := ATTACK_BUFFER_S
+		if job != null:
+			cap = minf(cap, CombatMath.effective_cooldown(job, _haste()))
+		_attack_buf_left = cap
 
 
 # 현재 착용 무기의 공격 모션 (EquipDef.motion_type) — 미착용/미지정이면 "swing" 폴백. _do_attack 분기의 단일 소스.
@@ -1214,9 +1626,17 @@ func _weapon_motion() -> String:
 
 
 func _local_combat(delta: float) -> void:
-	var want := _attack_queued
-	_attack_queued = false
+	# 🔴🔴 **여기서 버퍼를 비우지 않는다 — 이 한 줄이 이 작업의 전부다** (2026-08-01).
+	#   옛 코드는 `var want := _attack_queued` **직후** `_attack_queued = false`로 무조건 비웠다.
+	#   그래서 쿨다운·구르기 중에 누른 클릭이 통째로 사라졌고, 콤보가 창 안에 정확히 재클릭할 때만
+	#   이어졌다(= "공격마다 무기가 제자리로 돌아간다"의 원인). 소진은 **실제로 발동한 자리**에서만 한다.
+	# 🔴 **여유(`_attack_buf_grace`)를 여기 한 곳에서 문다** — `want`를 통해 근접·발사·차지 **세 경로가
+	#   전부** 지나므로, 새 모션 타입이 생겨도 여유가 자동으로 따라간다(분기마다 붙이면 반드시 하나 샌다).
+	#   ⚠ 홀드 연사는 이 게이트 밖이다 — 그쪽은 `auto_fire_gap_s`가 이미 같은 여유를 갖고 있다.
+	var want := _attack_buf_left > 0.0 and _attack_buf_grace <= 0.0
 	if not _alive:
+		_attack_buf_left = 0.0  # 사망 = 들고 있던 입력도 소멸 (부활 직후 유령 스윙 차단 — 차지·연사와 대칭)
+		_attack_buf_grace = 0.0
 		_cancel_charge()  # 사망 = 모으던 것 소멸 (고스트가 계속 모으지 않게)
 		_stop_auto_fire()  # 사망 = 홀드 연사도 소멸 (고스트가 계속 쏘지 않게 — 차지와 대칭)
 		return
@@ -1228,7 +1648,7 @@ func _local_combat(delta: float) -> void:
 	# 홀드 연사(속사수 `auto_fire`) — 이미 켜져 있으면 버튼 유지가 곧 다음 발의 입력이다.
 	# ⚠ `motion == "shoot"`을 여기서 다시 본다 — 무기 교체가 이미 끄지만(set_weapon_visual), 이 조건이
 	#   없으면 그 리셋을 한 곳이라도 놓쳤을 때 **근접 무기가 홀드로 연타되는** 훨씬 나쁜 상태가 된다.
-	# ⚠ `seated` 가드 — 앉으면 홀드가 끊긴다(GDD §5 "앉는 동안 무방비"). 클릭 발사는 `_attack_queued`가
+	# ⚠ `seated` 가드 — 앉으면 홀드가 끊긴다(GDD §5 "앉는 동안 무방비"). 클릭 발사는 `_attack_buf_left`가
 	#   서서 `_local_move`가 스스로 일어나는데, 홀드는 그 큐를 안 거치므로 **앉은 채로 계속 쏘고
 	#   회복까지 받는** 경로가 열려 있었다(2026-07-28 netreview I4). 다시 클릭하면 큐가 서서 일어난다.
 	# ⚠ `is_trait_on`을 유지 조건에서도 다시 본다 — 마을에서 속사수를 슬롯에서 빼면 그 즉시 끊긴다.
@@ -1242,6 +1662,11 @@ func _local_combat(delta: float) -> void:
 		else:
 			_stop_auto_fire()
 	if want and _attack_cd_left <= 0.0 and _roll_time_left <= 0.0 and _is_armed():
+		# 🔴 **소진은 발동 프레임에.** 남겨 두면 같은 클릭이 다음 프레임에 한 번 더 나가고, 그러면
+		#   발사 간격이 물리 프레임 하나가 되어 호스트 게이트가 정직한 타격을 무음 거부한다.
+		#   ⚠ 홀드 연사(`_auto_firing`)로 `want`가 켜진 경우엔 비울 것이 없다(이미 0) — 무해하다.
+		_attack_buf_left = 0.0
+		_attack_buf_grace = 0.0
 		var dir := _aim_dir()
 		# 모션 타입 분기 (§2 게이트): shoot = 원거리 발사(화살), charge = 위에서 처리,
 		# 🔴 **그 외(= "swing"·"thrust"·미지정)는 전부 근접 경로다** — 찌르기가 베기와 갈리는 것은
@@ -1288,6 +1713,15 @@ func _tick_charge(delta: float, want: bool) -> void:
 		return
 	if not _charging:
 		if want and _attack_cd_left <= 0.0:
+			# 🔴 차지도 **같은 버퍼 규약**을 지난다 — 소진은 여기(발동 자리)에서.
+			#   왜 차지에도 적용하나: `want`의 의미가 다르긴 해도(누른 **순간**) 버퍼가 여는 것은
+			#   여전히 "쿨다운 중에 누른 시작 신호를 살려 준다"뿐이고, 차지 시간·레벨 검증
+			#   (`is_charge_time_ok`)은 **발사 시각 기준**이라 아무것도 안 움직인다.
+			#   ⚠ 버퍼로 열린 차지에서 이미 버튼을 뗐다면 다음 프레임에 0단계 탭 발사가 된다 —
+			#     "쿨다운 중에 누른 딸깍이 쿨다운이 끝나자 나간다"라서 의도한 동작이다. 🔴 그 탭 발사는
+			#     간격이 `combo_gap_s`에 붙으므로 **여유가 반드시 필요하다** — `want`가 이미 물고 왔다.
+			_attack_buf_left = 0.0
+			_attack_buf_grace = 0.0
 			_charging = true
 			_charge_held = 0.0
 			_charge_level = 0
@@ -1298,7 +1732,7 @@ func _tick_charge(delta: float, want: bool) -> void:
 		if lv > _charge_level:
 			_charge_level = lv
 			_orb_pop_left = ORB_POP_TIME
-			EventBus.player_swing.emit(global_position, _charge_sfx)  # 단계 상승 "딸깍" (로컬)
+			EventBus.player_swing.emit(global_position, _charge_sfx, 1.0)  # 단계 상승 "딸깍" (로컬)
 		return
 	var level := _charge_level
 	_cancel_charge()
@@ -1397,7 +1831,12 @@ func _begin_swing(combo: int, chain_from_previous: bool = false) -> void:
 	# 🔴 **표시 각은 `melee_show_half_angle` 하나에서 온다 — 배율을 곱하지 마라**(v2.2, 상수 주석이 근거).
 	#   판정 각(`melee_half_angle`)보다 `COMBO_FINISH_SHOW_MARGIN`만큼 넓고 그 부호를 **코드가** 쥔다.
 	var arc := CombatMath.melee_show_half_angle(_weapon_override, _swing_is_finish)
-	_swing_lunge_mult = COMBO_FINISH_LUNGE if _swing_is_finish else 1.0
+	# 마무리 내지르기 — 🔴 베기와 찌르기가 **다른 배율**을 쓴다(위 상수 주석이 근거: 베기는 판정
+	#   프레임에 0으로 돌아오는 중간 부풀림, 찌르기는 판정 프레임의 칼끝 거리 그 자체다).
+	_swing_lunge_mult = 1.0
+	if _swing_is_finish:
+		_swing_lunge_mult = COMBO_FINISH_THRUST_LUNGE if _weapon_motion() == "thrust" \
+			else COMBO_FINISH_LUNGE
 	# 🔴 방향은 **패리티**(`index % 2`)다 — 절대 위치(`== 1`)로 두면 타수마다 다르게 깨진다:
 	#   2타(도끼)면 반전 타와 마무리 타가 **한 타에 겹치고**, 4타(창)면 index 0과 2가 같은 방향·크기가
 	#   되어 **두 타가 같은 궤적**이 된다. 패리티면 타수 무관하게 왕복이 유지된다.
@@ -1406,27 +1845,20 @@ func _begin_swing(combo: int, chain_from_previous: bool = false) -> void:
 	_combo_entry_off = _motion_off if _combo_entry_from_previous else 0.0
 	_combo_entry_lunge = _motion_lunge if _combo_entry_from_previous else 0.0
 	_combo_pose_active = n > 1
-	_swing_from = arc if reverse else -arc
+	# 🔴 **타별 감각 점증의 단일 진행값**(멤버 주석이 정본). n = 1이면 0 = 도입 전과 항등.
+	_combo_ramp = (float(_combo_index) / float(n - 1)) if n > 1 else 0.0
+	# 🔴 **어깨에 걸치기(시작각 젖힘)와 그 상한은 `_swing_entry_angle`이 쥔다** — 마무리 직전 타의
+	#   대기 자세(`_combo_hold_pose`)가 **같은 함수**로 "다음 타가 출발하는 각"을 물어야, 젖혔다가
+	#   다시 되돌아가는 구간이 원리적으로 안 생긴다(2026-08-01에 그 자리를 함수로 뺐다).
+	#   근거(왜 시작각만인가 · 왜 span < 2π인가)는 `SWING_WINDUP_ARC_MULT` 상수 주석이 정본이다.
+	_swing_from = _swing_entry_angle(_combo_index)
 	_swing_to = -arc if reverse else arc
 	if _weapon_motion() == "thrust":
 		# 찌르기는 좌우로 훑지 않는다 — 예비에 창끝을 젖혔다가 **겨눈 선(0)으로 모아** 내지른다.
 		# (타수마다 젖히는 쪽만 바뀌므로 손이 순간이동해 보이지 않는다 — 위 _swing_from 그대로 쓴다.)
 		_swing_to = 0.0
-	else:
-		# 🔴 **어깨에 걸치기 — 시작각만 더 젖힌다**(위 const 주석이 정본). 끝각은 안 건드린다:
-		#   거긴 "궤적 선단이 판정 부채꼴을 덮는다"는 §3 불변식이 걸려 있다.
-		# 🔴 **상한을 무기 각에서 유도한다 — 총 span이 한 바퀴(2π)를 넘으면 안 된다.** 넘으면 칼이
-		#   같은 자리를 두 번 지나 궤적 리본이 자기 위에 겹치고, 화면에서는 "휘두르는 방향"이 안 읽힌다
-		#   (옛 부채꼴 셰이더에선 진행 게이트가 통째로 꺼져 한 번에 번쩍였다 — 사용자가 신고한 그것).
-		#   span = arc × (1 + 배율)이므로 배율 상한 = (2π-0.02)/arc − 1이다. 넓은 무기일수록 여유가
-		#   작아 자동으로 덜 젖혀진다(도끼 160° → 약 1.24배 · 낡은 대검 109° → 약 2.3배).
-		# ⚠ 마무리 타는 `combo_finish_arc`로 arc가 이미 커서 상한이 1.0 밑으로 떨어질 수 있다 —
-		#   그때는 `maxf`가 1.0(젖힘 없음)으로 떨어뜨린다. 마무리는 원래 크게 휘두르므로 맞는 결과다.
-		# 🔴 **이 `cap`은 기본 span(`arc` 자체)을 줄이지 못한다** — 그래서 마무리 각을 **절대값 + 코드
-		#   상한**(`melee_half_angle`)으로 받는 것이 필요했다. 옛 균일 배율 1.25에서는 도끼 기본 span이
-		#   이미 401°였고 `cap`은 젖힘만 껐을 뿐이라 아무것도 못 막았다.
-		var cap := (TAU - 0.02) / maxf(arc, 0.0001) - 1.0
-		_swing_from *= clampf(maxf(1.0, _windup_arc_mult), 1.0, maxf(1.0, cap))
+	# 🔴 새 스윙은 젖힘을 물려받지 않는다 — 안 지우면 다음 대기 자세가 **이미 젖혀진 채** 시작한다.
+	_windback_t = 0.0
 	# 🔴 스윙 창은 콤보와 무관하게 _swing_time 그대로 — §3 미러(swing_time < attack_cooldown) 보존.
 	_attack_anim_left = _swing_time
 	# 🔴 **시간 축을 여기서 굳힌다**(netreview M-1 — 멤버 주석이 근거). 이후 무기 교체·레벨업이
@@ -1439,6 +1871,18 @@ func _begin_swing(combo: int, chain_from_previous: bool = false) -> void:
 	#   스윙 중 살아 있는 `_stance_sway`를 기준으로 삼으면 자기 자신을 참조해 0에 도달하지 못한다.
 	_stance_enter_sway = _stance_sway
 	_swing_hit_at = _swing_win_total * (_swing_windup_l + _swing_strike_l)
+	# 🔴🔴 **젖힘 시간을 「그 타의 실제 빈 구간」에서 유도한다** (상수 주석이 정본). 빈 구간 =
+	#   `combo_gap_s(다음 타) − 스윕 완료`이고 **타마다 4배 넘게** 벌어지므로(196~488ms) 상수로 두면
+	#   짧은 타에서만 젖힘이 덜 진행된 채 다음 타가 나간다 = 칠 때마다 자세가 다르다.
+	# 🔴 쿨다운과 **같은 함수**(`combo_gap_s`)를 지난다 — `_swing_attack`의 반환값·`_combo_window_s`와
+	#   같은 소스라, 뜸이나 haste를 조여도 젖힘이 자동으로 따라온다(사본을 두면 갈라진다).
+	# ⚠ 원격 아바타도 자기 무기·haste로 로컬 리졸브한다(네트워크 0) — 두 화면의 박자가 같아진다.
+	if job != null:
+		var gap := CombatMath.combo_gap_s(job, _weapon_override, _next_combo_index(), _haste())
+		_windback_time = clampf((gap - _swing_hit_at) * COMBO_WINDBACK_FILL,
+			COMBO_WINDBACK_MIN_S, COMBO_WINDBACK_MAX_S)
+	else:
+		_windback_time = COMBO_WINDBACK_MAX_S
 	# 새 스윙은 항상 박힘 없이 시작한다 — 안 지우면 이전 스윙의 멎음이 이어져 모션이 굳는다.
 	_swing_bite_left = 0.0
 
@@ -1564,10 +2008,15 @@ func _cancel_swing() -> void:
 	_dash_speed = 0.0
 	_motion_off = 0.0
 	_motion_lunge = 0.0
+	# 취소된 스윙은 젖힘도 처음부터다 — 콤보가 살아 있으면(`_combo_left > 0`) 대기 자세에서 다시 젖힌다.
+	_windback_t = 0.0
 	# 이미 그려진 부분 궤적은 지우지 말고 흩어지게 둔다(뚝 끊기면 화면이 튄다).
 	# 🔴 **리본도 반드시 이 가드에 포함된다** — 페이드를 태울 유일한 자리라, 빠지면 취소된 스윙의
 	#   자국이 `_fx_left = 0`인 채 **영원히 화면에 굳는다**(구르기로 스윙을 끊을 때마다 한 줄씩 쌓인다).
+	# ⚠ 분모도 같이 세운다 — `_finalize_swing_sweep`을 안 지났으므로 `_fx_total`엔 **직전** 스윙 값이
+	#   남아 있고, 그게 마무리였다면 취소 자국이 알파 0.67에서 시작해 흐릿하게 뜬다.
 	if _swing_trail.visible and _fx_left <= 0.0:
+		_fx_total = ATTACK_FX_TIME
 		_fx_left = ATTACK_FX_TIME
 
 
@@ -1632,7 +2081,10 @@ func _resolve_swing_hit() -> void:
 		_swing_bite_t = clampf(_swing_windup_l + _swing_strike_l, 0.0, 1.0)
 		# 🔴 후딜 창(실시간, haste 반영된 굳힌 값)에도 묶는다 — 근거는 SWING_BITE_RECOVER_MAX 주석.
 		var recover_s := (1.0 - _swing_windup_l - _swing_strike_l) * _swing_win_total
-		_swing_bite_left = minf(minf(SWING_BITE_S * _weapon_weight(), SWING_BITE_MAX_S),
+		# ⚠ 타별 점증(`_combo_ramp`)은 **가장 안쪽 항에만** 곱한다 — 바깥 두 clamp
+		#   (`SWING_BITE_MAX_S`·후딜 창)는 그대로라 J-3(박힘이 후딜을 먹어 복귀 모션이 스냅) 방어가 산다.
+		_swing_bite_left = minf(minf(SWING_BITE_S * _weapon_weight()
+				* lerpf(1.0, COMBO_FINISH_BITE_MULT, _combo_ramp), SWING_BITE_MAX_S),
 			recover_s * SWING_BITE_RECOVER_MAX)
 		# 호스트의 `last_confirm_msec` 로컬 미러 — 그쪽도 **확정 때만** 앵커를 옮기므로
 		# (헛치면 안 옮긴다) 여기도 `connected`일 때만 갱신한다. 자기 스로틀의 기준점이다.
@@ -1657,7 +2109,7 @@ func _fire_projectile(dir: Vector2, charge: int) -> void:
 	# player_shoot: ArrowField가 표시 투사체 스폰 + (호스트 자신이면) CombatAuthority가 권한 투사체 등록
 	EventBus.player_shoot.emit(Net.my_id, origin, dir, aid, _arrow_range, _weapon_id, charge,
 		_shot_combo_index)
-	EventBus.player_swing.emit(global_position, _swing_sfx)  # 발사 SFX (swing_sfx 재활용 = 시위·발사음)
+	EventBus.player_swing.emit(global_position, _swing_sfx, 1.0)  # 발사 SFX (swing_sfx 재활용 = 시위·발사음)
 	# "cb" = 콤보 타수. 🔴 G_ATK의 "cb"와 달리 **판정에 영향을 주는 값**이라 호스트가 그대로 믿지 않는다 —
 	#   자기 수신 간격으로 직접 세고 이 주장은 상한으로만 쓴다(CombatMath.authoritative_combo, §3).
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_SHOOT, "ox": origin.x, "oy": origin.y,
@@ -1679,10 +2131,9 @@ func _arm_swing_trail() -> void:
 	_swing_fx_armed = true
 	_swing_onset_pending = true
 	_fx_left = 0.0
-	# 🔴 이전 스윙의 점을 반드시 비운다 — 안 비우면 두 스윙의 자국이 **한 줄로 이어져** 칼이 지나간
-	#   적 없는 직선이 화면을 가로지른다(콤보 2·3타에서 방향이 뒤집히므로 특히 눈에 띈다).
-	_swing_trail.clear_points()
-	_swing_trail.visible = false
+	# 🔴 이전 스윙의 점을 반드시 비운다 — 안 비우면 두 스윙의 자국이 **한 덩어리로 이어져** 칼이 지나간
+	#   적 없는 면이 화면을 가로지른다(콤보 2·3타에서 방향이 뒤집히므로 특히 눈에 띈다).
+	_trail_clear()
 	_trail_last_u = -1.0
 	_ghost_next_u = 0.0
 
@@ -1702,48 +2153,135 @@ func _arm_swing_trail() -> void:
 #     순간)도 같이 없앤다: 박힘은 `t`를 `선딜+스윕`에 붙들어 무기를 `_swing_to`에 두는데, 궤적도
 #     이제 같은 각에 있다.
 func _draw_swing_trail(u: float) -> void:
-	# 🔴 **칼끝 좌표를 그대로 이어 붙인다 — 이 한 줄이 "포개짐"의 전부다.** 각·반지름·회전중심을
+	# 🔴 **칼밑·칼끝 좌표를 그대로 이어 붙인다 — 이 두 줄이 "포개짐"의 전부다.** 각·반지름·회전중심을
 	#   따로 계산하지 않으므로 어긋날 축이 존재하지 않는다(부채꼴 셰이더가 3°/2.8px씩 어긋나던 자리).
 	# ⚠ 프레임당 한 점만 찍으면 각진다 — 60fps에서 스윕이 5~7프레임뿐이다(worn 0.084s). 그래서 직전
-	#   진행값과의 사이를 `TRAIL_SUBSTEPS`로 나눠 채운다. 첫 프레임은 이을 상대가 없어 한 점만 찍는다.
+	#   진행값과의 사이를 `TRAIL_SUBSTEPS`로 나눠 채운다. 첫 프레임은 이을 상대가 없어 한 쌍만 찍는다.
 	if _trail_last_u < 0.0:
 		_trail_push(u)
 	else:
 		for i: int in range(1, TRAIL_SUBSTEPS + 1):
 			_trail_push(lerpf(_trail_last_u, u, float(i) / float(TRAIL_SUBSTEPS)))
 	_trail_last_u = u
+	_rebuild_trail_ribbon()
 	_swing_trail.modulate = _fx_color(1.0)
-	_swing_trail.visible = _swing_trail.get_point_count() >= 2
-	# 칼 잔상 — 리본이 칼끝 **선**이라면 이쪽은 칼 **면**이다. 같은 `_swing_angle_at`을 쓰므로
-	# 리본·실물 칼과 셋 다 같은 호 위에 놓인다.
+	# 칼 잔상 — 리본이 칼날이 **쓸고 간 띠**라면 이쪽은 칼 **한 장 한 장**이다. 같은 `_swing_angle_at`을
+	# 쓰므로 리본·실물 칼과 셋 다 같은 호 위에 놓인다.
+	# ⚠ 리본이 선(7px) → 면(칼날 폭)이 되면서 셋이 겹치는 면적이 커졌다 — 잔상 알파를
+	#   `AfterImage.WEAPON_ALPHA`에서 함께 낮췄다(2026-08-01). 탁하면 그 값과 `GHOST_STEPS`를 조인다.
 	# ⚠ `while`인 것은 한 프레임에 여러 칸을 건너뛸 수 있기 때문이다(저프레임·짧은 스윕).
-	var ghost_gap := 1.0 / float(GHOST_STEPS)
+	# ⚠ 마무리 타만 장수를 늘린다 — 각·반경은 그대로이고 **같은 호를 더 촘촘히** 채울 뿐이라
+	#   §3(표시 ⊇ 판정)에 손대지 않는다(잔상은 판정을 만들지 않는다).
+	var ghosts := maxi(1, int(round(lerpf(float(GHOST_STEPS), float(COMBO_FINISH_GHOSTS), _combo_ramp))))
+	var ghost_gap := 1.0 / float(ghosts)
 	while _ghost_next_u <= u and _ghost_next_u < 1.0:
 		AfterImage.spawn_weapon(_weapon, _weapon_pivot, self,
 			_swing_dir.angle() + _swing_angle_at(_ghost_next_u), _fx_color(1.0))
 		_ghost_next_u += ghost_gap
 
 
-# 리본에 점 하나 — `uu`는 이징된 스윕 진행값(0~1).
+# 리본에 **한 쌍**(칼밑·칼끝) — `uu`는 이징된 스윕 진행값(0~1).
 # 🔴 각은 `_swing_angle_at`을 쓴다 — **무기 각과 같은 함수**라 사본이 아니다(m-6이 지키는 그 자리).
+# 🔴 두 점은 **같은 각**으로 뽑는다. 각을 따로 계산하면 리본의 두 변이 서로 다른 호를 그려 면이
+#   비틀리고, 그 비틀림이 자기 교차를 만들면 다각형 분할이 실패해 **에러 없이 안 그려진다.**
 func _trail_push(uu: float) -> void:
-	if _swing_trail.get_point_count() >= TRAIL_MAX_POINTS:
-		_swing_trail.remove_point(0)
-	_swing_trail.add_point(_blade_tip_global(_swing_angle_at(uu)))
+	if _trail_tip.size() >= TRAIL_MAX_POINTS:
+		_trail_base.remove_at(0)
+		_trail_tip.remove_at(0)
+	var ang := _swing_angle_at(uu)
+	_trail_base.append(_blade_base_global(ang))
+	_trail_tip.append(_blade_tip_global(ang))
 
 
-# 칼끝의 **월드 좌표** — `_update_weapon`의 배치식에서 그대로 유도한다:
+# 리본 비우기 — 점·다각형·정점색·표시를 한 자리에서 내린다.
+# ⚠ 세 곳이 부른다: 새 스윙 무장(`_arm_swing_trail`) · 페이드 종료 · (간접) 취소 후 페이드 종료.
+func _trail_clear() -> void:
+	_trail_base.clear()
+	_trail_tip.clear()
+	_swing_trail.polygon = PackedVector2Array()
+	_swing_trail.vertex_colors = PackedColorArray()
+	_swing_trail.visible = false
+
+
+# 🔴 **면 리본 조립 — 바깥 변은 칼끝 궤적 "그 자체"다.**
+#   고리 순서 = `안쪽[0..n-1]` → `바깥[n-1..0]`. 두 궤적이 동심(베기) 또는 평행(찌르기)이라 서로
+#   교차하지 않고, 스윙 총 각도는 `_begin_swing`의 `cap`이 `2π − 0.02` 밑으로 잘라 두므로 고리가
+#   한 바퀴를 넘겨 **자기 교차**하는 경우도 없다 — 그 `cap`이 이제 다각형의 단순성까지 지킨다.
+# 🔴 꼬리는 **칼끝 쪽으로만** 좁아진다(`lerp(tip → base)`) — 반대로 하면 오래된 자국이 칼끝 밖으로
+#   나가 도달 거리를 부풀린다. 선단(`s = 1`)은 항상 칼날 폭 전부라 `_swing_to` 래치가 온전히 남는다.
+# ⚠ **비용: 매 프레임 최대 96정점 재삼각분할**(`Polygon2D`가 `polygon` 대입마다 ear-clipping을 돈다).
+#   스윙당 7~11프레임뿐이라 지금은 무시 가능으로 판단했다 — 🔴 **웹 실기에서 스윙 프레임만 튀면
+#   여기부터 본다**(reviewer m-4). 고치는 방향은 `TRAIL_SUBSTEPS`·`TRAIL_MAX_POINTS`를 줄이거나
+#   `polygon` 대입을 실제로 점이 늘어난 프레임으로 한정하는 것이고, **프로파일러 캡처 전에 손대지 마라.**
+func _rebuild_trail_ribbon() -> void:
+	var n := _trail_tip.size()
+	if n < 2:
+		_swing_trail.visible = false
+		return
+	var poly := PackedVector2Array()
+	var cols := PackedColorArray()
+	poly.resize(n * 2)
+	cols.resize(n * 2)
+	# ⚠ 마무리 타만 더 진하다 — **기하는 그대로**이고 알파만 오른다(폭을 안쪽으로 넓히는 것은 이
+	#   무기들에선 소용이 없다: 대검은 `blade_length` 36이 칼끝 거리 44의 대부분이라 안쪽 변이 이미
+	#   `TRAIL_MIN_INNER_DIST`에 붙어 있고, 더 넓히면 07-29에 버린 **부채꼴 띠**로 되돌아간다).
+	var amax := lerpf(TRAIL_ALPHA_MAX, COMBO_FINISH_TRAIL_ALPHA, _combo_ramp)
+	for i: int in range(n):
+		var s := float(i) / float(n - 1)  # 0 = 가장 오래된 꼬리 · 1 = 선단
+		var col := Color(1.0, 1.0, 1.0, amax * _trail_tail_alpha(s))
+		poly[i] = _trail_tip[i].lerp(_trail_base[i], lerpf(TRAIL_TAIL_WIDTH, 1.0, s))
+		poly[n * 2 - 1 - i] = _trail_tip[i]
+		cols[i] = col
+		cols[n * 2 - 1 - i] = col
+	_swing_trail.polygon = poly
+	_swing_trail.vertex_colors = cols
+	_swing_trail.visible = true
+
+
+# 꼬리 알파 곡선 — 옛 씬 `Gradient`(0 → 0.45에서 0.55 → 1)와 같은 모양(상수 주석이 정본).
+func _trail_tail_alpha(s: float) -> float:
+	if s < TRAIL_FADE_MID:
+		return TRAIL_FADE_MID_A * (s / maxf(TRAIL_FADE_MID, 0.0001))
+	return lerpf(TRAIL_FADE_MID_A, 1.0, (s - TRAIL_FADE_MID) / maxf(1.0 - TRAIL_FADE_MID, 0.0001))
+
+
+# 🔴 **무기 스프라이트의 로컬 x → 회전 중심 기준 거리** — `_update_weapon`의 배치식
+#   (`_weapon.position = -_weapon_grip + Vector2(_hold_dist + lunge, 0)`, `centered = false`)에서
+#   **그대로** 유도한다. 칼끝·칼밑이 이 함수 하나를 지나므로 리본의 두 변이 어긋날 축이 없다(사본 금지).
+# ⚠ **`_motion_lunge`(현재값)를 쓴다** — 리본은 칼이 **지금** 있는 자리를 찍는다.
+func _weapon_local_dist(local_x: float) -> float:
+	return local_x - _weapon_grip.x + _hold_dist + _motion_lunge
+
+
+# 회전 중심 기준 거리 + 각 오프셋 → **월드 좌표**.
 #   피벗 = `global_position + WeaponPivot.position` (플레이어는 회전하지 않으므로 회전 없이 더한다)
-#   칼끝 = 피벗 + (텍스처 오른쪽 끝까지의 거리)를 `조준각 + 스윙 오프셋`으로 돌린 것
-# ⚠ `SwingTrail`이 `top_level = true`라 `add_point`가 받는 좌표가 곧 월드 좌표다(씬 주석이 짝).
-# ⚠ **`_motion_lunge`(현재값)를 쓴다** — `_weapon_tip_dist()`의 최대 lunge가 아니다. 저쪽은 부채꼴
-#   반경이 매 프레임 출렁이지 않게 최대치로 굳히는 용도이고, 리본은 칼이 **지금** 있는 자리를 찍는다.
+# ⚠ `SwingTrail`이 `top_level = true`라 여기서 나온 좌표가 곧 다각형 좌표다(씬 주석이 짝).
+func _weapon_point_global(dist: float, ang_off: float) -> Vector2:
+	return global_position + _weapon_pivot.position \
+		+ Vector2(dist, 0.0).rotated(_swing_dir.angle() + ang_off)
+
+
+# 칼끝의 월드 좌표 = 텍스처 오른쪽 끝. 🔴 **리본의 바깥 변이자 상한이다 — 여기를 넘는 표시는 없다.**
 func _blade_tip_global(ang_off: float) -> Vector2:
 	if _weapon.texture == null:
 		return global_position
-	var tip := _weapon.texture.get_width() - _weapon_grip.x + _hold_dist + _motion_lunge
-	return global_position + _weapon_pivot.position \
-		+ Vector2(tip, 0.0).rotated(_swing_dir.angle() + ang_off)
+	return _weapon_point_global(_weapon_local_dist(float(_weapon.texture.get_width())), ang_off)
+
+
+# 칼밑(날이 시작하는 지점)의 월드 좌표 = 칼끝 − `CombatMath.blade_length(무기)`.
+# 🔴 길이의 단일 소스는 `CombatMath`다(→ `EquipDef.blade_length`) — 여기서 텍스처 픽셀로 다시
+#   유도하지 마라. 근거·기각한 대안은 그 함수와 `equip_def.gd`의 필드 주석이 정본이다.
+# 🔴 **`minf(tip_d, ...)`가 부호를 구조로 닫는다** (reviewer m-2). `maxf` 하한만 두면 한쪽으로만
+#   안전하다 — `tip_d < TRAIL_MIN_INNER_DIST`인 순간 **안쪽 변이 바깥 변보다 멀어져** 리본이 뒤집히고,
+#   그건 「칼끝 밖으로 안 나간다」 불변식을 **정확히 반대로** 깨는 방향이다(현 최소 54px라 도달
+#   불가하지만, 한 겹으로 닫히는 것을 데이터 가정에 맡기지 않는다). 최악이 "두께 0 = 안 보임"이 된다.
+# ⚠ 하한 자체가 하는 일은 `TRAIL_MIN_INNER_DIST` 주석이 정본이다 — 퇴화를 막는 것은 전수 트립와이어다.
+func _blade_base_global(ang_off: float) -> Vector2:
+	if _weapon.texture == null:
+		return global_position
+	var tip_d := _weapon_local_dist(float(_weapon.texture.get_width()))
+	var base_d := maxf(tip_d - CombatMath.blade_length(_weapon_override), TRAIL_MIN_INNER_DIST)
+	return _weapon_point_global(minf(tip_d, base_d), ang_off)
 
 
 # 네트워크 검증용 좌표 — 원격은 lerp된 표시 좌표가 아니라 (클램프된) 최신 수신 좌표를 쓴다.
@@ -1815,6 +2353,15 @@ func play_attack_fx(dir: Vector2, combo: int = 0) -> void:
 		# 연계 여부는 **타수 인덱스**에서 읽는다 — 원격엔 로컬의 `_combo_left` 창이 없고, 호스트가
 		# 센 인덱스가 0보다 크다는 것 자체가 "직전 타에서 이어졌다"는 뜻이다(그 인덱스는 위에서 clamp됐다).
 		_begin_swing(_combo_index, _combo_index > 0)  # 그 피어의 무기 스윙 창 + 같은 콤보 궤적
+		# 🔴 **대기 자세 창을 원격에도 연다** (2026-08-01). 전에는 `_combo_left`가 로컬에서만 세워져
+		#   `_tick_swing_motion`의 대기 갈래가 원격에서 **한 번도 참이 아니었다** — 그래서 상대 화면의
+		#   무기는 매 타 중립으로 돌아갔고, 마무리 직전 타의 젖힘(`_combo_hold_pose`)도 **자기 화면에만**
+		#   보였다. 2인 협동에서 절반만 그려지는 연출이 된다.
+		# 🔴 **네트워크 0 · 판정 0**: 값은 그 피어의 무기·haste로 **로컬에서** 리졸브하고(`combo_window_s`
+		#   — 호스트와 같은 함수), 이 멤버를 읽는 곳은 대기 자세 갈래와 젖힘 게이트뿐이다.
+		#   `continues_combo`(`_swing_attack`)는 **로컬 전용 경로**라 원격 값이 흘러들지 않는다.
+		# ⚠ 타수는 위에서 호스트가 센 인덱스를 그대로 쓴다 — 창은 "언제 중립으로 돌아가나"만 정한다.
+		_combo_left = _combo_window_s((_combo_index + 1) % _combo_len())
 		_arm_swing_trail()
 
 
@@ -1823,7 +2370,7 @@ func play_shoot_fx() -> void:
 	if not _alive or not _is_armed():
 		return  # 사망자·무장 해제 피어의 G_SHOOT로 연출이 뜨는 것 차단
 	_recoil_left = RECOIL_TIME
-	EventBus.player_swing.emit(global_position, _swing_sfx)  # 발사 SFX (원격 — swing_sfx 재활용)
+	EventBus.player_swing.emit(global_position, _swing_sfx, 1.0)  # 발사 SFX (원격 — swing_sfx 재활용)
 
 
 # 원격 플레이어의 구르기 연출 (peer_sync가 G_ROLL 수신 시 호출) — 표시 전용.
@@ -1894,7 +2441,7 @@ func apply_remote_pos(pos: Vector2, flip: bool, aim: float, charge_code: int = 0
 		var now_sfx := Time.get_ticks_msec()
 		if now_sfx - _remote_charge_sfx_msec >= REMOTE_CHARGE_SFX_MIN_MS:
 			_remote_charge_sfx_msec = now_sfx
-			EventBus.player_swing.emit(global_position, _charge_sfx)
+			EventBus.player_swing.emit(global_position, _charge_sfx, 1.0)
 	_remote_charge = new_charge
 	# 속도 반영 — 위치와 같은 신뢰 규율(유한성 + 최고 이동속도 clamp). 외삽 입력이므로 여기서 상한을 건다.
 	# ⚠ 무효값이면 0으로 떨어뜨린다(이전 속도 유지 금지) — 정지한 피어를 계속 미끄러뜨리면

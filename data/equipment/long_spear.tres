@@ -20,6 +20,7 @@ upgrade_gold_base = 20
 weapon_texture = ExtResource("2")
 weapon_grip = Vector2(22, 4)
 weapon_hold_dist = 12.0
+blade_length = 15.0
 motion_type = "thrust"
 combo_damage_mult = PackedFloat32Array(1, 1, 1, 2.06)
 combo_delay = PackedFloat32Array(0, 0, 0, 0.22)
