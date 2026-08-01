@@ -162,6 +162,13 @@ func _ready() -> void:
 			sf.rename_animation(&"default", &"idle")
 			sf.add_frame(&"idle", def.sprite)
 			_sprite.sprite_frames = sf
+		# 스프라이트 배율 — 시트 재작화 없이 덩치만 키운다 (2026-08-01). 기본 1.0 = 항등.
+		# 🔴 **판정은 아래 `body_radius`가 그대로 정한다** — 데이터에서 둘을 같이 올려야 "맞는 곳 =
+		#   보이는 곳"이 유지된다(그 경고는 `EnemyDef.sprite_scale` 필드 주석이 정본).
+		# 🔴 **`HitStop.punch`보다 먼저 세팅돼야 한다** — punch가 첫 호출 때 현재 `scale`을
+		#   `hs_base_scale` meta에 저장해 복원 기준으로 삼기 때문이다(rules §2). setup 시점이라 안전하다.
+		if def.sprite_scale > 0.0:
+			_sprite.scale = Vector2.ONE * def.sprite_scale
 		# 몸 판정 반경 = def.body_radius — ⚠ shape 리소스는 씬 인스턴스 간 공유라 직접 만지면
 		# 같은 tscn의 다른 개체까지 바뀐다 → 복제 후 적용 (조용히 깨지는 함정)
 		var shape := _collision.shape.duplicate() as CircleShape2D
