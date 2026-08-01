@@ -13,8 +13,8 @@
 #   플레이어·잔몹은 collision_mask = 1(world)이라 코드 변경 없이 막힌다(rules §5 배정표).
 #
 # ⚠ 맵 가장자리는 반드시 통행 불가로 닫는다 — 전투 씬에는 카메라 제한도 벽도 없다(마을만 4벽을 갖는다).
-# ⚠ 잔몹은 길찾기가 없다(mob_melee._host_ai가 직진 + move_and_slide). 통행 불가 영역은 볼록하게,
-#   서로 떨어뜨려 놓는다 — 오목한 만이나 좁은 통로를 만들면 잔몹이 벽에 붙어 멈추고 화면에 이유가 안 드러난다.
+# ⚠ 잔몹은 이제 길찾기로 우회한다(`src/enemies/nav_grid.gd`, 2026-08-01) — 그래도 통행 불가 영역은
+#   볼록하게 두는 편이 낫다. 좁은 목은 경로가 있어도 여러 마리가 동시에 끼어 밀린다.
 import json
 import math
 import os
@@ -31,8 +31,8 @@ LAYOUTS = {
         "meta": "assets/sprites/stage/ground/water_tiles_meta.json",
         "tileset": "res://assets/tilesets/stage_water.tres",
         "edge": 2,
-        # (중심셀x, 중심셀y, 반지름셀) — ⚠ 가장자리 테두리(edge)에 닿게 두지 마라. 둘이 만나면
-        # 그 사이에 한두 칸짜리 목이 생기고, 길찾기 없는 잔몹이 거기 끼면 화면에 이유가 안 드러난다.
+        # (중심셀x, 중심셀y, 반지름셀) — ⚠ 가장자리 테두리(edge)에 닿게 두지 마라.
+        #   그 사이에 한두 칸짜리 목이 생기고, 여러 마리가 동시에 끼면 밀린다.
         "patches": [(13, 7, 3), (27, 15, 4), (22, 9, 2)],
         "spawn": (200.0, 380.0),
         "seed": 1101,
@@ -56,8 +56,8 @@ LAYOUTS = {
             ("mino_sword", (640.0, 560.0)),
             ("ox",         (1120.0, 400.0)),
             ("ox",         (1010.0, 600.0)),
-            # ⚠ 궁수는 스폰에서 `aggro_range`(260) 밖에 둔다 — 안쪽이면 들어서자마자 예고 없이
-            #   교전이 시작돼 첫 화살을 무방비로 맞는다(스폰↔여기 거리 424).
+            # ⚠ 어그로는 이제 전 맵이다 — 완충은 **거리**뿐이다. 궁수는 스폰에서 멀리 둔다
+            #   (여기까지 424px이라 붙기 전에 근접이 먼저 도착한다).
             ("mino_bow",   (620.0, 260.0)),
             ("mino_bow",   (880.0, 600.0)),   # 큰 협곡 건너 — 근접이 돌아오는 사이 쏜다
         ],
@@ -123,14 +123,11 @@ def verify(v, spec):
             if solid_at(v, px + dx, py + dy):
                 bad.append(f"{name} ({px:.0f},{py:.0f}) 통행 불가 위")
                 break
-    # ⑵ 🔴 스폰이 어느 적의 `aggro_range` 안에 있으면 안 된다 — 칸에 들어서는 순간 교전이
-    #    시작돼 첫 예고를 무방비로 맞는다. 궁수(사거리 200)에서 특히 나쁘다.
-    sx, sy = spec["spawn"]
-    for n, (mx, my) in spec["mobs"]:
-        d = math.hypot(mx - sx, my - sy)
-        a = aggro_of(n)
-        if d <= a:
-            bad.append(f"{n} ({mx:.0f},{my:.0f}) 스폰까지 {d:.0f}px ≤ aggro {a:.0f}")
+    # ⚠ 「스폰이 적 어그로 밖인가」 검증은 2026-08-01에 **뺐다** — 사용자 요청으로 잔몹의
+    #    `aggro_range`를 맵 전체보다 크게 잡아 **시작하자마자 전원이 가장 가까운 플레이어에게
+    #    온다**. 그 설계에서는 이 검증이 항상 위반이라 의미가 없다.
+    #    🔴 대신 **거리로 완충하는 책임이 배치로 옮겨왔다** — 스폰 바로 옆에 두면 들어서는 순간
+    #    붙는다. 궁수(사거리 200)는 특히 멀리 둬라.
     return bad
 
 
@@ -195,12 +192,11 @@ def build(kind, spec):
         ('Texture2D', 'res://assets/sprites/stage/detail_flower.png'),# 20
         ('Texture2D', 'res://assets/sprites/stage/foliage_grass.png'),# 21
         ('Texture2D', 'res://assets/sprites/stage/foliage_bush.png'), # 22
-        ('Texture2D', 'res://assets/sprites/stage/foliage_tree_s.png'),# 23
     ]
     mob_defs = sorted({n for n, _ in spec["mobs"]})
     for i, n in enumerate(mob_defs):
         ext.append(('Resource', f'res://data/enemies/{n}.tres'))
-    def_id = {n: str(24 + i) for i, n in enumerate(mob_defs)}
+    def_id = {n: str(23 + i) for i, n in enumerate(mob_defs)}
 
     L = [f'[gd_scene load_steps={len(ext) + 1} format=3]', '']
     for i, (typ, path) in enumerate(ext, 1):
@@ -220,7 +216,8 @@ def build(kind, spec):
 
     L += ['[node name="FoliageField" type="Node2D" parent="."]', 'script = ExtResource("15")',
           'foliage_scene = ExtResource("16")', f'area = {rect_str(inner)}',
-          'textures = Array[Texture2D]([ExtResource("21"), ExtResource("22"), ExtResource("23")])',
+          # 나무는 뺀다(사용자 요청 2026-08-01) — 전투 칸은 시야가 트여야 한다.
+          'textures = Array[Texture2D]([ExtResource("21"), ExtResource("22")])',
           'count = 26', f'rng_seed = {spec["seed"] + 1}',
           'exclude = Array[Rect2]([' + ", ".join(rect_str(r) for r in fol_ex) + '])', '']
 

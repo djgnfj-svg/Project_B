@@ -1,4 +1,4 @@
-[gd_scene load_steps=27 format=3]
+[gd_scene load_steps=26 format=3]
 
 [ext_resource type="Script" path="res://src/stage/stage.gd" id="1"]
 [ext_resource type="TileSet" path="res://assets/tilesets/stage_water.tres" id="2"]
@@ -22,10 +22,9 @@
 [ext_resource type="Texture2D" path="res://assets/sprites/stage/detail_flower.png" id="20"]
 [ext_resource type="Texture2D" path="res://assets/sprites/stage/foliage_grass.png" id="21"]
 [ext_resource type="Texture2D" path="res://assets/sprites/stage/foliage_bush.png" id="22"]
-[ext_resource type="Texture2D" path="res://assets/sprites/stage/foliage_tree_s.png" id="23"]
-[ext_resource type="Resource" path="res://data/enemies/mino_bow.tres" id="24"]
-[ext_resource type="Resource" path="res://data/enemies/mino_sword.tres" id="25"]
-[ext_resource type="Resource" path="res://data/enemies/ox.tres" id="26"]
+[ext_resource type="Resource" path="res://data/enemies/mino_bow.tres" id="23"]
+[ext_resource type="Resource" path="res://data/enemies/mino_sword.tres" id="24"]
+[ext_resource type="Resource" path="res://data/enemies/ox.tres" id="25"]
 
 [node name="Stage" type="Node2D"]
 script = ExtResource("1")
@@ -47,7 +46,7 @@ exclude = Array[Rect2]([Rect2(288, 96, 256, 256), Rect2(704, 320, 320, 320), Rec
 script = ExtResource("15")
 foliage_scene = ExtResource("16")
 area = Rect2(80, 80, 1120, 608)
-textures = Array[Texture2D]([ExtResource("21"), ExtResource("22"), ExtResource("23")])
+textures = Array[Texture2D]([ExtResource("21"), ExtResource("22")])
 count = 26
 rng_seed = 1102
 exclude = Array[Rect2]([Rect2(288, 96, 256, 256), Rect2(704, 320, 320, 320), Rect2(608, 192, 192, 192), Rect2(110, 290, 180, 180)])
@@ -55,22 +54,22 @@ exclude = Array[Rect2]([Rect2(288, 96, 256, 256), Rect2(704, 320, 320, 320), Rec
 [node name="Mob1" parent="." instance=ExtResource("3")]
 position = Vector2(620, 330)
 eid = "water_m1"
-def = ExtResource("25")
+def = ExtResource("24")
 
 [node name="Mob2" parent="." instance=ExtResource("3")]
 position = Vector2(620, 500)
 eid = "water_m2"
-def = ExtResource("25")
+def = ExtResource("24")
 
 [node name="Mob3" parent="." instance=ExtResource("3")]
 position = Vector2(980, 330)
 eid = "water_m3"
-def = ExtResource("26")
+def = ExtResource("25")
 
 [node name="Mob4" parent="." instance=ExtResource("3")]
 position = Vector2(864, 672)
 eid = "water_m4"
-def = ExtResource("24")
+def = ExtResource("23")
 
 [node name="PeerSync" type="Node" parent="."]
 script = ExtResource("4")
