@@ -337,6 +337,9 @@ const ATTACK_BUFFER_S := 0.25
 
 var peer_id: int = 0
 var is_local: bool = false
+const SlashFx := preload("res://src/feel/slash_fx.gd")   # 검성 검격 노드(표시 전용)
+var _slash_frames_cache: Array = [null, null, null, null]  # 타수별(1~3) + 롤-어택 4번(소용돌이) 슬래시 지연 로드 캐시
+var _roll_at_msec: int = -100000  # 마지막 구르기 시각 — 이후 0.5초 내 공격이면 4번 소용돌이(롤-어택)
 var scene_id: String = ""  # 소속 씬 (net_schema SCENE_*) — G_POS에 실어 다른 씬 피어의 유령 스폰 방지
 # 모닥불 앉기 — 이동·구르기·공격 입력이 들어오면 스스로 풀린다. 공지(G_SIT)는 campfire가 상태 변화를
 # 보고 송신. 🔴 **쓰기는 반드시 `set_seated()`를 지난다**(그 함수 주석이 근거 — 선입력 버퍼 회귀).
@@ -947,6 +950,45 @@ func _motion_at(t: float, u: float) -> Vector2:
 # 여기 하나로 모은다(콤보 창이 살아 있을 때만 뜻이 있다 — 끊기면 다음은 0이다).
 func _next_combo_index() -> int:
 	return (_combo_index + 1) % maxi(_combo_len(), 1)
+
+
+# 검성(warrior_swordmaster)이 메인 하위 직업일 때만 검격이 나간다.
+func _is_swordmaster_active() -> bool:
+	return GameState.main_sub_job_id == "warrior_swordmaster"
+
+
+# 검성 검격 — 타수별 슬래시를 조준각으로 날린다(로컬·표시 전용). 시트가 없으면 조용히 넘어간다.
+func _try_spawn_slash(index: int) -> void:
+	if not _is_swordmaster_active():
+		return
+	# 구르기(Shift) 후 0.5초 내 공격 = 4번 소용돌이(롤-어택 — 안 날아가고 주변을 휘두름). 아니면 타수(1~3, 앞으로 날아감).
+	var roll_attack := Time.get_ticks_msec() - _roll_at_msec < 500
+	var idx := 3 if roll_attack else clampi(index, 0, 2)
+	var frames := _slash_frames_for(idx)
+	if frames == null:
+		return
+	var sfx := SlashFx.new()
+	if roll_attack:
+		add_child(sfx)                       # 플레이어 자식 = 몸 따라 감쌈
+		sfx.position = Vector2(0, -8)        # 몸 중심에 소용돌이가 걸리게
+		sfx.scale = Vector2(1.35, 1.35)      # 캐릭터를 두를 만큼 크게
+		sfx.setup(frames, 0.0, Color(1, 1, 1, 1), false)   # 보텍스는 방사형 — 조준 회전 없음
+	else:
+		get_parent().add_child(sfx)          # 씬 루트 = 앞으로 날아감
+		sfx.global_position = _weapon_pivot.global_position
+		# 🔴 조준각(_aim_angle 라이브 마우스)이 아니라 스윙 개시 때 고정된 _swing_dir을 쓴다 —
+		#   무기·궤적(1576줄)과 같은 단일 소스. _aim_angle을 쓰면 스윙 중 마우스가 움직여 어긋난다.
+		sfx.setup(frames, _swing_dir.angle(), Color(1, 1, 1, 1), true)
+
+
+# 타수 → 슬래시 시트. slash_1(1타=스파크)·slash_2(2타=링)·slash_3(3타=초승달). 지연 로드·캐시.
+func _slash_frames_for(index: int) -> SpriteFrames:
+	var i := clampi(index, 0, 3)
+	if _slash_frames_cache[i] == null:
+		var fp := "res://assets/sprites/fx/slash_%d_frames.tres" % (i + 1)
+		if ResourceLoader.exists(fp):
+			_slash_frames_cache[i] = load(fp) as SpriteFrames
+	return _slash_frames_cache[i] as SpriteFrames
 
 
 # 🔴 **그 타의 시작 각 오프셋(rad) — `_begin_swing`과 젖힘 목표가 같은 이 함수를 지난다.**
@@ -1666,6 +1708,7 @@ func _local_move(delta: float) -> void:
 			# 🔴 로컬 쿨과 호스트 그랜트 검증(is_roll_grant_ok)이 **같은 함수**를 지난다(§3) —
 			#   사본을 만들면 "굴러지는데 무적이 안 걸리는" 상태가 되고 화면에 이유가 안 드러난다.
 			_roll_cd_left = CombatMath.effective_roll_cooldown(trait_value("roll_cd"))
+			_roll_at_msec = Time.get_ticks_msec()  # 롤-어택 판정: 이후 0.5초 내 공격 = 4번 소용돌이
 			EventBus.player_roll.emit(global_position)  # 구르기 SFX (로컬)
 			_dash_burst(_roll_dir)  # 잔상 첫 장·먼지 버스트·진행 방향 카메라 반동 (표시 전용)
 			# 구르기 선언 — 호스트가 쿨다운 검증 후 i-frame 창 부여 (방향은 연출용)
@@ -1898,6 +1941,8 @@ func _begin_swing(combo: int, chain_from_previous: bool = false) -> void:
 	var n := _combo_len()
 	_combo_index = clampi(combo, 0, n - 1)
 	_swing_is_finish = _is_combo_finish(_combo_index)
+	if is_local:
+		_try_spawn_slash(_combo_index)   # 🗡 검성 검격 — 타수별 슬래시를 조준각으로 날림(표시 전용)
 	# 🔴 **표시 각은 `melee_show_half_angle` 하나에서 온다 — 배율을 곱하지 마라**(v2.2, 상수 주석이 근거).
 	#   판정 각(`melee_half_angle`)보다 `COMBO_FINISH_SHOW_MARGIN`만큼 넓고 그 부호를 **코드가** 쥔다.
 	var arc := CombatMath.melee_show_half_angle(_weapon_override, _swing_is_finish)

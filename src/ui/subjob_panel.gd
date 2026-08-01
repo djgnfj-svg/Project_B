@@ -331,9 +331,28 @@ func _make_owned_cell(sid: String, d: SubJobDef) -> Control:
 func _make_locked_cell(d: SubJobDef) -> Control:
 	var cell: PanelContainer = SlotCell.new()
 	cell.set_icon_stretch(TextureRect.STRETCH_KEEP_CENTERED)
-	cell.set_empty("잠김", d.icon)
-	cell.tooltip_text = _locked_tooltip(d)
+	cell.set_empty("해금", d.icon)   # 사용자 요청 2026-08-02 — 클릭하면 바로 열려 메인 장착
+	cell.tooltip_text = "클릭하면 이 갈래를 즉시 해금하고 메인으로 낍니다 (검성 등)"
+	cell.mouse_filter = Control.MOUSE_FILTER_STOP
+	var sid := d.id
+	cell.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton:
+			var mb := ev as InputEventMouseButton
+			if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+				_unlock_and_equip(sid))
 	return cell
+
+
+# 잠긴 갈래 즉시 해금 + 메인 장착 (사용자 요청 — 직업변경 UI에서 바로 검성 등 사용).
+func _unlock_and_equip(sid: String) -> void:
+	if GameState.in_chapter():
+		_refresh()   # 판 도중엔 변경 금지 — 안내는 _refresh_notice가 한다
+		return
+	if not GameState.sub_job_exp.has(sid):
+		GameState.sub_job_exp[sid] = 0   # 해금(키의 존재 = 보유)
+	GameState.set_main_sub_job(sid)
+	_commit_save()
+	_refresh()
 
 
 # 셀 payload — 드래그 데이터이자 클릭 페이로드. "zone"은 slot_grid.accepts가, "slot"은
