@@ -1,4 +1,4 @@
-[gd_scene load_steps=32 format=3]
+[gd_scene load_steps=30 format=3]
 
 [ext_resource type="Script" path="res://src/village/village.gd" id="1"]
 [ext_resource type="TileSet" path="res://assets/tilesets/forest_village.tres" id="2"]
@@ -24,8 +24,6 @@
 [ext_resource type="Texture2D" path="res://assets/sprites/village/decor/grass_d.png" id="22"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/decor/flower_a.png" id="23"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/decor/flower_b.png" id="24"]
-[ext_resource type="Texture2D" path="res://assets/sprites/village/decor/rock_a.png" id="25"]
-[ext_resource type="Texture2D" path="res://assets/sprites/village/decor/rock_b.png" id="26"]
 
 [sub_resource type="RectangleShape2D" id="shape_craft"]
 size = Vector2(60, 60)
@@ -54,7 +52,7 @@ tile_map_data = PackedByteArray(0, 0, 29, 0, 17, 0, 0, 0, 3, 0, 0, 0, 0, 0, 28, 
 [node name="GroundDetail" type="Node2D" parent="."]
 script = ExtResource("12")
 area = Rect2(16, 40, 928, 520)
-textures = Array[Texture2D]([ExtResource("21"), ExtResource("22"), ExtResource("23"), ExtResource("24"), ExtResource("25"), ExtResource("26")])
+textures = Array[Texture2D]([ExtResource("21"), ExtResource("22"), ExtResource("23"), ExtResource("24")])
 count = 48
 rng_seed = 20260801
 min_alpha = 0.7
