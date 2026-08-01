@@ -525,12 +525,16 @@ func _terminate_arrow(aid: String, pos: Vector2) -> void:
 func _on_enemy_hp_confirmed(eid: String, hp: int) -> void:
 	# 치명 여부는 Health가 확정 직전에 세팅한 last_crit에서 읽는다(표시 강조 전용 — 굴림은 이미 끝났다).
 	var crit := false
+	# 🔴 실데미지도 **같은 자리에서** 읽는다(2026-08-01) — `hp`만 보내면 게스트가 감소량으로 역산하는데
+	#   그 값은 **오버킬이 잘려** 막타가 실제보다 작게 뜬다. 표시 전용이고 `cr`과 같은 근거·같은 소스다.
+	var dmg := 0
 	var ehp_entry: Variant = _enemies.get(eid)
 	if ehp_entry != null:
 		var eh := (ehp_entry as Dictionary)["health"] as HealthComponent
 		crit = eh != null and eh.last_crit
+		dmg = eh.last_damage if eh != null else 0
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ENEMY_HP, "eid": eid, "hp": hp,
-		"cr": 1 if crit else 0})
+		"cr": 1 if crit else 0, "d": dmg})
 	if hp <= 0:
 		# 드랍 롤 트리거 (호스트 전용 경로) — 죽는 순간 좌표에서 떨어지도록 clear 판정 전에 쏜다.
 		# 실제 롤·산개·브로드캐스트는 DropAuthority가 받는다 (rules §2 책임 분리, §1 호스트 권한).
@@ -548,7 +552,11 @@ func _on_enemy_hp_confirmed(eid: String, hp: int) -> void:
 func _on_player_hp_confirmed(peer_id: int, hp: int) -> void:
 	if not Net.is_host():
 		return
-	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_PLAYER_HP, "pid": peer_id, "hp": hp})
+	# 실데미지도 함께 — ehp "d"와 같은 근거(hp만 보내면 수신 측 역산이 오버킬에서 잘린다).
+	# 🔴 **그 피어의 아바타에서 읽는다** — 확정을 만든 Health가 곧 그 노드다.
+	var php_p := _peer_sync.player(peer_id)
+	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_PLAYER_HP, "pid": peer_id, "hp": hp,
+		"d": php_p.last_damage_taken() if php_p != null else 0})
 	if hp <= 0:
 		_check_wipe()
 
@@ -940,8 +948,10 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 				return  # 권한 스푸핑 차단 — HP 확정은 호스트 발신만 신뢰 (from은 릴레이가 찍음)
 			var entry_hp: Variant = _enemies.get(str(data.get("eid", "")))
 			if entry_hp != null:
+				# "d" = 호스트가 확정한 실데미지(표시 전용). 없으면 0 = 미상 → 글루가 hp 감소량으로
+				# 폴백한다 = 구버전 호스트와 **완전 항등**(cr과 같은 규약).
 				((entry_hp as Dictionary)["health"] as HealthComponent).set_hp_display(
-					int(data.get("hp", 0)), int(data.get("cr", 0)) == 1)
+					int(data.get("hp", 0)), int(data.get("cr", 0)) == 1, int(data.get("d", 0)))
 		NetSchema.G_ROLL:
 			if not Net.is_host():
 				return  # 그랜트 권한은 호스트만
@@ -964,9 +974,11 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			var pid := int(data.get("pid", 0))
 			var target := _peer_sync.player(pid)
 			if target != null:
-				target.confirm_hp_from_net(int(data.get("hp", 0)))
+				target.confirm_hp_from_net(int(data.get("hp", 0)), int(data.get("d", 0)))
 			else:
-				_pending_php[pid] = int(data.get("hp", 0))  # 스폰 전 도착 — player_spawned에서 반영
+				# 스폰 전 도착 — player_spawned에서 반영. ⚠ "d"는 안 들고 간다: 아직 화면에 없는
+				# 아바타의 피격 숫자는 띄울 자리가 없고, 반영 시점엔 0 = 폴백이 옳다.
+				_pending_php[pid] = int(data.get("hp", 0))
 		NetSchema.G_STAGE_CLEAR:
 			if not Net.is_host() and from_id == NetSchema.HOST_ID and not _stage_over:
 				_stage_over = true

@@ -1023,11 +1023,19 @@ func _swamp_mult() -> float:
 
 
 # 게스트 수신 경로 — php 브로드캐스트 반영. 타이머 없는 표시 전용 (§3: 자기 HP도 이것만 믿는다)
-func confirm_hp_from_net(p_hp: int) -> void:
-	_health.set_hp_display(p_hp)
+func confirm_hp_from_net(p_hp: int, dmg: int = 0) -> void:
+	# dmg = php "d"(호스트가 확정한 실데미지, 표시 전용). 0 = 미상 → 글루가 감소량 폴백 =
+	# 구버전 호스트와 항등(ehp "d"와 같은 규약).
+	_health.set_hp_display(p_hp, false, dmg)
 	GameState.record_party_hp(peer_id, p_hp)  # 챕터 스테이지 간 이월 기록 — 확정 경로만 쓴다
 	EventBus.player_hp_confirmed.emit(peer_id, p_hp)
 	_update_life_state(p_hp)
+
+
+# 이 아바타가 마지막에 실제로 받은 데미지 — 호스트가 php "d"에 실어 보낼 때 읽는다(표시 전용).
+# 🔴 `_health`를 밖에서 직접 만지지 않게 하는 접근자다 — 쓰기 경로는 여전히 Health 안에만 있다.
+func last_damage_taken() -> int:
+	return _health.last_damage
 
 
 func _on_hp_confirmed(p_hp: int) -> void:
@@ -1040,7 +1048,11 @@ func _on_hp_confirmed(p_hp: int) -> void:
 # combat_impact(카메라 셰이크·데미지 숫자·SFX 공용 훅) + 히트스톱(맞은 대상 스프라이트만).
 # i-frame(구르기) 중엔 호스트가 데미지를 확정하지 않아 hp가 안 떨어진다 → 여기 안 온다(거짓 연출 없음).
 func _on_hp_changed_feel(new_hp: int, dropped: bool) -> void:
-	var amount := _prev_hp - new_hp
+	# 🔴 실데미지 우선, hp 감소량은 폴백 — 적 3종(mob_melee·enemy·boss)과 **같은 관용구**다
+	#   (2026-08-01 netreview I-1). 여기만 감소량으로 두면 `hp = maxi(0, hp - dmg)` 때문에
+	#   **플레이어가 죽는 타격은 100% 오버킬이라 늘 작게 표시**되고, 게다가 같은 사실이 프로젝트
+	#   안에서 두 관용구로 갈린다(적은 실딜·플레이어는 감소량).
+	var amount := _health.last_damage if _health.last_damage > 0 else _prev_hp - new_hp
 	_prev_hp = new_hp
 	if not dropped or amount <= 0:
 		return  # 회복·부활·최대치 조정은 손맛 대상 아님

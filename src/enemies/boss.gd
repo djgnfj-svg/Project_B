@@ -195,9 +195,11 @@ func _setup_aura() -> void:
 func _on_hp_changed(hp: int, dropped: bool) -> void:
 	var dead := hp <= 0
 	_collision.set_deferred("disabled", dead)
+	# 🔴 실데미지 우선, hp 감소량은 폴백 — 오버킬 절삭 방지 (mob_melee와 같은 규약, 2026-08-01).
+	#   `_prev_hp` 갱신이 `if dropped` 밖인 이유도 거기 주석이 정본이다(netreview M-3).
+	var amount := _health.last_damage if _health.last_damage > 0 else _prev_hp - hp
+	_prev_hp = hp
 	if dropped:
-		var amount := _prev_hp - hp
-		_prev_hp = hp
 		EventBus.combat_impact.emit("enemy", global_position, maxi(amount, 0), _health.last_crit)  # 손맛 공용 훅 (crit = 표시 강조)
 		if dead:
 			EventBus.entity_died.emit("enemy", global_position, def.respawns)  # 사망 SFX (+ 광란 제외 판단)

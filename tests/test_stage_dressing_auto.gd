@@ -55,6 +55,40 @@ func _make_field(count: int, seed_value: int) -> Node2D:
 func _run() -> void:
 	await process_frame
 
+	# --- 🔴 적 eid 유일성 전수 (netreview I-2, 2026-08-01) ---
+	# 🔴 **왜 필요한가:** `ehp`의 `cr`(치명)·`d`(실데미지)는 시그널로 전달되지 않고,
+	#   `CombatAuthority`가 `_enemies[eid]["health"]`를 **다시 조회해** 읽는다. eid가 겹치면
+	#   **HP는 맞는데 데미지 숫자와 치명 강조만 거짓말한다** — 정확히 "에러 없이 화면만 어긋남"이다.
+	# 🔴 오늘 안전한 근거는 「eid가 씬 간 유일」인데, **그 불변식을 지키는 것이 아무것도 없었다.**
+	#   `gen_stage.py`가 접두사를 재사용하거나 스테이지가 늘면 조용히 깨진다(생성기는 씬마다
+	#   `water_m*`/`cliff_m*`를 쓰지만 그건 관례일 뿐 강제가 아니다).
+	# ⚠ **씬 간**까지 보는 이유 = 씬 스왑 한 프레임 이중 구독 창(rules §2 G_EXP 항목).
+	# ⚠ 줄 **시작**으로 매칭한다 — `boss_eid = "boss1"`(CoopAuthority의 **참조**, 등록 아님)이
+	#   `eid = "`에 부분 일치해 오탐을 낸다. 실제로 단순 grep은 boss1을 2건으로 셌다.
+	var eid_owner := {}          # eid -> 그 eid를 처음 쓴 파일
+	var eid_dups: Array[String] = []
+	var eid_total := 0
+	for f: String in DirAccess.get_files_at("res://src/stage"):
+		if f.get_extension() != "tscn":
+			continue
+		var txt := FileAccess.get_file_as_string("res://src/stage/%s" % f)
+		for line: String in txt.split("\n"):
+			if not line.begins_with("eid = \""):
+				continue
+			var parts := line.split("\"")
+			if parts.size() < 2:
+				continue
+			var v := parts[1]
+			eid_total += 1
+			if eid_owner.has(v):
+				eid_dups.append("%s (%s ↔ %s)" % [v, str(eid_owner[v]), f])
+			else:
+				eid_owner[v] = f
+	_check(eid_total > 0, "eid 전수: src/stage/*.tscn 스캔 성공 (%d개 — 0이면 검사가 빈다)" % eid_total)
+	_check(eid_dups.is_empty(),
+		"★eid 유일성 전수: 씬 안·씬 사이 모두 중복 0 (겹치면 ehp의 cr·d가 엉뚱한 적에서 읽힌다) %s"
+			% ("" if eid_dups.is_empty() else str(eid_dups)))
+
 	# --- 바닥 변주: fill_ratio가 0/1일 때의 경계 + 그리드 정렬 ---
 	var vs: Array[Texture2D] = [load("res://assets/sprites/stage/ground_32_a.png"),
 		load("res://assets/sprites/stage/ground_32_b.png")]

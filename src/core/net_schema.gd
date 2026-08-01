@@ -32,7 +32,7 @@ const G_JOB := "job"                  # {k, job}      직업 공지 (id 문자�
 const G_STATS := "stats"              # {k, atk, hp, weapon, lv}  장비 총 스탯 + 착용 무기 id + **레벨 스탯** 공지. atk/hp = 호스트가 데미지/HP 확정에 사용(트러스트=발신자, clamp). weapon = 원격 무기 겉모습(표시 전용, allowlist 리졸브만). lv = 직업 레벨 5스탯 {crit, crit_dmg, haste, move, leech} — 키는 CombatMath.LEVEL_STAT_KEYS 그대로, 호스트가 치명/피흡/공속 확정에 쓰므로 수신 측이 **키 목록을 순회**해 데이터 유도 상한(GameState.max_level_stats)으로 clamp한다(모르는 키 자동 폐기). 4인/PvP 전 검증 게이트(rules §2)
 const G_HIT_REQ := "hitreq"           # {k, eid, dx, dy}  게스트 → 호스트: 적중 요청 (호스트가 **부채꼴** 검증 후 확정). dx/dy = 그 타격의 조준 방향 — 🔴 **표시 전용이던 방향이 판정 값으로 승격됐다**(무기 모션 축 2026-07-28). 호스트는 이 방향으로 `swing_arc` 부채꼴을 세워 검증한다. 스푸핑해도 **판정이 넓어지지 않는다**: 부채꼴은 **그 무기의 원**(호스트가 `peer_weapon_id`로 리졸브한 `melee_range` 기준)의 부분집합이라 어떤 방향을 주장해도 그 원을 못 넘고, 얻는 것은 "자기 화면과 다른 쪽을 때리기"뿐인데 그건 자기 화면에 헛스윙으로 보인다(협동 2인이라 남에게 피해 없음). ⚠ **"도입 전보다 좁다"고 쓰지 마라** — 반경 자체가 무기로 바뀌므로 부분집합 관계는 **같은 반경에서만** 성립한다(사거리 상한은 `MAX_MELEE_RANGE`가 따로 잡는다).
 # 🔴 **부채꼴은 게임 정합 장치이지 안티치트가 아니다** (2026-07-28 netreview m-3). 방향이 없거나 non-finite면 각 검사를 **생략**하므로(접속 창·구버전에서 정당한 근접타가 조용히 사라지는 것을 피하려는 선택), 변조 클라는 `dx`/`dy`를 **빼기만 하면** 도입 전 판정을 그대로 받는다. 회귀는 아니지만 **여기에 신뢰를 얹지 마라** — 이 경로의 실제 신뢰 경계는 넷이다: `can_job_equip` 대조 · `is_projectile_weapon` 거부 · 사거리(`HIT_REACH_SLACK`) · `_confirm_damage`의 쿨다운 게이트.
-const G_ENEMY_HP := "ehp"             # {k, eid, hp, cr}  호스트 → 전원: 적 HP 확정 브로드캐스트 (hp<=0 = 사망). cr = 1이면 이번 확정이 치명타(표시 강조 전용 — 게스트가 자기 치명을 아는 유일한 경로. 굴림은 호스트만 §1). php(플레이어 HP)엔 없다 — 적은 치명타를 굴리지 않는다
+const G_ENEMY_HP := "ehp"             # {k, eid, hp, cr, d}  호스트 → 전원: 적 HP 확정 브로드캐스트 (hp<=0 = 사망). cr = 1이면 이번 확정이 치명타(표시 강조 전용 — 게스트가 자기 치명을 아는 유일한 경로. 굴림은 호스트만 §1). php(플레이어 HP)엔 없다 — 적은 치명타를 굴리지 않는다. d = 실제로 들어간 데미지(표시 전용, 2026-08-01): hp만 보내면 수신 측이 감소량으로 역산하는데 그 값은 `maxi(0, hp-dmg)` 때문에 **오버킬이 잘려** 막타가 실제보다 작게 뜬다. 없으면 0 = 미상 → 글루가 감소량 폴백 = 구버전과 항등
 const G_SCENE := "scene"              # {k, scene, c, i} 호스트 → 전원: 씬 전환 지시 — 전환 확정 권한은 호스트 (rules §1·§3). scene=stage일 때 c=챕터 id·i=스테이지 인덱스 — 수신 측은 data/chapters 스캔 allowlist + 범위 검증(scene_flow)
 const G_ROLL := "roll"                # {k, dx, dy}   발신자=본인: 구르기 시작 선언 — 호스트가 쿨다운 검증 후 i-frame 창 부여. dx/dy = 원격 구르기 연출(peer_sync가 소비, 표시 전용)
 const G_MOB_POS := "mpos"             # {k, m}        호스트 → 전원: 잔몹 위치 배치 (m = [[eid, x, y, f], …], 10Hz). ⚠ 릴레이 2곳 로그 제외 목록에 등록 (고빈도)
@@ -46,7 +46,7 @@ const G_MOB_ATK := "matk"             # {k, eid, x, y} 호스트 → 전원: 잔
 #   이 접두사를 모르면 **정직한 화살이 조용히 거부된다.**
 # 신뢰 경계: 수신부가 `from_id != HOST_ID`면 폐기(MobSync 최상단). 게스트는 이 kind를 발신하지 않는다.
 const G_MOB_SHOOT := "mshoot"
-const G_PLAYER_HP := "php"            # {k, pid, hp}  호스트 → 전원: 플레이어 HP 확정 (hp<=0 = 사망 → 관전, 사망자에게 hp 1 = 클리어 부활). 자기 HP도 이것만 믿는다 (§3)
+const G_PLAYER_HP := "php"            # {k, pid, hp, d}  호스트 → 전원: 플레이어 HP 확정 (hp<=0 = 사망 → 관전, 사망자에게 hp 1 = 클리어 부활). 자기 HP도 이것만 믿는다 (§3). d = 실제로 들어간 데미지(표시 전용, ehp "d"와 같은 근거·같은 폴백). ⚠ 치명 "cr"은 없다 — 적은 치명타를 굴리지 않는다(ehp와 갈리는 유일한 축)
 const G_STAGE_CLEAR := "clear"        # {k}           호스트 → 전원: 스테이지 클리어 (부활 자체는 php로 — clear는 흐름/배너)
 const G_WIPE := "wipe"                # {k}           호스트 → 전원: 전멸 (배너 후 호스트가 G_SCENE village 송신)
 const G_SIT := "sit"                  # {k, on}       발신자=본인: 모닥불 앉기 상태 공지 — 표시/회복 힌트일 뿐, 회복 확정은 호스트가 거리·생존 재검증 후 (campfire 씬)
