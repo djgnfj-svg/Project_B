@@ -37,3 +37,4 @@ assets/sprites/_refs/
 assets/sprites/**/_ref*
 # 검수용 임시 산출물
 .tmp/
+__pycache__/
