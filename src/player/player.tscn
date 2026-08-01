@@ -1,7 +1,7 @@
 [gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://src/player/player.gd" id="1"]
-[ext_resource type="SpriteFrames" path="res://assets/sprites/player/warrior_swordsman_frames.tres" id="2"]
+[ext_resource type="SpriteFrames" path="res://assets/sprites/player/warrior_white_frames.tres" id="2"]
 [ext_resource type="Resource" path="res://data/jobs/warrior.tres" id="3"]
 [ext_resource type="Script" path="res://src/combat/health_component.gd" id="5"]
 [ext_resource type="Script" path="res://src/feel/camera_rig.gd" id="6"]
