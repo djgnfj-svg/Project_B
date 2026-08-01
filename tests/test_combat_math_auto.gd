@@ -1609,6 +1609,24 @@ func _initialize() -> void:
 		"★궤적 아이덴티티 검출력: 비유한 값 → 항등 폴백 (int(round(INF))는 잔상 루프를 얼린다)")
 	failures += _check(is_equal_approx(CombatMath.fx_ghost_mult(null), 1.0),
 		"★궤적 아이덴티티 검출력: null(하위 직업 미장착) → 항등 폴백")
+	# 🔴 **검기 도달 배율이 판정 배율과 같은 함수를 지나는가** — `player._trail_reach_mult()`가
+	#    `1 + clamp_reach(reach)`이고 `effective_attack_range`가 `base × (1 + clamp_reach(reach))`다.
+	#    같은 배율이라는 것이 "리본 길이 = 판정 도달"의 전부라, 여기가 갈라지면 검성에서만
+	#    표시와 판정이 어긋난다(그게 이 변경이 고치려던 결함 자체다).
+	#    ⚠ `player.gd`는 씬 글루라 `-s`가 preload를 못 한다 — **배율의 근거인 `clamp_reach`만** 여기서
+	#      잠그고, 곱하는 자리가 맞는지는 코드 주석이 방어한다(rules §3 「씬 글루 사각」).
+	var jr := load("res://data/jobs/warrior.tres") as JobDef
+	if jr != null:
+		var reach_probe := 0.3
+		var mult_probe := 1.0 + CombatMath.clamp_reach(reach_probe)
+		failures += _check(is_equal_approx(
+				CombatMath.effective_attack_range(jr, reach_probe), jr.attack_range * mult_probe),
+			"★검기 도달: 판정 사거리 = 기본 × (1 + clamp_reach) — 리본이 곱하는 배율과 같은 식")
+		failures += _check(is_equal_approx(1.0 + CombatMath.clamp_reach(0.0), 1.0),
+			"★검기 도달: reach 0 → 배율 1.0 = 리본이 도입 전과 한 픽셀도 다르지 않다(항등)")
+		failures += _check(is_equal_approx(
+				1.0 + CombatMath.clamp_reach(9.0), 1.0 + CombatMath.MAX_REACH_BONUS),
+			"★검기 도달: 과대 reach도 MAX_REACH_BONUS clamp를 지난다(리본만 상한 밖으로 못 나간다)")
 	failures += _check(degenerate_ok, "퇴화 트립와이어: MAX_HASTE에서도 유효 쿨다운 게이트 > SAME_SWING_MS")
 	failures += _check(lead_ok, "외삽 상한 불변식: LAG_MAX_LEAD_DIST ≥ 최고 이속×구르기×최대 lead (전 직업)")
 	failures += _check(melee_gap_ok,

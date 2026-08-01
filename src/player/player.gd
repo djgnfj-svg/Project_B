@@ -61,6 +61,15 @@ const TRAIL_TAIL_WIDTH := 0.35   # 꼬리 폭 비율 — 오래된 자국일수�
 #   — `blade_length ≤ 텍스처폭 − grip.x + hold_dist − swing_pull`). 이 상수를 키워서 고치려 하지 마라:
 #   키우면 리본이 칼밑보다 안쪽에서 시작해 **칼날 폭이 데이터와 갈라진다.**
 const TRAIL_MIN_INNER_DIST := 1.0
+# 🔴 **검기 표시 증폭 — `reach` 특성값에 곱해 리본에만 얹는 배율** (2026-08-01 사용자 요구:
+#   *"검성이 좀더 검기가 날아갔으면 좋겠음 크고 두껍게"*). 판정 배율은 `1 + reach`인데 표시는
+#   `1 + reach × 이 값`이다 = 검성 메인(reach 0.3)에서 판정 1.3배 vs 리본 **1.6배**.
+# 🔴 **연출값이라 여기 const다**(rules §0 예외: 손맛 전역 크기는 스크립트 const, 무기별로 갈리는
+#   것만 데이터). 데이터가 만족해야 할 제약이 아니라 "얼마나 화려한가"라서 `CombatMath`로 올리는
+#   J-1 규율의 대상이 아니다 — 전수 트립와이어가 물을 대상이 없다.
+# ⚠ **실기에서 조일 값이 바로 이것이다.** 너무 넓어 "휘둘렀는데 안 맞는다"가 되면 판정이 아니라
+#   여기를 내려라(1.0 = 판정과 정확히 일치하는 도입 시점 동작).
+const TRAIL_REACH_SHOW_MULT := 2.0
 # 선에서 면이 되면서 칠해지는 면적이 5배 가까이 늘었다 — 알파 1.0이면 잔상·칼과 겹쳐 하얗게 탄다.
 const TRAIL_ALPHA_MAX := 0.72
 # 꼬리 알파 곡선 — 옛 씬 `Gradient`(0 / 0.45→0.55 / 1)와 **같은 모양**을 코드로 옮긴 것이다
@@ -2341,11 +2350,42 @@ func _weapon_point_global(dist: float, ang_off: float) -> Vector2:
 		+ Vector2(dist, 0.0).rotated(_swing_dir.angle() + ang_off)
 
 
-# 칼끝의 월드 좌표 = 텍스처 오른쪽 끝. 🔴 **리본의 바깥 변이자 상한이다 — 여기를 넘는 표시는 없다.**
+# 🔴 **검기 도달 배율 — `reach` 특성이 켜지면 리본이 길어진다** (2026-08-01, 사용자 요구:
+#   *"메인직업이 검성일 떄는 무기범위가 길어지는거"* → 2차 *"검기가 날아갔으면 좋겠음 크고 두껍게"*).
+# 🔴🔴 **판정 배율보다 일부러 크다 — 이 비대칭이 계약이고, "갈라졌다"고 되돌리지 마라.**
+#   판정은 `effective_attack_range` = `base × (1 + clamp_reach)`이고 여기는 그 위에
+#   `TRAIL_REACH_SHOW_MULT`를 얹는다(검성 메인 기준 판정 1.3배 vs 표시 **1.6배**).
+#   §3이 금지하는 것은 「**표시 < 판정**」(= 안 보이는데 맞는다) 한 방향뿐이고, 표시가 더 큰 것은
+#   **허용 방향**이다(netreview 2026-08-01이 `MAX_MELEE_RANGE` 미적용을 두고 같은 판단을 내렸다).
+#   판정 각·반경은 여기서 한 픽셀도 안 움직인다 — 이 함수는 리본 좌표에만 쓰인다.
+# ⚠ **대가는 손맛이다**: 표시가 판정보다 크면 "휘둘렀는데 안 맞는" 띠가 생긴다(검성 메인에서
+#   판정 54.6px · 리본 67.2px = **12.6px**). 계약 위반은 아니지만 실기에서 너무 넓게 느껴지면
+#   줄일 자리는 판정이 아니라 **이 상수 하나**다.
+# 🔴 **배율식(`1 + reach × k`)을 유지해라 — 절대값으로 바꾸지 마라.** 무기를 바꾸거나
+#   `melee_range`를 튜닝할 때 리본이 따라오는 것은 이 식이 판정과 **같은 입력**(`clamp_reach`)에서
+#   파생되기 때문이다. 절대값을 적는 순간 두 번째 진실원이 생긴다(§3).
+# ⚠ reach 0 = 배율 1.0 = **완전 항등**이다 — 검성이 아닌 모든 경우에 도입 전과 한 픽셀도 다르지 않다.
+#   상한도 `clamp_reach`(0.5)가 쥐므로 최댓값은 2.0배로 닫혀 있다(별도 clamp 불필요).
+# ⚠ 리본 **전용**이다: 칼 스프라이트와 잔상은 안 늘어난다(칼은 실물이고 검기는 칼이 만든 것).
+#   그래서 `_weapon_local_dist`(칼 실물 배치식의 미러)에 곱하지 않고 여기서만 곱한다.
+# ⚠ **두께는 저절로 따라온다** — `_blade_base_global`이 같은 배율을 곱해 닮음이라, 길이를 키우면
+#   폭도 같은 비율로 커진다("크고 두껍게"가 상수 하나로 떨어지는 이유).
+func _trail_reach_mult() -> float:
+	return 1.0 + CombatMath.clamp_reach(trait_value("reach")) * TRAIL_REACH_SHOW_MULT
+
+
+# 칼끝의 월드 좌표 = 텍스처 오른쪽 끝 (× 검기 배율). 🔴 **리본의 바깥 변이자 상한이다.**
+# ⚠ 옛 주석의 *"여기를 넘는 표시는 없다"* 는 검기 도입으로 **칼끝 기준으로는 거짓이 됐다** — 상한은
+#   이제 「칼끝 × `_trail_reach_mult()`」다.
+# ⚠ **"그 상한이 곧 판정 반경"이라고 읽지 마라** (netreview 정정). 같은 것은 **배율뿐**이고 절대값은
+#   서로 다른 양에서 온다: 리본은 텍스처 폭(`_weapon_local_dist`), 판정은 `melee_range`/`attack_range`다.
+#   또 `effective_attack_range`에는 `MAX_MELEE_RANGE`(130) clamp가 있는데 여기엔 없다 — 현 데이터는
+#   창 80 × 1.5 = 120 < 130이라 도달 불가이고, 물리더라도 방향이 「표시 > 판정」(§3 허용 쪽)이다.
 func _blade_tip_global(ang_off: float) -> Vector2:
 	if _weapon.texture == null:
 		return global_position
-	return _weapon_point_global(_weapon_local_dist(float(_weapon.texture.get_width())), ang_off)
+	return _weapon_point_global(
+		_weapon_local_dist(float(_weapon.texture.get_width())) * _trail_reach_mult(), ang_off)
 
 
 # 칼밑(날이 시작하는 지점)의 월드 좌표 = 칼끝 − `CombatMath.blade_length(무기)`.
@@ -2356,11 +2396,17 @@ func _blade_tip_global(ang_off: float) -> Vector2:
 #   그건 「칼끝 밖으로 안 나간다」 불변식을 **정확히 반대로** 깨는 방향이다(현 최소 54px라 도달
 #   불가하지만, 한 겹으로 닫히는 것을 데이터 가정에 맡기지 않는다). 최악이 "두께 0 = 안 보임"이 된다.
 # ⚠ 하한 자체가 하는 일은 `TRAIL_MIN_INNER_DIST` 주석이 정본이다 — 퇴화를 막는 것은 전수 트립와이어다.
+# 🔴 **검기 배율은 두 변에 똑같이 곱한다 = 닮음이다** (2026-08-01). 바깥 변에만 곱하면 띠 폭이
+#   `blade_length + (늘어난 길이)`로 부풀어 「리본 폭 = `EquipDef.blade_length`」 단일 소스가 조용히
+#   깨진다 — 검성일 때만 무기 데이터와 화면이 갈라지고, 그건 에러 없이 "검성 리본만 두껍다"로만 보인다.
+#   양쪽에 곱하면 폭도 같은 비율로 커져 **검기가 칼의 닮은꼴**이 되고, 폭의 근거는 여전히 데이터 한 곳이다.
+# ⚠ `minf(tip_d, ...)` 부호 구조는 그대로 산다 — 배율이 항상 양수(≥ 1.0)라 두 변의 대소가 안 뒤집힌다.
 func _blade_base_global(ang_off: float) -> Vector2:
 	if _weapon.texture == null:
 		return global_position
-	var tip_d := _weapon_local_dist(float(_weapon.texture.get_width()))
-	var base_d := maxf(tip_d - CombatMath.blade_length(_weapon_override), TRAIL_MIN_INNER_DIST)
+	var k := _trail_reach_mult()
+	var tip_d := _weapon_local_dist(float(_weapon.texture.get_width())) * k
+	var base_d := maxf(tip_d - CombatMath.blade_length(_weapon_override) * k, TRAIL_MIN_INNER_DIST)
 	return _weapon_point_global(minf(tip_d, base_d), ang_off)
 
 
