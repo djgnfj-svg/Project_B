@@ -100,8 +100,30 @@ func _on_scene_change(scene_id: String) -> void:
 			push_warning("[main] 모르는 씬 id '%s' — 전환 무시" % scene_id)
 
 
+# 🔴 **이전 씬을 트리에서 먼저 뗀다 — `queue_free()`만으로는 부족하다** (2026-08-01 실기 신고
+#   "잡몹 스테이지2 갈 때 멈춘다"의 원인). `queue_free`는 **프레임 끝**에 실행되는데 바로 아래
+#   `add_child(next)`는 새 씬의 `_ready`를 **그 자리에서 동기 실행**한다 → 그 순간 이전 씬 노드가
+#   아직 그룹에 살아 있어, `_ready`에서 그룹을 **일회 스캔**하는 컴포넌트가 유령을 딕셔너리에
+#   영구히 박는다(실측: stage_2의 스캔이 `["stage_1", "stage_2"]`를 잡았다). 다음 프레임에 그것이
+#   해제되면 `entry["health"] as HealthComponent`가 **캐스트 단계에서** 터진다 —
+#   `SCRIPT ERROR: Trying to cast a freed object.` → 그 함수가 통째로 중단된다.
+#   ⚠ `x == null` 가드로는 못 막는다. **캐스트가 먼저 터진다.**
+#   실제 피해: `combat_authority._check_clear`가 첫 반복에서 죽어 **스테이지2가 영영 클리어되지
+#   않았고**(Dictionary는 삽입 순서라 유령이 항상 첫 항목), `mob_sync._physics_process`도 같은 자리에서
+#   죽어 `G_MOB_POS`가 안 나가 **게스트 화면의 잔몹이 얼어붙었다**(초당 60회 에러).
+#   `remove_child`는 그룹 조회에서 **즉시** 빠진다(실측 1 → 0). rules §5 「씬 스왑 프레임엔 이전 씬
+#   노드가 그룹에 남아 있다」의 근본 처방이다 — 그 항목은 매 프레임 스캔(player)만 리시로 덮고 있었다.
+# 🔴🔴 **이것은 「그룹 조회」만 닫는다 — EventBus 구독은 그대로 살아 있다** (netreview 2026-08-01).
+#   `remove_child`는 시그널을 끊지 않는다(`src/` 전체에 `_exit_tree`·`disconnect(`가 0건이고, 구독은
+#   프레임 끝 `queue_free`로 **객체가 해제될 때** 비로소 끊긴다). 그래서 rules §2에 등재된
+#   「한 프레임 동안 두 씬의 ExpAuthority가 같이 `net_msg`에 붙어 G_EXP가 2배 적립된다」 창은
+#   **여전히 열려 있다.** 실재 근거도 확인됐다 — `net.gd`가 `while ...get_available_packet_count()`로
+#   한 프레임에 여러 패킷을 동기 emit하고, 게스트는 SceneFlow가 **그 루프 안에서** `scene_change`를
+#   올린다. 지금은 `ChapterFlow.NEXT_DELAY_S`(3초)가 도달을 막아 무해할 뿐이다.
+#   ⚠ **이 줄을 "근본 처방"이라고 읽고 §2의 G_EXP dedup 게이트를 지우지 마라** — 그건 별개 축이다.
 func _swap(next: Node) -> void:
 	if _current != null:
+		remove_child(_current)
 		_current.queue_free()
 	_current = next
 	add_child(next)

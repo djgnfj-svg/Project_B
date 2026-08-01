@@ -18,6 +18,7 @@ const Z_INDEX := -9
 @export var rng_seed: int = 20260726                            # 배치 시드 — 씬마다 바꾸면 다른 지면이 된다
 @export var min_alpha: float = 0.55                             # 무늬가 바닥에 묻히는 정도(랜덤 범위 하한)
 @export var max_alpha: float = 0.95
+@export var exclude: Array[Rect2] = []                          # 이 사각형들 안에는 안 뿌린다(물·낭떠러지 등)
 
 
 func _ready() -> void:
@@ -29,11 +30,20 @@ func _ready() -> void:
 		var tex := textures[rng.randi_range(0, textures.size() - 1)]
 		if tex == null:
 			continue
-		var s := Sprite2D.new()
-		s.texture = tex
-		s.position = Vector2(
+		var pos := Vector2(
 			rng.randf_range(area.position.x, area.end.x),
 			rng.randf_range(area.position.y, area.end.y))
+		# 통행 불가 지형 위에 흙 무늬가 뜨면 "갈 수 있는 땅"으로 읽힌다 — foliage_field와 같은 규약.
+		var blocked := false
+		for r: Rect2 in exclude:
+			if r.has_point(pos):
+				blocked = true
+				break
+		if blocked:
+			continue
+		var s := Sprite2D.new()
+		s.texture = tex
+		s.position = pos
 		s.flip_h = rng.randf() < 0.5  # 좌우 반전만 — 회전은 픽셀아트를 뭉갠다(Nearest 필터에서 계단이 생긴다)
 		s.z_index = Z_INDEX
 		s.modulate = Color(1.0, 1.0, 1.0, rng.randf_range(min_alpha, max_alpha))

@@ -845,6 +845,34 @@ func active_traits() -> Dictionary:
 	return traits_of(announced_main_id(), announced_sub_ids(), selected_job_id)
 
 
+# 메인 하위 직업의 **궤적 아이덴티티** {color, ghost} — 표시 전용(판정 무관·네트워크 0).
+# 🔴 **traits_of와 같은 게이트를 지난다**: id allowlist 리졸브 · 계열 불일치 폐기 · 공유는 메인 불가.
+#   사본 조건문을 두면 "메인 특성은 안 켜지는데 색만 바뀌는" 상태가 열린다 — 둘 다 **메인 자리**
+#   소속이라 같은 근거에서 파생돼야 한다(active_traits ↔ announced_main_id 통일과 같은 이유).
+# 🔴 공유 하위 직업 배제는 `SubJobDef.trait_at(true)`가 메인 특성을 막는 것과 **같은 근거**다
+#   (메인 자리는 계열 전용, GDD §5). 여기서만 통과시키면 곡예사를 메인으로 주장한 공지가
+#   특성은 못 얻고 색만 얻는다.
+# 미상·불일치·미지정 = 항등(흰색 · 배율 1.0) = 도입 전과 완전히 같다.
+func main_fx_of(main_id: String, series_id: String) -> Dictionary:
+	var out := {"color": Color(1, 1, 1, 1), "ghost": 1.0, "tex": null}
+	if main_id.is_empty():
+		return out
+	var d := sub_job_def(main_id)
+	if d == null or d.is_shared() or not d.is_usable_by(series_id):
+		return out
+	out["color"] = d.fx_color
+	out["ghost"] = CombatMath.fx_ghost_mult(d)  # 🔴 상한은 CombatMath 단일 소스(전수 트립와이어가 닿는 자리)
+	# 🔴 질감도 **같은 게이트 안에서** 나온다 — 위 세 폐기 조건 중 하나라도 걸리면 null(단색)이다.
+	#   밖에서 따로 읽으면 "색은 폐기됐는데 질감만 남는" 조합이 생긴다.
+	out["tex"] = d.fx_trail_tex
+	return out
+
+
+# 내 궤적 아이덴티티 — 로컬 아바타 연출용. active_traits와 **같은 입력**(필터 통과분)을 쓴다.
+func active_main_fx() -> Dictionary:
+	return main_fx_of(announced_main_id(), selected_job_id)
+
+
 # 공지용 메인 id — 무효(타 계열 진행분·미보유)면 빈 문자열. 🔴 `main_sub_job_id` 원본을 그대로
 # 보내면 "나는 0으로 계산하는데 상대에겐 id를 보내는" 상태가 된다(수신 측 계열 필터가 같은 결과를
 # 내서 지금은 무해하지만, 같은 것을 두 근거로 계산하는 구조가 남는다 — active_traits와 통일).

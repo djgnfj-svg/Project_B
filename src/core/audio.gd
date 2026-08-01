@@ -48,7 +48,8 @@ func _ready() -> void:
 	_load_settings()
 	_apply_volume()
 	EventBus.combat_impact.connect(_on_impact)
-	EventBus.player_swing.connect(func(_pos: Vector2, sfx: String) -> void: play(sfx))  # 무기별 휘두름음
+	# 무기별 휘두름음 — pitch = 콤보 타수(근접만 1.0이 아니다, `player._swing_pitch()`가 정본)
+	EventBus.player_swing.connect(func(_pos: Vector2, sfx: String, pitch: float) -> void: play(sfx, pitch))
 	EventBus.weapon_impact.connect(func(_pos: Vector2, sfx: String, _shake: float) -> void: play(sfx))  # 무기 고유 타격음(비면 무음)
 	EventBus.player_roll.connect(func(_pos: Vector2) -> void: play("roll"))
 	EventBus.entity_died.connect(func(kind: String, _pos: Vector2, _respawns: bool) -> void:
@@ -67,13 +68,18 @@ func _load_streams() -> void:
 
 
 # SFX 재생 — 라운드로빈 풀에서 다음 채널로. 없는 id는 무시(파일 아직 없을 때 안전).
-func play(id: String) -> void:
+# 🔴 **`pitch`는 항상 대입한다 — 기본값이라도 생략하지 마라.** `pitch_scale`은 채널(노드) 속성이라
+#   한 번 세팅하면 그 채널의 **다음 재생에 그대로 남는다.** 풀이 라운드로빈이라 8발 뒤에 돌아오므로,
+#   조건부로 대입하면 "가끔 엉뚱한 소리가 높게 난다"가 되고 원인이 화면에 안 드러난다.
+# ⚠ clamp는 데이터 오타 방어다(0 이하면 무음·음수면 역재생). 연출 범위는 0.86~1.14 정도다.
+func play(id: String, pitch: float = 1.0) -> void:
 	var stream: Variant = _streams.get(id)
 	if stream == null:
 		return
 	var p := _players[_next]
 	_next = (_next + 1) % POOL_SIZE
 	p.stream = stream as AudioStream
+	p.pitch_scale = clampf(pitch, 0.5, 2.0) if is_finite(pitch) else 1.0
 	p.play()
 
 

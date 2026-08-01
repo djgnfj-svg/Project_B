@@ -29,6 +29,10 @@ signal enemy_hp_confirmed(eid: String, hp: int)  # 호스트 전용 emit(enemy �
 signal player_hp_confirmed(peer_id: int, hp: int)  # 확정 HP 통지 — 호스트=Health 권한 경로, 게스트=php 수신 경로. 호스트일 때만 stage가 php 브로드캐스트
 signal mob_telegraph(eid: String, center: Vector2)  # 호스트 전용 emit(잔몹 AI WINDUP) — MobSync가 matk 브로드캐스트
 signal mob_strike(eid: String, center: Vector2)     # 호스트 전용 emit(잔몹 AI STRIKE) — CombatAuthority가 데미지 확정
+# 원거리 잔몹 발사 — 호스트 AI가 emit(MobSync가 G_MOB_SHOOT 브로드캐스트 + CombatAuthority가 권한 화살 등록),
+# 게스트는 G_MOB_SHOOT 수신 시 **로컬 emit**한다(mob_telegraph→matk와 같은 미러 규약) → 양쪽 ArrowField가
+# 같은 경로로 표시 탄을 낸다. def를 동봉하는 것은 enemy_killed·boss_strike 선례와 같다(수치는 각자 로컬 리졸브).
+signal mob_shoot(eid: String, origin: Vector2, dir: Vector2, aid: String, def: EnemyDef)
 
 # --- 투사체 (궁수 활 2026-07-24 / 법사 차지 지팡이 확장) — 발사는 로컬 선언, 표시 탄은 각 클라 로컬 시뮬, 명중 확정은 호스트만 ---
 signal player_shoot(shooter_id: int, origin: Vector2, dir: Vector2, aid: String, arrow_range: float, weapon_id: String, charge: int, combo: int)  # 로컬 발사 선언(player emit) — ArrowField가 표시 투사체 스폰, CombatAuthority(호스트 자기 발사)가 권한 투사체 등록. arrow_range = 무기 사거리(EquipDef.arrow_range) · weapon_id = 착용 무기 id(수신 측이 allowlist 리졸브해 탄 겉모습/속도/폭발 반경을 얻는다) · charge = 차지 레벨(0~3, 비차지 무기는 0) · combo = 평타 콤보 타수(궁수 "평·평·쭉" — 사거리/데미지 배율은 EquipDef.combo_*를 각 클라가 로컬 리졸브, 타수만 오간다). player가 G_SHOOT도 송신(원격 표시용)
@@ -63,7 +67,7 @@ signal screen_shake(strength: float)  # 명시적 셰이크 트리거 (사망·�
 #   그런 상태라 셰이크는 남의 피격에도 난다 — 킥까지 따라가면 원인 모를 화면 흔들림이 된다).
 signal camera_kick(dir: Vector2, strength: float)
 # 소리/연출 트리거 (표시·소리 전용, 각 클라 로컬) — Audio가 SFX로, 필요시 연출이 구독.
-signal player_swing(world_pos: Vector2, sfx: String)   # 플레이어 공격 스윙(로컬·원격 연출 시점) — sfx = 무기 스윙음 id(EquipDef.swing_sfx). ⚠ 발사(EquipDef.swing_sfx)·**차지 단계 상승(charge_sfx)**도 이 훅을 재사용한다 = "소리 낼 순간" 훅에 가깝다. 여기에 스윙 궤적 같은 **시각** 연출을 매달면 기 모을 때마다 검을 휘두른다 — 시각을 붙일 땐 sfx id로 갈라내거나 별도 시그널을 파라
+signal player_swing(world_pos: Vector2, sfx: String, pitch: float)   # 플레이어 공격 스윙(로컬·원격 연출 시점) — sfx = 무기 스윙음 id(EquipDef.swing_sfx). ⚠ 발사(EquipDef.swing_sfx)·**차지 단계 상승(charge_sfx)**도 이 훅을 재사용한다 = "소리 낼 순간" 훅에 가깝다. 여기에 스윙 궤적 같은 **시각** 연출을 매달면 기 모을 때마다 검을 휘두른다 — 시각을 붙일 땐 sfx id로 갈라내거나 별도 시그널을 파라. 🔴 **pitch = 근접 콤보 타수의 리듬**(2026-08-01, 사용자 요구 *"리듬감이 티가 났으면"*): 평타는 타수마다 오르고 마무리만 뚝 떨어져 "타-타-쾅"이 된다. 유도는 `player._swing_pitch()` **단일 소스** — 발사·차지 경로는 1.0(항등)을 실어라. ⚠ GDScript 시그널엔 기본값이 없어 **emit 전부가 이 인자를 넘겨야 한다**(빠뜨리면 런타임에서 조용히 안 불린다)
 signal player_roll(world_pos: Vector2)    # 플레이어 구르기 시작
 # kind = "enemy"|"player" — 사망 확정 표시.
 # 🔴 `respawns` = 그 적이 **되살아나는가**(EnemyDef.respawns — 훈련용 허수아비). 소리에는 무의미하지만

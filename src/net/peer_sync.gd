@@ -93,6 +93,17 @@ func peer_traits(peer_id: int) -> Dictionary:
 		str(st.get("ms", "")), st.get("ss", []) as Array, str(_peer_jobs.get(peer_id, "")))
 
 
+# 그 피어의 궤적 아이덴티티 {color, ghost} — **표시 전용**(판정 무관). peer_traits의 미러다:
+# 같은 공지("ms")·같은 계열 근거·같은 로컬 리졸브를 쓰고, 미공지/계열 미상이면 항등(흰색·1.0)으로
+# 떨어진다. 🔴 새 네트워크 필드 0개 — 색을 payload에 실으면 남의 화면을 칠하는 권한이 생긴다(rules §3).
+func peer_main_fx(peer_id: int) -> Dictionary:
+	var st_v: Variant = _peer_stats.get(peer_id)
+	if st_v == null:
+		return GameState.main_fx_of("", "")
+	var st := st_v as Dictionary
+	return GameState.main_fx_of(str(st.get("ms", "")), str(_peer_jobs.get(peer_id, "")))
+
+
 func _spawn(peer_id: int, is_local: bool) -> void:
 	if peer_id == 0 or _players.has(peer_id):
 		return
@@ -117,6 +128,7 @@ func _spawn(peer_id: int, is_local: bool) -> void:
 		# 무기 겉모습(표시용) — id는 allowlist 리졸브(모르면 null→직업 기본 무기 폴백)
 		p.set_weapon_visual(_remote_weapon_def(peer_id, str(st.get("weapon", ""))))
 		p.set_traits(peer_traits(peer_id))  # 하위 직업 특성 — 같은 버퍼에서
+		p.set_subjob_fx(peer_main_fx(peer_id))  # 궤적 아이덴티티(표시 전용) — 특성과 **항상 같이** 간다
 	_players[peer_id] = p
 	# 스폰 완료 공지 — 호스트가 챕터 이월 HP를 재확정하는 입구 (CombatAuthority). 잡 반영 뒤에 emit.
 	EventBus.player_spawned.emit(peer_id, p)
@@ -155,6 +167,9 @@ func _apply_local_stats() -> void:
 		#   아예 없다.** 성장축 리뷰 Critical(호스트 자기 공속이 게이트에 안 들어가 자기 타격이 걸러졌던 것)과
 		#   같은 함정이라, 치명·피흡·공속과 소스를 통일해 둔다.
 		lp.set_traits(GameState.active_traits())
+		# 궤적 아이덴티티도 같은 소스에서 — 🔴 여기서 빠지면 **내 화면의 내 칼만** 색이 안 바뀌고
+		#   상대 화면에서는 바뀐다(원격 경로는 G_STATS로 도달하므로). 위 특성과 같은 함정이다.
+		lp.set_subjob_fx(GameState.active_main_fx())
 	_announce_stats()
 
 
@@ -230,6 +245,25 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			_peer_jobs[from_id] = str(data.get("job", ""))
 			if _players.has(from_id):
 				_players[from_id].set_job(GameState.job_def(str(data.get("job", ""))))
+				# 🔴🔴 **계열이 늦게 확정되면 특성·궤적을 다시 적용해야 한다** (netreview 2026-08-01).
+				#   `peer_traits`/`peer_main_fx`가 **둘 다 계열을 `_peer_jobs`에서 읽는다.** G_STATS가
+				#   G_JOB보다 먼저 도착하면 그 순간 계열 미상이라 특성이 **전부 0으로 굳고**, 이 분기가
+				#   재적용하지 않으면 **그 판 내내 복구되지 않는다** — 스테이지 안에서 G_STATS 재발화
+				#   조건이 `inventory_changed`/`growth_changed`뿐이라 다음 재공지가 영영 안 올 수 있다.
+				# 🔴 **도달 경로는 P2P다.** `Net.send_game`이 메시지마다 경로를 고르므로(직결 ~14ms vs
+				#   릴레이 140~215ms), 씬 진입의 G_JOB이 릴레이로 나간 뒤 직결이 열리고 그다음
+				#   `_apply_local_stats`가 G_STATS만 직결로 보내면 **순서가 뒤집힌다.** ⚠ `_pos_seen`
+				#   재공지(위 G_POS 분기)는 두 줄이 **연속**이라 같은 경로로 나가 이 창을 안 만든다 —
+				#   즉 복구가 그쪽에 걸려 있지 않다.
+				# 🔴 증상 = **검성의 `reach`가 꺼진 채 호스트가 판정한다**(도달 54.6 → 42px) → 팁 타격이
+				#   **무음 거부**된다. rules §2 *"G_STATS는 이제 판정 입력이라 놓치면 영구 결함"* 과 같은
+				#   고장 모드이고, 스윙·궤적·소리가 다 정상이라 화면에 이유가 없다.
+				# ⚠ **새 메시지·새 필드 0개다** — `_peer_stats`에 이미 버퍼된 값을 계열만 새로 얹어 다시
+				#   리졸브할 뿐이다. 계열이 이미 맞았으면 같은 값이 나온다(항등 경로 불변).
+				# ⚠ 🔵 이 결함은 궤적 아이덴티티 도입 **이전부터** 특성 축에 있었다. 다만 이제
+				#   **흰 궤적**으로 화면에 드러난다(전에는 단서가 아예 없었다).
+				_players[from_id].set_traits(peer_traits(from_id))
+				_players[from_id].set_subjob_fx(peer_main_fx(from_id))
 		NetSchema.G_STATS:
 			# 장비 스탯 공지 — 발신자 트러스트(G_JOB과 동일 co-op 모델). 클램프 = 데이터 유도 현실 상한
 			# (정직한 최강 장비는 통과, 임의 수 주입 차단 — 부풀린 hp가 모닥불 회복 천장으로 새는 것 방지).
@@ -257,6 +291,7 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 				_players[from_id].set_level_stats(lv)
 				_players[from_id].set_weapon_visual(_remote_weapon_def(from_id, wid))
 				_players[from_id].set_traits(peer_traits(from_id))  # 원격 특성 — 연출·판정 기하 공용
+				_players[from_id].set_subjob_fx(peer_main_fx(from_id))  # 궤적 아이덴티티(표시 전용)
 		NetSchema.G_ATK:
 			if _players.has(from_id):
 				var dir := Vector2(float(data.get("dx", 1.0)), float(data.get("dy", 0.0)))

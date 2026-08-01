@@ -27,18 +27,6 @@ kind = "blueprint"
 ref_id = "iron_greatsword"
 chance = 1.0
 
-[sub_resource type="Resource" id="d_bp_bow"]
-script = ExtResource("5")
-kind = "blueprint"
-ref_id = "iron_bow"
-chance = 1.0
-
-[sub_resource type="Resource" id="d_bp_staff"]
-script = ExtResource("5")
-kind = "blueprint"
-ref_id = "iron_staff"
-chance = 1.0
-
 [sub_resource type="Resource" id="d_bp_axe"]
 script = ExtResource("5")
 kind = "blueprint"
@@ -53,7 +41,7 @@ chance = 1.0
 
 [sub_resource type="Resource" id="d_table"]
 script = ExtResource("4")
-entries = Array[DropEntry]([SubResource("d_gold"), SubResource("d_core"), SubResource("d_bp_sword"), SubResource("d_bp_bow"), SubResource("d_bp_staff"), SubResource("d_bp_axe"), SubResource("d_bp_spear")])
+entries = Array[DropEntry]([SubResource("d_gold"), SubResource("d_core"), SubResource("d_bp_sword"), SubResource("d_bp_axe"), SubResource("d_bp_spear")])
 
 [sub_resource type="Resource" id="pat_swing"]
 script = ExtResource("2")
