@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://5p62ufk80h50"
-path="res://.godot/imported/archer_sniper.png-324c1705259268652128d298acad91e5.ctex"
+uid="uid://dxk8d83vl3nx3"
+path="res://.godot/imported/warrior_white_anim.png-31c5e804286a78c8302b6b79ca33de68.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/sprites/subjobs/archer_sniper.png"
-dest_files=["res://.godot/imported/archer_sniper.png-324c1705259268652128d298acad91e5.ctex"]
+source_file="res://assets/sprites/player/warrior_white_anim.png"
+dest_files=["res://.godot/imported/warrior_white_anim.png-31c5e804286a78c8302b6b79ca33de68.ctex"]
 
 [params]
 

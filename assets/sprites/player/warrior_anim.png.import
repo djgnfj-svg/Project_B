@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bfyiogh7hbhv7"
-path="res://.godot/imported/archer_marksman.png-8cc83992009ed8c0bfcd05739eac67b4.ctex"
+uid="uid://u74ghdpf0j3f"
+path="res://.godot/imported/warrior_anim.png-0e97c37ad203e029557bfc3f3ec79a90.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/sprites/subjobs/archer_marksman.png"
-dest_files=["res://.godot/imported/archer_marksman.png-8cc83992009ed8c0bfcd05739eac67b4.ctex"]
+source_file="res://assets/sprites/player/warrior_anim.png"
+dest_files=["res://.godot/imported/warrior_anim.png-0e97c37ad203e029557bfc3f3ec79a90.ctex"]
 
 [params]
 

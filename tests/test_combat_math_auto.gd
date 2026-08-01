@@ -1036,12 +1036,14 @@ func _initialize() -> void:
 	var thrust := EquipDef.new()
 	thrust.motion_type = "thrust"  # 예약 모션 — 아직 발사형이 아니다
 	failures += _check(CombatMath.is_projectile_weapon(bow), "발사형: shoot = 발사 가능")
-	# ⚠ **charge 갈래는 실제 charge 무기로 겨눈다** — worn_staff는 2026-07-27에 shoot(마법볼)로 갈라져서
-	#   그걸 계속 겨누면 라벨만 "charge"이고 실제로는 shoot 갈래를 두 번 재게 된다(조용히 커버리지 상실).
-	failures += _check(CombatMath.is_projectile_weapon(load("res://data/equipment/iron_staff.tres") as EquipDef),
-		"발사형: charge(철 지팡이) = 발사 가능")
-	failures += _check(CombatMath.is_projectile_weapon(load("res://data/equipment/worn_staff.tres") as EquipDef),
-		"발사형: shoot(낡은 지팡이 = 마법볼) = 발사 가능")
+	# ⚠ **charge 갈래는 합성으로 겨눈다** — 실제 charge 무기(지팡이)는 궁수·법사 폐기와 함께
+	#   2026-08-01에 삭제됐다. `is_projectile_weapon`은 `motion_type` 문자열만 보므로 합성으로 충분하고,
+	#   이렇게 안 하면 charge 갈래가 통째로 안 재진다(라벨만 남고 커버리지가 조용히 사라진다).
+	var charger := EquipDef.new()
+	charger.motion_type = "charge"
+	charger.arrow_range = 150.0
+	failures += _check(CombatMath.is_projectile_weapon(charger),
+		"발사형: charge(합성) = 발사 가능")
 	failures += _check(not CombatMath.is_projectile_weapon(gsword),
 		"★발사형: swing(대검) = 발사 거부 — 새면 전사 공격력짜리 권한 화살이 확정된다")
 	failures += _check(not CombatMath.is_projectile_weapon(thrust), "★발사형: thrust(예약) = 발사 거부")
