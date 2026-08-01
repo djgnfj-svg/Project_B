@@ -35,6 +35,56 @@
 
 <!-- 새 항목은 이 줄 바로 아래에 `## YYYY-MM-DD — 제목` 으로 추가한다 -->
 
+## 2026-08-01 — 수정: "스테이지2에서 멈춘다" — 씬 전환 유령 노드가 일회 스캔에 박혔다
+
+**한 줄:** 미해결 신고의 원인을 확정·수정했다. `_swap`이 `queue_free`(프레임 끝) 뒤 곧바로 `add_child`(= `_ready` 동기 실행)라 **이전 씬 노드가 그룹에 살아 있는 채로** 일회 스캔에 박혔고, 다음 프레임에 `as` **캐스트가 터져** 함수가 중단됐다. `== null` 가드는 무용지물이었다.
+
+### 무엇을
+
+- **근본** — `src/main/main.gd` `_swap()`이 `remove_child(_current)`를 `queue_free()` **앞에** 한다. 실측: 그룹 조회 1 → 0.
+- **입구 방어** — `combat_authority._ready`·`mob_sync._ready`의 그룹 스캔에 `scene_root.is_ancestor_of(node)` 필터. **소비처 12곳에 `is_instance_valid`를 뿌리는 대신 입구 하나를 막았다** — 그래야 `_enemies`를 읽는 코드가 늘어도 재발하지 않는다.
+- **회귀 트립와이어** — `tests/test_scene_swap_auto.gd` 신설(9단정). 엔진 전제 3 + 행동 재현 3 + 소스 트립와이어 3.
+
+### 왜
+
+사용자 신고는 *"어쩔 때 자꾸 게임이 멈춘다"*(재현 조건 미상)였고, 이번에 *"잡몹 스테이지2 갈 때"* 라는 조건이 추가되면서 좁혀졌다. `docs/TUNING.md` §19가 지목하던 후보 셋(길찾기·전 맵 어그로·화살표)은 **전부 무혐의**다 — 결함은 2026-07-22 `0b9582f`부터 있었다.
+
+`add_child`는 새 씬의 `_ready`를 **그 자리에서 동기 실행**한다. 그 순간 `queue_free`된 이전 씬은 아직 트리·그룹에 있다. 실측:
+
+```
+PROBE [stage_2]._ready 그룹 스캔 결과 = ["stage_1", "stage_2"]   ← 유령이 같이 잡힌다
+PROBE   stage_1/mob → is_instance_valid=false                     ← 다음 프레임엔 죽은 참조
+SCRIPT ERROR: Trying to cast a freed object.                      ← _check_clear 첫 반복에서 중단
+```
+
+피해 두 갈래(둘 다 **화면에 이유가 안 드러난다**):
+
+| 어디 | 결과 |
+|---|---|
+| `combat_authority._check_clear` (`entry["health"] as HealthComponent`) | **스테이지2가 영영 클리어되지 않는다.** Dictionary는 삽입 순서라 유령이 늘 첫 항목 = 100% 재현 |
+| `mob_sync._physics_process` (`_mobs[eid] as Node2D`) | `G_MOB_POS`가 **한 통도 안 나간다** → 게스트 화면의 잔몹이 통째로 얼어붙는다(초당 60회 에러) |
+
+🔴 **왜 stage_2에서만인가** — 마을엔 `enemy`/`mob` 그룹 노드가 0이라 `마을 → stage_1`은 깨끗하다. `stage_1 → stage_2`가 이 프로젝트에서 **적이 있는 씬 → 적이 있는 씬**의 유일한 전환이다. 챕터1이 그 순서를 갖게 된 것은 2026-07-26(`dbe2a69`)이고, 08-01 전투 스테이지 전량 개편 뒤 사용자가 챕터1을 처음 끝까지 플레이하며 드러났다.
+
+### 검증
+
+- 새 트립와이어 9/9 · **뮤테이션 2건 검출 확인**(`_swap`의 `remove_child` 제거 → FAIL · `mob_sync` 입구 필터 무력화 → FAIL)
+- 전체 스위트 **12/12**(`exit 0` · `SCRIPT ERROR` 0 · 씬 글루 파스 체크 포함)
+- 처방 유효성 실측: `queue_free`만 → 그룹 1 / `remove_child` 후 → 그룹 0
+
+### 남은 것
+
+- 🔴 **실기 미확인** — `stage_1 → stage_2` 전환을 사람이 밟아 봐야 한다. 게스트 쪽(`G_MOB_POS` 복구 후 잔몹 lerp)은 stage_2에서 **한 번도 안 돌아 본 코드 경로**다.
+- `docs/TUNING.md` §18 A절(물·낭떠러지 실기)은 이 결함에 가려 있었을 가능성이 있다 — 다시 밟는다.
+
+## 2026-08-01 — 변경: 마을 장식에서 바위 제거
+
+**한 줄:** `village.tscn`의 `GroundDetail` 텍스처 후보에서 `rock_a`·`rock_b`를 뺐다(장식 12종 → 바닥 스캐터는 풀·꽃 4종만).
+
+### 무엇을 · 왜
+
+에디터 실기에서 정한 아트 조정이다. 스캐터 밀도(`count = 48`)는 그대로이므로 같은 개수를 풀·꽃 4종이 나눠 갖는다. PNG는 지우지 않았다 — `assets/sprites/village/decor/rock_{a,b}.png`는 남아 있고, 되돌리려면 `textures` 배열에 `ExtResource`를 다시 넣으면 된다.
+
 ## 2026-08-01 — 추가: 길찾기·흰색 전사·전투 감각 조정 (전투 스테이지 개편 후속)
 
 전투 스테이지 개편(같은 날 앞 항목) 뒤 사용자 요청으로 이어 붙인 것들. 전부 배포까지 갔다.
