@@ -7,6 +7,10 @@ extends StaticBody2D
 
 const FALL_HEIGHT := 64.0   # 낙하 연출 시작 높이(px) — 예고는 이미 windup(spray N원)에 떴다
 const FALL_TIME := 0.28     # 낙하 연출 시간(초)
+# 착지 먼지 FX(rock_dust.png 미러) — 80×48 5프레임, 하단중심 앵커(로컬 40,40). 착지 순간 1회 재생 후 자소멸.
+const DUST_FRAMES := preload("res://assets/sprites/fx/rock_dust_frames.tres")
+const DUST_GROUND_Y := 20.0  # 먼지 노드 y — 먼지 접지선(하단중심)을 (1.45배 커진) 바위 발밑에 맞춤
+const DUST_SCALE := 1.4      # 커진 바위에 맞춰 먼지도 크게
 
 # RockField.setup이 add_child 전에 채운다 — 노드 접근 없이 값만 보관 (@onready 미해결 시점, SwampZone 미러)
 var rid: String = ""
@@ -43,8 +47,22 @@ func _ready() -> void:
 	_sprite.offset.y = -FALL_HEIGHT
 	var tw := create_tween()
 	tw.tween_property(_sprite, "offset:y", 0.0, FALL_TIME).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+	tw.tween_callback(_spawn_dust)   # 착지 순간 — 먼지 확산 + 잔돌
 	tw.tween_property(_sprite, "scale:y", 0.86, 0.05)
 	tw.tween_property(_sprite, "scale:y", 1.0, 0.08)
+
+
+# 착지 먼지 — 바위 발밑에 rock_dust puff 1회 재생 후 자소멸(하단중심 앵커라 위로 안 뜬다).
+func _spawn_dust() -> void:
+	var dust := AnimatedSprite2D.new()
+	dust.sprite_frames = DUST_FRAMES
+	dust.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	dust.z_index = -1                       # 바위(-2)보다 위, 캐릭터 아래
+	dust.scale = Vector2(DUST_SCALE, DUST_SCALE)
+	dust.position = Vector2(0, DUST_GROUND_Y)
+	dust.play(&"puff")
+	dust.animation_finished.connect(dust.queue_free)
+	add_child(dust)
 
 
 func _process(delta: float) -> void:
@@ -55,18 +73,24 @@ func _process(delta: float) -> void:
 		_despawn()
 
 
-# 돌진 충돌 시 boss.gd(_enter_charge_hit)가 호출 — 금 간 프레임으로 바꾸고 부서져 사라진다(조기 제거).
+# 돌진 충돌 시 boss.gd(_enter_charge_hit)가 호출 — 5단계 파괴 애니(균열→갈라짐→파편→붕괴)를 프레임으로
+# 밟고, 붕괴 잔해를 잠깐 보인 뒤 페이드해 사라진다(조기 제거). 프레임 = boss_rock.png 1~4번.
 func shatter() -> void:
 	if _gone:
 		return
 	_gone = true
 	_collision.set_deferred("disabled", true)   # 부서지는 중엔 더 안 막는다
-	_sprite.frame = 1                            # 금 간 바위
 	var tw := create_tween()
-	tw.tween_interval(0.06)
-	tw.tween_property(_sprite, "scale", Vector2(1.15, 0.5), 0.12)   # 납작하게 부서짐
-	tw.parallel().tween_property(_sprite, "modulate:a", 0.0, 0.12)
+	for f: int in [1, 2, 3, 4]:                  # 균열 → 갈라짐 → 파편 → 붕괴
+		tw.tween_callback(_set_frame.bind(f))
+		tw.tween_interval(0.07)
+	tw.tween_interval(0.16)                       # 붕괴 잔해 잠깐 보여주고
+	tw.tween_property(_sprite, "modulate:a", 0.0, 0.2)
 	tw.tween_callback(queue_free)
+
+
+func _set_frame(f: int) -> void:
+	_sprite.frame = f
 
 
 # ttl 만료 로컬 소멸(네트워크 메시지 없음 — 결정만 호스트, despawn은 각 클라 로컬 타이머). 페이드 아웃.

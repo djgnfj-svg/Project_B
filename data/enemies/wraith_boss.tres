@@ -101,7 +101,7 @@ min_phase = 1
 burst_count = 4
 burst_spread = 130.0
 leaves_rock = true
-rock_radius = 24.0
+rock_radius = 34.0
 rock_ttl = 10.0
 
 [sub_resource type="Resource" id="pat_charge"]
@@ -119,7 +119,7 @@ use_min_dist = 140.0
 use_max_dist = 420.0
 min_phase = 1
 is_charge = true
-charge_speed = 240.0
+charge_speed = 500.0
 charge_sweep_radius = 72.0
 charge_travel_max = 260.0
 groggy_s = 3.0

@@ -80,6 +80,7 @@ enum State { IDLE, CHASE, WINDUP, RECOVER, CHARGE_DASH, CHARGE_HIT }
 const CHARGE_HIT_DUR := 0.3       # 바위 충돌 리코일(튕김) 지속(s) — 짧게, 이후 그로기로
 const CHARGE_RECOIL_SPEED := 180.0  # 바위 충돌 시 뒤로 튕기는 초기 속도(px/s)
 const CHARGE_TIMEOUT_MARGIN := 0.4  # 돌진 타임아웃 = 이동시간 + 이 여유(벽에 낀 채 무한 돌진 방지)
+const CHARGE_SPIN_TIME := 1.0       # 돌진+회전 총 지속(s). 이동은 앞부분(속도로 0.5s쯤 도달)
 
 @export var eid: String = ""
 @export var def: BossDef
@@ -126,6 +127,9 @@ var _noise: FastNoiseLite = null       # 지터용 연속 노이즈(1D 표본) �
 var _charge_seq: int = 0               # 돌진(P3) 회차 id — 스윕 dedup 키(돌진당 +1, CombatAuthority._boss_sweep_seq와 짝)
 var _charge_start: Vector2 = Vector2.ZERO  # 이번 돌진 시작 위치 — 이동거리(travel_max) 판정 기준
 var _c1_frames: SpriteFrames = null    # C1 코옵 전용 클립 시트(roar/grab/groggy — mino_boss_c1) 지연 로드
+var _spin_frames: SpriteFrames = null  # 돌진 회전 전용 풀캐릭터 시트(mino_spin_full) 지연 로드
+var _hitfall_frames: SpriteFrames = null  # 바위 충돌·그로기 클립 시트(mino_hit_fall) 지연 로드
+var _hitfall_active: bool = false          # 충돌/그로기 클립 재생 중 — 그로기 끝나면 end_c1_clip으로 복귀
 var _c1_active: bool = false           # C1 클립 재생 중 — 생명감 눕기 포즈를 건너뛴다(클립이 곧 포즈)
 var coop_locked: bool = false          # C1 결박 중 — 패턴 AI 정지(외부=coop_authority가 설정). 페이즈2 자동 늪도 멈춤(설계 §9)
 
@@ -284,6 +288,11 @@ func _update_life_feel(delta: float) -> void:
 		if _aura != null:
 			_aura.visible = false
 		return
+	# 그로기 끝 — hit_fall 클립(충돌/눕기)이 재생 중이었으면 방향 시트로 복귀.
+	# CHARGE_HIT(충돌 리코일 0.3s) 동안엔 아직 그로기 전이라 안 끝낸다(상태로 가드).
+	if _hitfall_active and _state != State.CHARGE_HIT:
+		_hitfall_active = false
+		end_c1_clip()
 	# 그로기 끝 — 회전 원위치로 복구
 	if not is_zero_approx(_sprite.rotation):
 		_sprite.rotation = lerp_angle(_sprite.rotation, 0.0, minf(1.0, delta * 9.0))
@@ -336,21 +345,51 @@ func enter_groggy(dur: float) -> void:
 	groggy_left = maxf(groggy_left, dur)
 
 
-# C1 코옵 — 미노 전용 클립(roar/grab/groggy, mino_boss_c1 시트)을 임시로 물려 재생. coop_authority가 STELE 중 구동.
-# 방향 시트를 잠시 c1 시트로 갈고 end_c1_clip에서 원복. _c1_active면 생명감 눕기 포즈를 건너뛴다(클립이 곧 포즈).
-func play_c1_clip(clip: StringName) -> void:
-	if _c1_frames == null:
-		_c1_frames = load("res://assets/sprites/enemies/mino_boss_c1_frames.tres") as SpriteFrames
-	if _c1_frames == null or not _c1_frames.has_animation(clip):
+# 전용 시트 클립 임시 재생 — 방향 시트를 잠시 다른 시트로 갈고 end_c1_clip에서 원복.
+# _c1_active면 생명감 눕기 포즈를 건너뛰고 이동애니 덮기도 막는다(클립이 곧 포즈). C1 클립·돌진 회전이 공용.
+func _play_alt_clip(frames: SpriteFrames, clip: StringName) -> void:
+	if frames == null or not frames.has_animation(clip):
 		return
 	_c1_active = true
 	_sprite.rotation = 0.0
 	_sprite.offset = Vector2.ZERO
 	_anim_scale = 1.0
-	if _sprite.sprite_frames != _c1_frames:
-		_sprite.sprite_frames = _c1_frames
+	if _sprite.sprite_frames != frames:
+		_sprite.sprite_frames = frames
 	_sprite.play(clip)
 	_sprite.speed_scale = 1.0
+
+
+# C1 코옵 — 미노 전용 클립(roar/grab/groggy, mino_boss_c1 시트). coop_authority가 STELE 중 구동.
+func play_c1_clip(clip: StringName) -> void:
+	if _c1_frames == null:
+		_c1_frames = load("res://assets/sprites/enemies/mino_boss_c1_frames.tres") as SpriteFrames
+	_play_alt_clip(_c1_frames, clip)
+
+
+# 돌진 회전 — 풀캐릭터 회전 시트(mino_spin_full)로 몸통을 통째 갈아끼운다. clip = spin_prep/spin/spin_end.
+func play_spin_clip(clip: StringName = &"spin") -> void:
+	if _spin_frames == null:
+		_spin_frames = load("res://assets/sprites/fx/mino_spin_full_frames.tres") as SpriteFrames
+	_play_alt_clip(_spin_frames, clip)
+
+
+# 바위 충돌·그로기 — 풀캐릭터 hit_fall 시트로 몸통 스왑. clip = hit(충돌 1프레임)/groggy(눕기 루프).
+func play_hitfall_clip(clip: StringName) -> void:
+	if _hitfall_frames == null:
+		_hitfall_frames = load("res://assets/sprites/fx/mino_hit_fall_frames.tres") as SpriteFrames
+	_play_alt_clip(_hitfall_frames, clip)
+	_hitfall_active = true
+
+
+# 돌진 회전 시작 — 풀캐릭터 회전 시트(mino_spin_full)의 spin 클립(루프)로 몸통을 통째 갈아끼운다.
+func _start_spin_axe() -> void:
+	play_spin_clip(&"spin")
+
+
+# 돌진 회전 종료 — 방향 시트로 복귀(end_c1_clip이 def.frames 원복 + idle 재생).
+func _stop_spin_axe() -> void:
+	end_c1_clip()
 
 
 func end_c1_clip() -> void:
@@ -448,18 +487,22 @@ func _host_ai(delta: float) -> void:
 					# 둘을 분리하지 않으면 슬램 후 쿨다운(4s)만큼 멈춰 서 "빈틈"이 생긴다.
 					_state_left = _cur_pattern.recover_s if _cur_pattern != null else 0.5
 		State.CHARGE_DASH:
-			# 고정 방향 직진 + 매 프레임 몸 주위 스윕(호스트). 바위에 박으면 HIT(그로기), 아니면 완주→RECOVER.
-			velocity = Vector2.RIGHT.rotated(_strike_angle) * _cur_pattern.charge_speed * speed_mult
+			# 돌진(앞부분 이동) + 회전(총 CHARGE_SPIN_TIME, 2바퀴). 이동거리 도달하면 제자리 회전 지속.
+			# 바위에 박으면 HIT(그로기·회전 멈춤), 아니면 회전 끝나고 RECOVER.
+			var traveled := _charge_start.distance_to(global_position)
+			if traveled < _cur_pattern.charge_travel_max:
+				velocity = Vector2.RIGHT.rotated(_strike_angle) * _cur_pattern.charge_speed * speed_mult
+			else:
+				velocity = Vector2.ZERO   # 도달 — 제자리에서 회전만
 			move_and_slide()
-			_play(&"walk")   # 플레이스홀더(달리기) — 전용 charge_dash 클립은 나중 API로. force_restart 없음=이어감
 			if Net.is_host():
 				EventBus.boss_sweep.emit(global_position, _strike_angle, _cur_pattern, _charge_seq)
 			var rock: Node = _dash_rock_collision()
-			var traveled := _charge_start.distance_to(global_position)
 			if rock != null:
-				_enter_charge_hit(rock)              # 🪨 바위 박음 → 그로기 처벌창
-			elif traveled >= _cur_pattern.charge_travel_max or _state_left <= 0.0:
-				velocity = Vector2.ZERO               # 💨 헛참 — 완주/타임아웃, 짧은 후딜만
+				_enter_charge_hit(rock)              # 🪨 바위 박음 → 회전 멈춤 + 그로기 처벌창
+			elif _state_left <= 0.0:
+				velocity = Vector2.ZERO               # 회전 끝 → 후딜
+				_stop_spin_axe()                      # 풍차 도끼 숨김
 				_state = State.RECOVER
 				_state_left = _cur_pattern.recover_s
 		State.CHARGE_HIT:
@@ -468,6 +511,7 @@ func _host_ai(delta: float) -> void:
 			move_and_slide()
 			if _state_left <= 0.0:
 				enter_groggy(_cur_pattern.groggy_s)
+				play_hitfall_clip(&"groggy")          # 눕기 그로기 루프(별 뜨고 무방비)
 				_state = State.RECOVER
 				_state_left = _cur_pattern.groggy_s
 		State.RECOVER:
@@ -543,9 +587,9 @@ func _begin_windup(pat: BossPatternDef, anchor: Vector2) -> void:
 		_strike_center = anchor
 	_show_telegraph_visual(pat, _strike_center, _strike_angle)
 	if pat.is_charge:
-		# 돌진 예비 자세 — 전용 charge_windup 클립이 없어 slam을 플레이스홀더로(예고 길이에 압축). 나중 API로 교체.
+		# 돌진 예비 자세 — 회전 시트(mino_spin_full)의 spin_prep(도끼 치켜듦→웅크림)을 예고 동안 재생.
 		# 예고(좁은 cone)는 "경로 예고(긁힘 선)"로 이미 _show_telegraph_visual이 그렸다.
-		_play(&"slam", _attack_speed_scale(&"slam", _telegraph_duration(pat)), true)
+		play_spin_clip(&"spin_prep")
 	else:
 		_play_attack_anim(pat)  # 공격 애니(swing/slam) — 예고 길이에 맞춰 재생 속도를 늘린다
 	if Net.is_host():
@@ -593,17 +637,16 @@ func _enter_charge_dash() -> void:
 	_telegraph_left = 0.0
 	_charge_seq += 1                       # 스윕 dedup 회차 갱신 (CombatAuthority._boss_sweep_seq와 짝 — 돌진당 1회)
 	_charge_start = global_position
-	# 타임아웃 = 예상 이동시간 + 여유(벽/바위에 낀 채 무한 돌진 방지). _host_ai가 _state_left를 매 프레임 감산.
-	var travel_time := _cur_pattern.charge_travel_max / maxf(_cur_pattern.charge_speed, 1.0)
-	_state_left = travel_time + CHARGE_TIMEOUT_MARGIN
+	_state_left = CHARGE_SPIN_TIME         # 돌진+회전 총 지속(이동은 앞부분, 도달 후 제자리 회전). _host_ai가 감산.
 	_state = State.CHARGE_DASH
-	_play(&"walk", 1.0, true)              # 플레이스홀더 달리기 시작(전용 charge_dash 클립은 나중 API로)
+	_start_spin_axe()                      # 회전 시트(mino_spin_full) spin 클립으로 몸통 통째 스왑
 
 
 # 바위 충돌 — 리코일로 뒤로 튕기고 CHARGE_HIT 진입. 바위가 shatter를 구현했으면 부순다(P4 오브젝트 계약).
 func _enter_charge_hit(rock: Node) -> void:
 	_state = State.CHARGE_HIT
 	_state_left = CHARGE_HIT_DUR
+	play_hitfall_clip(&"hit")              # 🔴 바위 박음 = 회전 중단 + 충돌 프레임(이후 groggy 눕기 클립)
 	var away := global_position - (rock as Node2D).global_position
 	var dir := away.normalized() if away.length_squared() > 1.0 else -Vector2.RIGHT.rotated(_strike_angle)
 	velocity = dir * CHARGE_RECOIL_SPEED
@@ -847,9 +890,12 @@ func _show_telegraph_visual(pat: BossPatternDef, center: Vector2, angle: float) 
 func _dir_suffix(v: Vector2) -> String:
 	if v.length_squared() < 1.0:
 		return _face_dir
-	if v.y >= 0.0:
-		return "se" if v.x >= 0.0 else "sw"
-	return "ne" if v.x >= 0.0 else "nw"
+	# 8방향 — 부채꼴(연속 각)과 스프라이트 방향을 맞추려 45° 구간으로 스냅(4대각선만 쓰면 정동/정서에서
+	# 크게 어긋난다). Godot 각: 0=E, +y=아래(S). 시트에 idle/slam _e/se/s/sw/w/nw/n/ne 8종 모두 있다.
+	var idx := int(round(v.angle() / (PI / 4.0))) % 8
+	if idx < 0:
+		idx += 8
+	return ["e", "se", "s", "sw", "w", "nw", "n", "ne"][idx]
 
 
 # idle/slam/swing/spray는 방향별 변형(_<dir>)이 있으면 그걸로, 없으면 base 그대로 (단방향 보스 폴백).

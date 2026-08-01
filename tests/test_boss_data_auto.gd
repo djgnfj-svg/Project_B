@@ -27,7 +27,7 @@ const LEN_TOLERANCE := 1.5
 
 # 4대각 facing 접미사 — boss.gd `_dir_suffix`가 내놓는 값의 전체 집합. 보스는 어느 facing으로도
 # 설 수 있으므로 모든 방향에서 애니가 풀려야 "조용한 무모션"이 안 난다.
-const DIRS := ["se", "sw", "nw", "ne"]
+const DIRS := ["e", "se", "s", "sw", "w", "nw", "n", "ne"]
 
 var _fail := 0
 var _checks := 0
