@@ -81,6 +81,26 @@ position = Vector2(880, 600)
 eid = "cliff_m6"
 def = ExtResource("23")
 
+[node name="Mob7" parent="." instance=ExtResource("3")]
+position = Vector2(820, 300)
+eid = "cliff_m7"
+def = ExtResource("24")
+
+[node name="Mob8" parent="." instance=ExtResource("3")]
+position = Vector2(760, 660)
+eid = "cliff_m8"
+def = ExtResource("25")
+
+[node name="Mob9" parent="." instance=ExtResource("3")]
+position = Vector2(1150, 500)
+eid = "cliff_m9"
+def = ExtResource("24")
+
+[node name="Mob10" parent="." instance=ExtResource("3")]
+position = Vector2(400, 660)
+eid = "cliff_m10"
+def = ExtResource("23")
+
 [node name="PeerSync" type="Node" parent="."]
 script = ExtResource("4")
 scene_id = "stage"

@@ -71,6 +71,26 @@ position = Vector2(864, 672)
 eid = "water_m4"
 def = ExtResource("23")
 
+[node name="Mob5" parent="." instance=ExtResource("3")]
+position = Vector2(780, 180)
+eid = "water_m5"
+def = ExtResource("24")
+
+[node name="Mob6" parent="." instance=ExtResource("3")]
+position = Vector2(900, 200)
+eid = "water_m6"
+def = ExtResource("24")
+
+[node name="Mob7" parent="." instance=ExtResource("3")]
+position = Vector2(1050, 560)
+eid = "water_m7"
+def = ExtResource("25")
+
+[node name="Mob8" parent="." instance=ExtResource("3")]
+position = Vector2(1120, 250)
+eid = "water_m8"
+def = ExtResource("23")
+
 [node name="PeerSync" type="Node" parent="."]
 script = ExtResource("4")
 scene_id = "stage"
