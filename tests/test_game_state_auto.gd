@@ -24,7 +24,10 @@ func _initialize() -> void:
 	# --- 챕터 리졸버 (G_SCENE c/i 신뢰 경계) ---
 	_check("챕터 스캔에 chapter1 포함", "chapter1" in gs.chapter_ids())
 	var ch1: ChapterDef = gs.chapter_def("chapter1")
-	_check("챕터1 칸 수 = 4 (전투3+보스 직전 모닥불1)", ch1.stage_count() == 4)
+	# ⚠ **모닥불 칸은 2026-08-01에 챕터1에서 빠졌다**(사용자 요청) — 칸 = 전투2 + 보스.
+	#   `campfire.tscn`·`campfire.gd`·`CampfireDef`·`is_rest` 관례는 **코드에 남아 있다**(되살릴 수 있게).
+	_check("챕터1 칸 수 = 3 (전투2 + 보스)", ch1.stage_count() == 3)
+	_check("챕터1에 모닥불 칸 없음", not (ch1.is_rest(0) or ch1.is_rest(1) or ch1.is_rest(2)))
 	_check("모르는 챕터 → 기본 챕터 폴백", gs.chapter_def("chapter99").display_name == ch1.display_name)
 	_check("챕터 경로 조작 → 기본 챕터 폴백",
 		gs.chapter_def("../../src/core/net_schema").display_name == ch1.display_name)
@@ -35,10 +38,30 @@ func _initialize() -> void:
 
 	# --- 칸 성격 판별 (모닥불 관례) + HUD 순번 ---
 	_check("0번 칸 = 전투", not ch1.is_rest(0))
-	_check("2번 칸 = 모닥불 (보스 직전)", ch1.is_rest(2))
-	_check("전투 스테이지 총수 = 3", ch1.combat_total() == 3)
+	# ⚠ **모닥불이 빠져도 전투 총수는 3 그대로다** — 보스 칸도 전투로 센다(빠진 것은 휴식 칸뿐).
+	_check("전투 스테이지 총수 = 3 (보스 포함)", ch1.combat_total() == 3)
 	_check("1번 칸 = 2번째 전투", ch1.combat_ordinal(1) == 2)
-	_check("마지막 칸 = 3번째 전투(보스)", ch1.combat_ordinal(3) == 3)
+	_check("마지막 칸 = 3번째 전투(보스)", ch1.combat_ordinal(2) == 3)
+	# 🔴🔴 **합성 챕터로 `is_rest` 관례를 계속 지킨다** (2026-08-01). 모닥불 칸이 실 데이터에서
+	#   빠지면서 위 검사들이 **휴식 칸을 한 번도 안 지나게 됐다** — 그대로 두면
+	#   ⑴ "파일명이 campfire로 시작하면 휴식 칸"이라는 관례(rules §4)와
+	#   ⑵ `combat_ordinal`/`combat_total`이 **휴식 칸을 건너뛰고 센다**는 로직이
+	#   둘 다 검출력 0이 된다. 모닥불을 되살리는 날 조용히 깨져 있을 자리다.
+	# ⚠ 이것이 정확히 궁수·법사 삭제(2026-08-01)에서 배운 함정이다 — **삭제가 테스트 검출력을
+	#   조용히 없앤다**. 그때도 합성으로 갈아끼웠다.
+	# ⚠ `GameState.chapter_def`는 캐시 없이 매번 `load()`라 합성을 심을 수 없다 → 객체를 직접 만든다.
+	#   그래서 `progress_label()`의 "· 모닥불" 문자열 분기만은 겨눌 수 없다(그 한 줄은 `is_rest`를
+	#   부르는 것이 전부라, 관례가 지켜지면 함께 지켜진다).
+	var synth_ch := ChapterDef.new()
+	synth_ch.display_name = "합성 챕터"
+	synth_ch.stage_scenes = ["res://x/stage_1.tscn", "res://x/campfire.tscn",
+		"res://x/stage_2.tscn", "res://x/stage_boss.tscn"] as Array[String]
+	_check("★합성: campfire로 시작하는 칸 = 휴식 (is_rest 관례)", synth_ch.is_rest(1))
+	_check("★합성: 그 외 칸 = 전투", not synth_ch.is_rest(0) and not synth_ch.is_rest(3))
+	_check("★합성: 전투 총수가 휴식 칸을 제외한다(4칸 중 3)", synth_ch.combat_total() == 3)
+	_check("★합성: 휴식 칸 뒤 순번이 밀리지 않는다(2번 칸 = 2번째 전투)",
+		synth_ch.combat_ordinal(2) == 2)
+	_check("★합성: 마지막 칸 = 3번째 전투(보스)", synth_ch.combat_ordinal(3) == 3)
 
 	# --- 진행 좌표·토큰·이월 HP ---
 	gs.begin_stage("chapter1", 1)
@@ -47,10 +70,8 @@ func _initialize() -> void:
 	_check("1번 칸은 마지막 아님", not gs.is_last_stage())
 	_check("씬 경로 = stage_2", gs.stage_scene_path().get_file() == "stage_2.tscn")
 	_check("진행 표기 = 스테이지 2/3", gs.progress_label().ends_with("스테이지 2/3"))
-	gs.begin_stage("chapter1", 3)
-	_check("마지막 칸 판별", gs.is_last_stage())
 	gs.begin_stage("chapter1", 2)
-	_check("모닥불 진행 표기", gs.progress_label().ends_with("모닥불"))
+	_check("마지막 칸 판별", gs.is_last_stage())
 	_check("이월 기록 없음 = -1", gs.carried_hp(7) == -1)
 	gs.record_party_hp(7, 12)
 	_check("이월 기록 조회", gs.carried_hp(7) == 12)
