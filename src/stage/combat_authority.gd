@@ -90,7 +90,19 @@ func _ready() -> void:
 	EventBus.boss_sweep.connect(_on_boss_sweep)
 	EventBus.player_shoot.connect(_on_player_shoot)
 	EventBus.mob_shoot.connect(_on_mob_shoot)
+	# 🔴 **자기 씬 하위만 등록한다** — 그룹 스캔은 씬 스왑 프레임에 **이전 씬의 적까지** 돌려준다
+	#   (rules §5). 근본 처방은 `main._swap`의 `remove_child`지만, 이 스캔은 `_ready` **일회**라
+	#   유령이 들어오면 딕셔너리에 영구히 박히고 그 대가가 크다: 다음 프레임에 그 노드가 해제되면
+	#   `_check_clear`의 `entry["health"] as HealthComponent`가 **캐스트에서** 터져
+	#   (`Trying to cast a freed object`) 함수가 중단되고, Dictionary는 삽입 순서라 유령이 늘 첫
+	#   항목이라 **스테이지가 영영 클리어되지 않는다**(2026-08-01 "스테이지2에서 멈춘다" 신고의 원인).
+	#   ⚠ 소비처 12곳에 `is_instance_valid`를 뿌리는 대신 **입구 하나**를 막는다 — 그래야 다음에
+	#     `_enemies`를 읽는 코드가 늘어도 같은 결함이 재발하지 않는다.
+	#   ⚠ 스캔 시점의 유령은 **아직 살아 있어** 캐스트가 안 터진다 — 그래서 이 필터가 성립한다.
+	var scene_root := get_parent()
 	for node: Node in get_tree().get_nodes_in_group("enemy"):
+		if scene_root == null or not scene_root.is_ancestor_of(node):
+			continue
 		_register_enemy(node)
 	EventBus.peer_left.connect(func(peer_id: int) -> void:
 		_last_hit_msec.erase(peer_id)

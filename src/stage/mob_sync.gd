@@ -18,7 +18,16 @@ func _ready() -> void:
 	EventBus.boss_telegraph.connect(_on_boss_telegraph)
 	EventBus.boss_spray.connect(_on_boss_spray)
 	EventBus.boss_phase_changed.connect(_on_boss_phase_changed)
+	# 🔴 **자기 씬 하위만 등록한다** — combat_authority._ready와 같은 이유이고, 여기 피해는
+	#   네트워크로 나간다: 씬 스왑 프레임의 유령이 박히면 다음 프레임부터 아래 `_physics_process`의
+	#   `_mobs[eid] as Node2D`가 **캐스트에서** 터져(`Trying to cast a freed object`) 함수가 중단되고,
+	#   그러면 `G_MOB_POS`가 **한 통도 안 나가** 게스트 화면의 잔몹이 통째로 얼어붙는다
+	#   (초당 60회 에러 · 2026-08-01 "스테이지2에서 멈춘다" 신고의 게스트 쪽 증상).
+	#   ⚠ 아래 루프의 `mob == null` 가드는 이걸 못 막는다 — **캐스트가 먼저 터진다.**
+	var scene_root := get_parent()
 	for m: Node in get_tree().get_nodes_in_group("mob"):
+		if scene_root == null or not scene_root.is_ancestor_of(m):
+			continue
 		var eid_v: Variant = m.get("eid")
 		if eid_v is String and not str(eid_v).is_empty():
 			_mobs[str(eid_v)] = m
