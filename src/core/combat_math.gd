@@ -679,7 +679,19 @@ static func _combo_arr_at(arr: PackedFloat32Array, index: int) -> float:
 # 🔴 이동은 지연 보상의 입력이다 — 상한(`MAX_COMBO_DASH`)의 유도와 재유도 조건은 그 상수 주석이 정본이다.
 # 🔴 부르는 쪽은 이 거리를 **`velocity`로** 흘려야 한다(`position` 대입 금지 — G_POS `vx/vy`가 0이면
 #   호스트 lead 외삽이 변위를 못 덮어 마무리 타가 게스트에서 무음 거부된다).
-static func combo_dash_dist(equip: EquipDef) -> float:
+# 평타(마무리가 아닌 타)의 전진 비율 — 사용자 요청 2026-08-01: "평타 1타 2타도 조금씩 움직이게".
+# 🔴 **비율이지 별도 값이 아니다** — 무기가 `combo_dash` 하나만 쥐면 "무거운 무기가 크게 파고든다"가
+#   타수와 무관하게 한 축으로 유지된다. 값을 따로 두면 둘이 갈라져 다음 튜닝에서 한쪽만 고친다.
+# ⚠ 상한 재유도가 불필요한 이유: 이 비율이 1.0 이하라 **각 타의 대시가 `MAX_COMBO_DASH`(20px)를
+#   절대 못 넘는다.** 그 상수 주석의 유도(최대 haste 222px/s vs 최저 clamp 260)가 그대로 성립한다.
+const NONFINISH_DASH_RATIO := 0.4
+
+
+# `is_finish = false`면 평타 비율이 곱해진다. 기본값 true는 도입 전과 완전 항등이다.
+static func combo_dash_dist(equip: EquipDef, is_finish: bool = true) -> float:
+	if not is_finish:
+		var base := combo_dash_dist(equip, true)
+		return base * NONFINISH_DASH_RATIO
 	if equip == null or not is_finite(equip.combo_dash) or equip.combo_dash <= 0.0:
 		return 0.0
 	return minf(equip.combo_dash, MAX_COMBO_DASH)

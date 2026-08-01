@@ -1582,6 +1582,15 @@ func _local_move(delta: float) -> void:
 			#   ⑶ 늪 배율은 **안 곱한다** — 구르기와 같은 취급이다(커밋한 이동 동작). 곱해도 부호는
 			#      안전하지만(속도가 줄 뿐) 대시 거리가 늪에서만 달라져 각 예산이 늪에서만 흔들린다.
 			velocity = _dash_dir * _dash_speed
+		elif _attack_anim_left > 0.0:
+			# 🔴 **공격 중에는 걷지 못한다** (사용자 요청 2026-08-01: "공격하면서 움직이는 거 불가능").
+			#   스윙 창(`_attack_anim_left`) 동안만이다 — 쿨다운은 안 묶으므로 휘두름이 끝나면 바로
+			#   움직인다(§3 「스윙 창 < attack_cooldown」이 그 여유를 보장한다).
+			#   ⚠ 완전 정지가 아니다: 위 분기의 **타별 전진**(`_dash_speed`)이 공격 중 이동을 대신한다.
+			#     둘의 순서를 바꾸면 대시가 이 가드에 먹혀 마무리 돌진이 통째로 사라진다.
+			#   ⚠ 구르기는 아래 공용 검사가 그대로 받는다 — 스윙 중에도 굴러서 뺄 수 있다
+			#     (`_cancel_swing`이 스윙과 대시를 함께 끊는다).
+			velocity = Vector2.ZERO
 		else:
 			# 걷기만 늪 배율 적용. 기 모으는 중(charge 무기)이면 추가로 느려진다 — 모으는 대가(사용자 확정)
 			var charge_mult := CHARGE_MOVE_MULT if _charging else 1.0
@@ -1969,10 +1978,12 @@ func _swing_attack(dir: Vector2) -> float:
 	#   이동 거리는 데이터 그대로다 — `_swing_hit_at`으로 나누면 미뤄진 만큼 더 멀리 간다(각 예산 초과).
 	_dash_speed = 0.0
 	_dash_dir = dir
-	if _swing_is_finish:
-		var dash_px := CombatMath.combo_dash_dist(_weapon_override)
-		if dash_px > 0.0:
-			_dash_speed = dash_px / maxf(_swing_hit_left, 0.0001)
+	# 🔴 **평타에도 전진이 붙는다** (사용자 요청 2026-08-01). 공격 중 걷기를 막았으므로(`_local_move`)
+	#   이 전진이 **공격 중 이동의 전부**다 — 0으로 되돌리면 휘두르는 동안 완전히 못 움직인다.
+	#   비율은 `CombatMath.NONFINISH_DASH_RATIO`가 쥔다(무기별 값을 새로 만들지 않는다).
+	var dash_px := CombatMath.combo_dash_dist(_weapon_override, _swing_is_finish)
+	if dash_px > 0.0:
+		_dash_speed = dash_px / maxf(_swing_hit_left, 0.0001)
 	# 🔴 "cb" = 콤보 타수. **v2.2부터 판정 입력이다**(데미지 배율·마무리 각) — 호스트가 자기 G_ATK 수신
 	#   간격으로 직접 세고 이 주장은 `min` 상한으로만 쓴다(`authoritative_combo`, G_SHOOT "cb"와 같은 규약).
 	#   그래서 부풀려 주장해도 **내 화면만** 마무리로 그려지고 판정은 안 따라온다(판정 ≤ 표시, §3).
