@@ -113,6 +113,14 @@ func _on_scene_change(scene_id: String) -> void:
 #   죽어 `G_MOB_POS`가 안 나가 **게스트 화면의 잔몹이 얼어붙었다**(초당 60회 에러).
 #   `remove_child`는 그룹 조회에서 **즉시** 빠진다(실측 1 → 0). rules §5 「씬 스왑 프레임엔 이전 씬
 #   노드가 그룹에 남아 있다」의 근본 처방이다 — 그 항목은 매 프레임 스캔(player)만 리시로 덮고 있었다.
+# 🔴🔴 **이것은 「그룹 조회」만 닫는다 — EventBus 구독은 그대로 살아 있다** (netreview 2026-08-01).
+#   `remove_child`는 시그널을 끊지 않는다(`src/` 전체에 `_exit_tree`·`disconnect(`가 0건이고, 구독은
+#   프레임 끝 `queue_free`로 **객체가 해제될 때** 비로소 끊긴다). 그래서 rules §2에 등재된
+#   「한 프레임 동안 두 씬의 ExpAuthority가 같이 `net_msg`에 붙어 G_EXP가 2배 적립된다」 창은
+#   **여전히 열려 있다.** 실재 근거도 확인됐다 — `net.gd`가 `while ...get_available_packet_count()`로
+#   한 프레임에 여러 패킷을 동기 emit하고, 게스트는 SceneFlow가 **그 루프 안에서** `scene_change`를
+#   올린다. 지금은 `ChapterFlow.NEXT_DELAY_S`(3초)가 도달을 막아 무해할 뿐이다.
+#   ⚠ **이 줄을 "근본 처방"이라고 읽고 §2의 G_EXP dedup 게이트를 지우지 마라** — 그건 별개 축이다.
 func _swap(next: Node) -> void:
 	if _current != null:
 		remove_child(_current)

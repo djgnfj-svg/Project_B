@@ -24,13 +24,32 @@ func _ready() -> void:
 	#   그러면 `G_MOB_POS`가 **한 통도 안 나가** 게스트 화면의 잔몹이 통째로 얼어붙는다
 	#   (초당 60회 에러 · 2026-08-01 "스테이지2에서 멈춘다" 신고의 게스트 쪽 증상).
 	#   ⚠ 아래 루프의 `mob == null` 가드는 이걸 못 막는다 — **캐스트가 먼저 터진다.**
-	var scene_root := get_parent()
+	# 🔴 **기준은 `owner`(그 .tscn의 루트)다** — combat_authority._ready와 같은 이유. `get_parent()`는
+	#   컴포넌트를 한 겹만 감싸도 껍데기를 반환해 **자기 씬 잔몹이 하나도 안 통과한다**(조용한 전면
+	#   무등록 = `G_MOB_POS` 0통 = 방금 고친 그 증상인데 SCRIPT ERROR조차 없다 · netreview 2026-08-01).
+	var scene_root: Node = owner if owner != null else get_parent()
+	var passed := 0
 	for m: Node in get_tree().get_nodes_in_group("mob"):
 		if scene_root == null or not scene_root.is_ancestor_of(m):
 			continue
+		passed += 1
 		var eid_v: Variant = m.get("eid")
 		if eid_v is String and not str(eid_v).is_empty():
 			_mobs[str(eid_v)] = m
+	# 전면 무등록 진단 — 화면에는 "게스트 잔몹이 안 움직인다"로만 나타나므로 에러를 코드로 박아 둔다.
+	if scene_root != null:
+		var under := _count_in_group_under(scene_root, &"mob")
+		if passed < under:
+			push_error("[MobSync] 씬 하위 잔몹 %d마리 중 %d마리만 등록됐다 — 씬 스캔 필터가 자기 씬을 떨어뜨린다(scene_root=%s)"
+				% [under, passed, scene_root.name])
+
+
+# 씬 하위의 그룹 소속 노드 수 — 위 진단 전용. `_ready` 1회라 재귀 비용은 무시할 수준.
+func _count_in_group_under(n: Node, group: StringName) -> int:
+	var c := 1 if n.is_in_group(group) else 0
+	for ch: Node in n.get_children():
+		c += _count_in_group_under(ch, group)
+	return c
 
 
 func _physics_process(delta: float) -> void:

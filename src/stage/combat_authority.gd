@@ -99,11 +99,28 @@ func _ready() -> void:
 	#   ⚠ 소비처 12곳에 `is_instance_valid`를 뿌리는 대신 **입구 하나**를 막는다 — 그래야 다음에
 	#     `_enemies`를 읽는 코드가 늘어도 같은 결함이 재발하지 않는다.
 	#   ⚠ 스캔 시점의 유령은 **아직 살아 있어** 캐스트가 안 터진다 — 그래서 이 필터가 성립한다.
-	var scene_root := get_parent()
+	# 🔴 **기준은 `owner`(그 .tscn의 루트)다 — `get_parent()`가 아니다** (netreview 2026-08-01).
+	#   둘은 지금 같은 노드를 가리키지만(전 씬에서 컴포넌트가 루트의 직계 자식), 누군가 컴포넌트를
+	#   `Systems` 같은 노드로 한 겹만 감싸면 `get_parent()`는 그 껍데기를 반환해 **자기 씬 적이
+	#   하나도 안 통과한다.** 그 실패는 조용하고 증상이 방금 고친 것과 **똑같은데**(클리어 영영 안 됨 ·
+	#   게스트 hit_req 전량 무시 · 드랍·EXP 0) 이번엔 **SCRIPT ERROR조차 안 난다.**
+	#   `owner`는 중첩 깊이와 무관하게 그 씬의 루트다(실측: 4개 씬 전부 `owner=Stage`/`Campfire`).
+	var scene_root: Node = owner if owner != null else get_parent()
+	var passed := 0
 	for node: Node in get_tree().get_nodes_in_group("enemy"):
 		if scene_root == null or not scene_root.is_ancestor_of(node):
 			continue
+		passed += 1
 		_register_enemy(node)
+	# 🔴 **실패 방향이 「전면 무등록」이라 진단을 코드로 박아 둔다.** 위 필터가 어떤 이유로든
+	#   자기 씬 적을 떨어뜨리면 화면에는 "적이 안 죽는다/클리어가 안 된다"로만 나타난다 —
+	#   에러가 없으면 다음 사람이 다시 며칠을 쓴다. 씬 하위 실제 개수와 통과 개수를 대조한다.
+	#   ⚠ `_register_enemy` 자체의 거부(eid 없음·Health 없음)는 그쪽이 이미 push_error를 낸다.
+	if scene_root != null:
+		var under := _count_in_group_under(scene_root, &"enemy")
+		if passed < under:
+			push_error("[CombatAuthority] 씬 하위 적 %d마리 중 %d마리만 등록됐다 — 씬 스캔 필터가 자기 씬을 떨어뜨린다(scene_root=%s)"
+				% [under, passed, scene_root.name])
 	EventBus.peer_left.connect(func(peer_id: int) -> void:
 		_last_hit_msec.erase(peer_id)
 		_roll_grant_msec.erase(peer_id)
@@ -138,6 +155,14 @@ func _on_player_spawned(peer_id: int, player: Node) -> void:
 	var health := p.get_node_or_null("Health") as HealthComponent
 	if health != null and carried != health.hp:
 		health.confirm_hp(carried)
+
+
+# 씬 하위의 그룹 소속 노드 수 — 위 「전면 무등록」 진단 전용. `_ready` 1회라 재귀 비용은 무시할 수준.
+func _count_in_group_under(n: Node, group: StringName) -> int:
+	var c := 1 if n.is_in_group(group) else 0
+	for ch: Node in n.get_children():
+		c += _count_in_group_under(ch, group)
+	return c
 
 
 func _register_enemy(node: Node) -> void:

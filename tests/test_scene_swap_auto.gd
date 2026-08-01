@@ -149,6 +149,71 @@ func _source_tripwires() -> void:
 		var scan := src.find("get_nodes_in_group(")
 		_check(scan >= 0 and src.find("is_ancestor_of") >= 0,
 			"%s: _ready 그룹 스캔에 is_ancestor_of 필터가 있다" % path.get_file())
+		# 🔴 기준은 `owner`여야 한다 — `get_parent()`만 쓰면 컴포넌트를 한 겹 감싸는 순간
+		#   자기 씬 적이 **하나도** 안 통과한다(조용한 전면 무등록).
+		_check(src.find("owner if owner != null else get_parent()") >= 0,
+			"%s: 씬 기준이 owner다(get_parent()는 폴백)" % path.get_file())
+
+
+# --- ⑷ 노드 순서 계약 — 그룹 등록이 `.tscn`이 아니라 코드 `_ready`에서 일어난다 ---
+#
+# 🔴 `mob_melee.gd`·`boss.gd`·`enemy.gd`가 `_ready`에서 `add_to_group`한다(씬 파일엔 groups 선언이
+#   없다). Godot의 형제 `_ready` 순서는 **트리 순서**이므로, 몹이 `CombatAuthority`/`MobSync`보다
+#   씬에서 **위에** 있어야 스캔 시점에 이미 그룹에 들어 있다. 아래로 옮기면 스캔이 **빈 그룹**을 보고
+#   전면 무등록이 된다 — 클리어 영영 안 됨 + `G_MOB_POS` 0통.
+# ⚠ **런타임 진단(`passed < under`)은 이 경우를 못 잡는다** — `add_to_group`이 아직 안 됐으면
+#   `under`도 0이라 `0 < 0`이 거짓이다. 그래서 이 단정이 유일한 방어다.
+# ⚠ `.tscn`의 노드 선언 순서 = 트리 순서라 텍스트 위치 비교로 충분하다.
+# 그 씬이 무는 스크립트 중 하나라도 `add_to_group("enemy"/"mob")`을 하는가.
+func _scene_joins_group(scene_path: String) -> bool:
+	var src := _src(scene_path)
+	for line: String in src.split("\n"):
+		if not line.begins_with("[ext_resource") or not line.contains(".gd"):
+			continue
+		var gd := _src(line.get_slice("path=\"", 1).get_slice("\"", 0))
+		if gd.contains("add_to_group(\"enemy\")") or gd.contains("add_to_group(\"mob\")"):
+			return true
+	return false
+
+
+func _node_order() -> void:
+	for path: String in ["res://src/stage/stage_1.tscn", "res://src/stage/stage_2.tscn",
+			"res://src/stage/stage_boss.tscn", "res://src/stage/stage_test.tscn"]:
+		var src := _src(path)
+		if src.is_empty():
+			_check(false, "%s: 읽을 수 없다" % path.get_file())
+			continue
+		# 🔴 배우 씬 목록을 **하드코딩하지 않는다** — `.tscn`이 참조하는 PackedScene을 열어
+		#   그 안의 스크립트가 실제로 `add_to_group("enemy"/"mob")`을 하는지 본다. 새 적 씬
+		#   (training_dummy 같은 것)이 늘어도 이 단정이 자동으로 따라온다.
+		var actor_ids: Array[String] = []
+		for line: String in src.split("\n"):
+			if not line.begins_with("[ext_resource") or not line.contains(".tscn"):
+				continue
+			var sub := line.get_slice("path=\"", 1).get_slice("\"", 0)
+			if sub.is_empty() or not _scene_joins_group(sub):
+				continue
+			actor_ids.append(line.get_slice("id=\"", 1).get_slice("\"", 0))
+		var first_actor := -1
+		var first_comp := -1
+		var pos := 0
+		for line: String in src.split("\n"):
+			if line.begins_with("[node "):
+				for aid: String in actor_ids:
+					if line.contains("instance=ExtResource(\"%s\")" % aid) and first_actor < 0:
+						first_actor = pos
+			elif line.begins_with("script = ExtResource(") and first_comp < 0:
+				# 직전 노드가 CombatAuthority/MobSync인지는 스크립트 경로로 판별한다
+				var sid := line.get_slice("(\"", 1).get_slice("\"", 0)
+				for l2: String in src.split("\n"):
+					if l2.begins_with("[ext_resource") and l2.contains("id=\"%s\"" % sid) \
+							and (l2.contains("combat_authority.gd") or l2.contains("mob_sync.gd")):
+						first_comp = pos
+						break
+			pos += 1
+		_check(first_actor >= 0 and first_comp >= 0 and first_actor < first_comp,
+			"%s: 몹/보스가 CombatAuthority·MobSync보다 **위**에 있다 (배우 %d행 < 컴포넌트 %d행)"
+				% [path.get_file(), first_actor, first_comp])
 
 
 func _run() -> void:
@@ -157,6 +222,7 @@ func _run() -> void:
 	await _engine_premise()
 	await _swap_contract()
 	_source_tripwires()
+	_node_order()
 	if _fail == 0:
 		print("TEST_OK scene_swap")
 	else:
