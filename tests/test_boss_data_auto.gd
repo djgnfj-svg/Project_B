@@ -51,6 +51,21 @@ const ACTOR_NODE_SCALE := 2.0
 const BODY_FRAC_MIN := 0.50
 const BODY_FRAC_MAX := 0.95
 
+# 🔴 **접지 그림자 실측** (2026-08-02, 사용자 신고 *"보스 뭔가 땅에 안 붙어 있는데"*) —
+#   `boss.gd _fit_shadow()`가 시트 알파에서 발밑·중심·폭을 재서 그림자를 붙인다. 그 실측이
+#   **실패하면 씬 authoring 값으로 조용히 폴백**하는데, 그 값은 옛 망령 시트 기준이라 곧
+#   이번 신고 상태로 되돌아간다 — 에러도 경고도 없다. 그래서 "실측이 되는가"를 여기서 잡는다.
+#   ⚠ `sprite_ground.gd`는 오토로드를 안 써서 `-s`가 preload할 수 있다(그러라고 그 파일에 뒀다).
+const SpriteGround := preload("res://src/enemies/sprite_ground.gd")
+# 실루엣 폭 / 프레임 폭의 허용 범위 — 너무 좁으면(빈 프레임 근처) 그림자가 실처럼 되고,
+# 1.0을 넘을 수는 없다(바운딩 박스가 프레임 안이므로). 하한은 "캐릭터가 프레임을 거의 안 채운다"
+# = 시트 배치가 잘못됐다는 신호다.
+const GROUND_WIDTH_FRAC_MIN := 0.25
+# 몸 중심이 프레임 중심에서 벗어나도 되는 한계(프레임 폭 대비). 그림자는 실측을 따라가므로
+# 벗어나도 "그림자만" 어긋나지는 않지만, 크게 벗어났다면 **시트가 셀 안에서 치우쳐 있다**는 뜻이고
+# 그건 `centered = true` 전제(판정 원점 = 셀 중심)와 그림이 갈라졌다는 신호다.
+const GROUND_CX_FRAC_MAX := 0.15
+
 var _fail := 0
 var _checks := 0
 
@@ -253,6 +268,77 @@ func _check_ranged(file: String, def: EnemyDef) -> void:
 		"%s: proj_texture 지정(§0 — 도형·폴백으로 때우지 않는다)" % file)
 
 
+# 🔴 접지 그림자 실측 계약 — 넷 다 어기면 **에러 없이** 그림자가 발에서 떨어진다.
+#   실패하면 `boss.gd _fit_shadow()`가 씬 authoring 값(= 옛 시트의 발밑)으로 폴백하기 때문이다.
+func _check_ground(file: String, def: BossDef) -> void:
+	var sf := def.frames
+	if sf == null:
+		return   # frames 없는 def는 sprite 1장 폴백 — 별도 단정(_check_boss)이 이미 본다
+	# ⑴ **서 있는 포즈가 지면선을 정의한다.** `idle*`이 하나도 없으면 `SpriteGround`가 각 애니
+	#    0프레임으로 떨어지고, 거기엔 도끼가 바닥을 치는 `slam` 컷이 섞인다 — 미노 실측으로
+	#    발밑이 52 → 60 tex px(화면 24 월드px)까지 내려가 그림자가 **도끼 끝**에 붙는다.
+	var has_idle := false
+	for n: StringName in sf.get_animation_names():
+		if String(n).begins_with(SpriteGround.IDLE_PREFIX):
+			has_idle = true
+			break
+	_check(has_idle, "%s: `idle*` 애니 존재 — 없으면 그림자가 공격 컷(도끼 끝)에 맞춰진다" % file)
+
+	var g := SpriteGround.measure(sf)
+	# ⑵ 실측 자체가 되는가. 시트를 VRAM 압축으로 재import하거나 프레임이 전부 비면 여기서 걸린다.
+	_check(bool(g.get("ok", false)),
+		"%s: 시트 실측 성공 — 실패하면 씬 authoring 값(옛 시트 발밑)으로 조용히 폴백한다" % file)
+	if not bool(g.get("ok", false)):
+		return
+	_check(int(g.get("samples", 0)) >= 1,
+		"%s: 실측 표본 %d개 ≥ 1" % [file, int(g.get("samples", 0))])
+
+	# 프레임 크기 — 첫 idle 프레임에서 읽는다(셀 규격은 시트가 정본이므로 상수로 안 박는다).
+	var cell := Vector2.ZERO
+	for n: StringName in sf.get_animation_names():
+		if String(n).begins_with(SpriteGround.IDLE_PREFIX) and sf.get_frame_count(n) > 0:
+			var t := sf.get_frame_texture(n, 0)
+			if t != null:
+				cell = t.get_size()
+			break
+	if cell.x <= 0.0 or cell.y <= 0.0:
+		return
+	var foot := float(g.get("foot", 0.0))
+	var cx := float(g.get("cx", 0.0))
+	var w := float(g.get("width", 0.0))
+	# ⑶ 발밑은 셀 **아래쪽 절반** 안에 있어야 한다. 0 이하면 그림자가 몸 한가운데(또는 위)에 붙고,
+	#    셀 반높이를 넘는 것은 원리적으로 불가능하다(바운딩 박스가 셀 안이므로) = 유도식이 깨진 신호.
+	_check(foot > 0.0 and foot <= cell.y * 0.5,
+		"%s: 발밑 %.1f ∈ (0, %.1f] — 벗어나면 그림자가 발이 아닌 곳에 붙는다" % [file, foot, cell.y * 0.5])
+	# ⑷ 실루엣 폭이 그림자 폭을 정한다 — 지나치게 좁으면 그림자가 실선이 된다.
+	_check(w >= cell.x * GROUND_WIDTH_FRAC_MIN,
+		"%s: 실루엣 폭 %.1f ≥ 프레임 %.0f × %.2f — 좁으면 그림자가 실처럼 얇아진다"
+		% [file, w, cell.x, GROUND_WIDTH_FRAC_MIN])
+	# ⑸ 몸이 셀 안에서 크게 치우치면 그림·판정 원점(셀 중심)이 갈라졌다는 신호다.
+	_check(absf(cx) <= cell.x * GROUND_CX_FRAC_MAX,
+		"%s: 몸 중심 편차 %.1f ≤ 프레임 %.0f × %.2f" % [file, cx, cell.x, GROUND_CX_FRAC_MAX])
+
+	# ⑹ 🔴 **결과가 idle 포즈만으로 결정되는가** — 이 파일에서 유일하게 검출력이 있는 단정이다.
+	#    위 ⑴은 "idle이 존재한다"만 보므로 `SpriteGround`가 표본 필터를 잃어도 통과한다(발밑이
+	#    20 → 28 tex px로 내려가도 ⑶의 범위 안이라 조용하다 = 그림자가 도끼 끝에 붙는데 초록불).
+	#    여기서는 **idle만 담은 시트를 새로 만들어** 같은 답이 나오는지 본다 — 스캔을 재구현하지
+	#    않으므로 모델을 미러하지 않고(§3 N-1), 필터가 사라지면 두 값이 갈라져 반드시 빨개진다.
+	var idle_only := SpriteFrames.new()
+	for n: StringName in sf.get_animation_names():
+		if not String(n).begins_with(SpriteGround.IDLE_PREFIX):
+			continue
+		idle_only.add_animation(n)
+		for i in range(sf.get_frame_count(n)):
+			idle_only.add_frame(n, sf.get_frame_texture(n, i), sf.get_frame_duration(n, i))
+	var gi := SpriteGround.measure(idle_only)
+	_check(bool(gi.get("ok", false))
+			and is_equal_approx(float(gi.get("foot", -99999.0)), foot)
+			and is_equal_approx(float(gi.get("cx", -99999.0)), cx)
+			and is_equal_approx(float(gi.get("width", -99999.0)), w),
+		"%s: 실측이 idle 포즈만으로 결정된다 (idle전용 %.1f/%.1f/%.1f == 전체 %.1f/%.1f/%.1f)"
+		% [file, float(gi.get("foot", 0.0)), float(gi.get("cx", 0.0)), float(gi.get("width", 0.0)), foot, cx, w])
+
+
 func _run() -> void:
 	var bosses := _boss_defs()
 	# 스캔이 0건이면 아래 단정이 전부 건너뛰어져 **조용히 통과**한다 (verify §3 침묵 통과 방지)
@@ -264,6 +350,7 @@ func _run() -> void:
 		var def := arr[1] as BossDef
 		print("[%s] %s" % [file, def.display_name])
 		_check_boss(file, def)
+		_check_ground(file, def)
 
 	var ranged := _ranged_defs()
 	# 스캔 0건이면 아래 단정이 통째로 건너뛰어져 **조용히 통과**한다(verify §3 침묵 통과 방지)

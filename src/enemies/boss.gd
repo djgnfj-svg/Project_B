@@ -12,6 +12,7 @@ const PlayerActor := preload("res://src/player/player.gd")
 const HitStop := preload("res://src/feel/hit_stop.gd")
 const HitFlash := preload("res://src/feel/hit_flash.gd")
 const Flinch := preload("res://src/feel/flinch.gd")
+const SpriteGround := preload("res://src/enemies/sprite_ground.gd")
 const TELEGRAPH_SHADER := preload("res://assets/shaders/boss_telegraph.gdshader")
 
 # 연출값 (rules §0 예외)
@@ -44,6 +45,13 @@ const TELEGRAPH_CHARGE := Color(1.000, 0.451, 0.129, 0.620)  # 다 찬 구역(�
 const TELEGRAPH_LEAD_PX := 7.0         # 차오름 선단(밝은 파면) 두께
 const TELEGRAPH_FLASH := Color(1.000, 0.925, 0.722, 0.880)   # 마지막 순간 번쩍
 const TELEGRAPH_FLASH_START := 0.86    # 이 진행도부터 번쩍이 올라온다
+
+# 접지 그림자 — 발끝이 타원 **반높이**의 이만큼 안으로 들어간다(연출값, rules §0 예외 → docs/TUNING.md).
+# 🔴 절대 px가 아니라 **비율**인 것이 요점이다 — 그림자 아트를 다시 그리면 파고드는 양이 같이 따라온다.
+#   0.0 = 타원 중심이 발끝 정확히(앞쪽으로만 퍼져 살짝 떠 보인다) · 0.4 = 발목까지 올라온다.
+#   0.2는 `player.tscn`의 손으로 맞춘 배치(발밑 14 · 그림자 y 13 · 반높이 6 → 0.17)와 같은 자리다.
+# ⚠ 이 값으로 그림자를 "크게/작게" 만들지 마라 — 크기는 시트 실루엣에서 유도한다(_fit_shadow).
+const SHADOW_FOOT_SINK := 0.2
 
 # 추격 이탈 = aggro_range × 이 배수. 씬 스왑 프레임 유령 어그로 방지 (mob_melee와 동일 규약, rules §5).
 const LEASH_MULT := 1.5
@@ -163,7 +171,7 @@ var _knock_show_px: float = -1.0   # 층① 세기(호스트에만 선다 — �
 @onready var _collision: CollisionShape2D = $Collision
 @onready var _telegraph: Sprite2D = $Telegraph
 @onready var _health: HealthComponent = $Health
-# 접지 그림자 — 씬에 authoring된 위치·크기를 `sprite_scale`로 같이 키운다(없으면 발밑이 뜬다).
+# 접지 그림자 — 위치·크기는 `_fit_shadow()`가 **시트에서 재서** 정한다(씬 authoring 값은 폴백 + 찌그러짐 비율).
 @onready var _shadow: Sprite2D = get_node_or_null("Shadow") as Sprite2D
 
 
@@ -199,12 +207,9 @@ func _ready() -> void:
 		#   meta에 저장해 복원 기준으로 삼기 때문이다(rules §2). `_ready` 시점이라 안전하다.
 		if def.sprite_scale > 0.0:
 			_sprite.scale *= def.sprite_scale
-			# 그림자는 스프라이트를 안 따라간다(별도 형제 노드) → 같은 배율로 위치·크기를 같이 민다.
-			# 위치까지 곱하는 이유: authoring 값 y=42는 "그 배율에서의 발밑"이라 배율에 비례한다.
-			# 안 밀면 보스가 커진 만큼 발이 그림자 아래로 내려가 **떠 보인다**.
-			if _shadow != null:
-				_shadow.position *= def.sprite_scale
-				_shadow.scale *= def.sprite_scale
+		# 접지 그림자 — **`_sprite.scale`이 최종 확정된 뒤에** 붙인다(순서가 계약이다).
+		# 위에서 배율을 곱하기 전에 부르면 그림자만 옛 배율에 맞춰져 조용히 어긋난다.
+		_fit_shadow()
 		# 몸 판정 반경 = def.body_radius — shape 리소스는 씬 인스턴스 간 공유라 복제 후 적용 (rules §5)
 		var shape := _collision.shape.duplicate() as CircleShape2D
 		if shape != null:
@@ -226,6 +231,53 @@ func _ready() -> void:
 	_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
 	_noise.frequency = 1.0   # 표본 좌표를 _life_t*NOISE_SPEED로 직접 굴리므로 여기선 항등에 가깝게
 	_play(&"idle")
+
+
+# 접지 그림자를 **이 보스의 시트에 맞춘다** — 위치도 크기도 알파 실측에서 유도한다(SpriteGround).
+# `_ready`에서 한 번만 부른다(씬 authoring 값을 원본으로 읽으므로 재호출하면 기준이 사라진다).
+#
+# 🔴 씬 값을 크기·좌표로 쓰지 않는 이유 = **그게 이번 신고의 원인**이다. `Shadow.position`(6, 42)은
+#   옛 망령 시트의 발밑이었고, 보스가 미노로 바뀌자 x는 근거를 잃고(실물은 거의 정중앙인데 9 월드px
+#   오른쪽) y는 **가장 낮은 발**에 맞아 다른 방향에서 최대 6 tex px = 화면 9px(줌 1.5) 떠 보였다.
+#   씬에서 남겨 쓰는 것은 **가로:세로 찌그러짐 비율**(1.5 : 1.05 — 탑다운 카메라 각의 아트 선택)과
+#   실측이 실패했을 때의 폴백뿐이다.
+#
+# 🔴 방향·프레임마다 발밑이 다른 것(미노 idle 50~52 · walk 49~52)은 **대표값 하나로 고정**한다.
+#   그림자는 몸이 아니라 지면에 붙기 때문이다 — 근거는 `SpriteGround.measure` 머리말.
+#
+# ⚠ 크기 규칙 = **그림자 텍스처 폭 = 실루엣 폭**. 텍스처가 자기 안에 얼마나 여백(부드러운 가장자리)을
+#   두는지는 아트의 몫이라 여기서 안 센다. 실측 교차 확인: 미노는 실제로 칠해지는 심(alpha≥110)이
+#   실루엣의 0.80배가 되는데, 손으로 맞춰 둔 `player.tscn` 그림자도 0.81배다(28px 중 심 13px / 몸 16px).
+func _fit_shadow() -> void:
+	if _shadow == null:
+		return
+	# 씬 authoring 원본 — 폴백 값이자 찌그러짐 비율의 출처.
+	var base_pos := _shadow.position
+	var base_scale := _shadow.scale
+	var mult := def.sprite_scale if (def != null and def.sprite_scale > 0.0) else 1.0
+	var tex := _shadow.texture
+	var g := SpriteGround.measure(_sprite.sprite_frames)
+	if tex == null or not bool(g.get("ok", false)):
+		# 실측 불가(텍스처를 못 읽는 환경·빈 시트) → 도입 전 동작과 **완전 항등**으로 떨어진다.
+		# 🔴 **조용히 떨어지면 안 된다** — 항등 폴백 = "그림자가 옛 시트 발밑에 그대로 있다"이고
+		#   그게 정확히 이번 신고 상태다. 실측은 `Texture2D.get_image()`(웹 Compatibility에선 GPU
+		#   리드백)에 걸려 있어 **플랫폼에 따라 다르게 실패할 수 있다** — 그래서 브라우저 콘솔에
+		#   남긴다. 게임은 안 멈춘다(표시 축이라 판정은 무관).
+		push_warning("boss: 시트 실측 실패 — 접지 그림자가 씬 authoring 값으로 폴백한다(발밑이 어긋날 수 있다)")
+		_shadow.position = base_pos * mult
+		_shadow.scale = base_scale * mult
+		return
+	var s := _sprite.scale   # sprite_scale까지 곱해진 최종 표시 배율 (호출 순서가 이걸 보장한다)
+	var tw := float(tex.get_width())
+	var body_w := float(g.get("width", 0.0)) * absf(s.x)
+	if tw > 0.0 and not is_zero_approx(base_scale.x) and body_w > 0.0:
+		# 비율은 그대로 두고 크기만 맞춘다 — `base_scale.x`로 나누므로 x는 정확히 body_w가 되고
+		# y는 씬이 정한 찌그러짐(1.05/1.5)을 유지한다.
+		_shadow.scale = base_scale * (body_w / (tw * base_scale.x))
+	var half_h := float(tex.get_height()) * absf(_shadow.scale.y) * 0.5
+	_shadow.position = Vector2(
+		float(g.get("cx", 0.0)) * s.x,
+		float(g.get("foot", 0.0)) * s.y - half_h * SHADOW_FOOT_SINK)
 
 
 # 발밑 가산 발광 — 유령이 오염 에너지에 감싸인 느낌. 보스 자식이라 이동을 따라온다(코드 생성 = 씬 무변경).
