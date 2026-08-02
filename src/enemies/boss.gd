@@ -149,6 +149,15 @@ var _hitfall_active: bool = false          # 충돌/그로기 클립 재생 중 
 var _spin_anim_active: bool = false        # 제자리 회오리(pat_spin=F7) 클립 재생 중 — RECOVER 끝에 방향 시트 복귀
 var _c1_active: bool = false           # C1 클립 재생 중 — 생명감 눕기 포즈를 건너뛴다(클립이 곧 포즈)
 var coop_locked: bool = false          # C1 결박 중 — 패턴 AI 정지(외부=coop_authority가 설정). 페이즈2 자동 늪도 멈춤(설계 §9)
+# --- 넉백 (2026-08-02) — `mob_melee`와 **같은 계약·같은 함수**(사본이 아니라 같은 규칙이다) ---
+# 🔵 보스는 사실상 안 밀린다 — 저항이 `body_radius`(63)에서 유도돼 0.036이라 최대 0.44px다.
+#   **플래그 없이 데이터가 거른다**(설계 A-5). 그래도 상태 게이트(`can_knock`)는 필요하다:
+#   돌진(P3)은 `_charge_start`로부터의 **이동 거리**로 종료를 판정하므로 1px여도 velocity를 덮으면
+#   눈에 띄게 히치한다.
+var _knock_dir := Vector2.ZERO
+var _knock_left: float = 0.0
+var _knock_speed: float = 0.0
+var _knock_show_px: float = -1.0   # 층① 세기(호스트에만 선다 — 게스트는 -1 = 항등 폴백)
 
 @onready var _sprite: AnimatedSprite2D = $Sprite
 @onready var _collision: CollisionShape2D = $Collision
@@ -247,8 +256,7 @@ func _on_hp_changed(hp: int, dropped: bool) -> void:
 		else:
 			HitStop.punch(_sprite)   # 맞은 대상만 정지+스케일 튕김
 			HitFlash.flash(_sprite)  # 흰색 번쩍
-			var opp := Flinch.nearest_pos(global_position, get_tree().get_nodes_in_group("player"))
-			Flinch.play(_sprite, global_position - opp)  # 플레이어 반대로 흠칫
+			_play_flinch()
 	else:
 		_prev_hp = hp
 	# 페이즈 전이 — 호스트만 확정(로컬 페이즈). 임계는 party_scale 적용된 _max_hp 기준(솔로 정합).
@@ -260,6 +268,8 @@ func _on_hp_changed(hp: int, dropped: bool) -> void:
 	if dead:
 		_telegraph.visible = false
 		_telegraph_left = 0.0
+		_knock_left = 0.0      # 시체는 안 밀린다 (mob_melee와 같은 규약)
+		_knock_show_px = -1.0
 		velocity = Vector2.ZERO
 		_state = State.IDLE
 		if _has_anim(&"death"):
@@ -288,6 +298,7 @@ func _physics_process(delta: float) -> void:
 	var raw_moving := false
 	if Net.is_host():
 		_host_ai(delta)
+		_tick_knock(delta)   # 🔴 AI **뒤** — 넉백이 그 프레임의 이동을 대체한다(합산 금지, A-9)
 		raw_moving = _state == State.CHASE and velocity.length_squared() > 0.0
 	else:
 		raw_moving = global_position.distance_to(_remote_target) > REMOTE_MOVE_EPS
@@ -376,6 +387,67 @@ func _update_life_feel(delta: float) -> void:
 		_aura.scale = Vector2.ONE * (AURA_BASE_SCALE * (1.0 + AURA_PULSE * sin(_life_t * TAU * AURA_HZ)))
 		# 카운터 가능 시 아우라(청록)를 죽여 몸색(앰버) 변화가 드러나게
 		_aura.modulate.a = AURA_COLOR.a * (0.3 if counter_ready else 1.0)
+
+
+# --- 넉백 (2026-08-02) — 계약·주석 정본은 `mob_melee.gd`의 같은 세 함수다 ---
+#
+# 🔴 **손맛 채널 넷과 안 겹친다**(선언부 주석): 위치=Flinch(스프라이트 로컬) · 스케일=HitStop ·
+#   머티리얼=HitFlash · offset/skew=생명감·`counter_stagger`. 층②는 **몸 월드 좌표**라 다섯 번째
+#   축이고, 넷 중 어느 것도 안 건드린다.
+func _play_flinch() -> void:
+	# 방향·세기 동시 소비 — 근거는 `mob_melee._play_flinch` 주석이 정본이다(낡은 방향 차단).
+	var dir := _knock_dir if _knock_show_px >= 0.0 else Vector2.ZERO
+	if dir.length_squared() <= 0.000001:
+		var opp := Flinch.nearest_pos(global_position, get_tree().get_nodes_in_group("player"))
+		dir = global_position - opp
+	Flinch.play(_sprite, dir, _knock_show_px)
+	_knock_show_px = -1.0
+
+
+# 🔴 **배우가 자기 상태를 안다 — 적용 지점은 이 술어 하나만 본다**(설계 A-12).
+#   ⑴ 돌진(CHARGE_DASH)은 `_charge_start`로부터의 **이동 거리**로 종료를 판정하고 매 프레임 스윕을
+#      발화한다 — velocity를 덮으면 돌진이 히치하고 스윕 좌표가 어긋난다.
+#   ⑵ CHARGE_HIT는 리코일(뒤로 튕김) 감쇠 그 자체가 이동이다.
+#   ⑶ `coop_locked`(C1 결박)·`groggy_left`(그로기)는 **AI가 몸을 정지시킨 상태**다 — 여기서 밀면
+#      "결박당한 채 미끄러진다"가 된다.
+func can_knock() -> bool:
+	return not coop_locked and groggy_left <= 0.0 \
+		and _state != State.CHARGE_DASH and _state != State.CHARGE_HIT
+
+
+func apply_knockback(dir: Vector2, push_px: float, show_px: float) -> void:
+	if not dir.is_finite() or dir.length_squared() <= 0.000001:
+		return
+	# 🔴 **사망을 층①보다 먼저 거른다** — `mob_melee.apply_knockback`과 같은 이유·같은 순서
+	#   (netreview m-3). `_knock_show_px`는 소비될 때 비워지는 값이라, 죽은 뒤 들어온 확정이
+	#   심기만 하고 남으면 다음 피격이 **한 타 전 세기**로 흠칫한다. 보스는 부활하지 않지만
+	#   두 배우가 같은 관용구를 갖는 편이 싸다(한쪽만 고치면 다음 사람이 어느 쪽이 옳은지 모른다).
+	# ⚠ `push_px <= 0`과 묶지 마라 — 무기 미상은 정상 경로이고 층①은 살아야 한다.
+	if _health.is_dead():
+		return
+	_knock_dir = dir.normalized()
+	if is_finite(show_px) and show_px > 0.0:
+		_knock_show_px = show_px
+	if not is_finite(push_px) or push_px <= 0.0:
+		return
+	_knock_speed = CombatMath.knock_speed_px_s(push_px)
+	_knock_left = CombatMath.knock_time_s(push_px)
+
+
+func _tick_knock(delta: float) -> void:
+	if _knock_left <= 0.0:
+		return
+	# 🔴 적용 후에 돌진·결박·그로기에 **들어간** 경우까지 막는다 — 게이트가 적용 시점에만 있으면
+	#   그 0.05~0.13s 창에서 돌진 velocity를 덮는다(WINDUP → CHARGE_DASH가 그 창 안에 들어온다).
+	if not can_knock() or _health.is_dead():
+		_knock_left = 0.0
+		velocity = Vector2.ZERO
+		return
+	_knock_left -= delta
+	velocity = _knock_dir * _knock_speed
+	move_and_slide()
+	if _knock_left <= 0.0:
+		velocity = Vector2.ZERO
 
 
 # 카운터 성공 시 외부(랩)가 호출 — 잠깐 꿇는다(_update_life_feel이 offset·skew로 연출). 표시 전용.
@@ -522,10 +594,15 @@ func _host_ai(delta: float) -> void:
 					dir = (anchor - global_position).normalized()   # 접근
 			else:
 				dir = (anchor - global_position).normalized()       # 추격(기본)
-			velocity = dir * def.move_speed * speed_mult
-			if dir != Vector2.ZERO:
-				move_and_slide()
-				_sprite.flip_h = false
+			# 🔴 넉백 중엔 자기 이동을 접는다 — 대체이지 합산이 아니다(A-9). 상태 타이머는 위에서
+			#   이미 흘렀으므로 **스턴락이 아니다**(A-10 — 접는 것은 자기 이동뿐이다).
+			if _knock_left > 0.0:
+				velocity = Vector2.ZERO
+			else:
+				velocity = dir * def.move_speed * speed_mult
+				if dir != Vector2.ZERO:
+					move_and_slide()
+					_sprite.flip_h = false
 		State.WINDUP:
 			velocity = Vector2.ZERO   # 공격 애니 중엔 이동 정지 (패턴 애니 하면서 안 움직인다)
 			if _state_left <= 0.0:

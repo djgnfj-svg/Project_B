@@ -1932,6 +1932,20 @@ func melee_combo_mult() -> float:
 	return CombatMath.combo_damage_mult_at(_weapon_override, _combo_index)
 
 
+# 이번 근접 타의 넉백 입력 두 개 — 🔴 **`melee_combo_mult()`와 같은 관용구·같은 이유**(2026-08-02).
+#   호스트는 Net에 루프백이 없어 자기 `G_ATK`를 안 받으므로 `_melee_combo`엔 **자기 항목이 영원히
+#   없다** — 자기 무기·타수는 **로컬 아바타가 유일한 소스**다(2026-07-25 공속 Critical 부류).
+#   그걸 안 지키면 "남을 때리면 밀리는데 내가 때리면 안 밀린다"가 되고 화면에 이유가 안 드러난다.
+# ⚠ 세기 계산은 여기서 하지 않는다 — `CombatMath.knockback_px`/`knock_show_px`가 단일 소스이고,
+#   적 저항(`body_radius`)은 확정 지점(CombatAuthority)만 아는 값이다.
+func melee_weapon_def() -> EquipDef:
+	return _weapon_override
+
+
+func melee_is_finish() -> bool:
+	return _is_combo_finish(_combo_index)
+
+
 # 이번 스윙의 궤적·마무리 여부를 콤보 타수로 결정한다.
 # 🔴 **v2.2부터 연출 전용이 아니다** — 여기서 굳힌 `_swing_is_finish`가 판정 각(`_resolve_swing_hit`)까지
 #   고른다. 스윙 창·쿨다운은 여전히 콤보와 무관하다(§3 미러 계약).

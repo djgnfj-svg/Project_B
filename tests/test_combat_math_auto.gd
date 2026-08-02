@@ -1091,6 +1091,154 @@ func _initialize() -> void:
 			and bad_range.combo_range_mult.size() > 0,
 		"★근접 사거리 배율 검출력: 찌르기 + combo_range_mult 조합이 ⑴의 조건에 실제로 걸린다")
 
+	# --- 넉백 (2026-08-02) — `data/equipment` × `data/enemies` 전수 ---
+	#
+	# 🔴 여기서 지키는 것 셋은 전부 **깨져도 화면에 이유가 안 드러나는** 축이다:
+	#   K1 상한 — 넉백이 상한을 넘으면 K2가 무의미해진다.
+	#   K2 🔴 **넉백 ≤ 최소 마무리 대시** — 깨지면 *"때릴수록 못 때린다"*(적을 밀어냈는데 내 전진이
+	#      그만큼 못 따라간다). 이건 밸런스 문제로 보이지 넉백 상한 문제로 안 보인다.
+	#   K3 🔴 **넉백 속도 ≤ `MOB_LAG_SLACK_SPEED`** — 넘으면 §3 「대상 좌표 각 슬랙」 유도가 거짓이
+	#      되고 **게스트의 정당한 근접타가 무음 거부**된다(스윙·궤적·소리는 다 나고 HP만 안 깎인다).
+	#      배포본·게스트에서만 나타나므로 `dev_local.sh`로도 재현되지 않는다 — 트립와이어가 유일한 방어.
+	var knock_over := ""            # K1 위반
+	var knock_compose := ""         # K1ⓑ 위반(cap↔resist 순서)
+	var knock_speed_over := ""      # K3 위반
+	var knock_finish_lower := ""    # K5 위반(마무리가 평타보다 약함 = 부호 역전)
+	var knock_resist_bad := ""      # K4 위반(비유한·[0,1] 밖)
+	var knock_dash_over := ""       # K7 위반 — 넉백 > 그 타의 대시(= "때릴수록 멀어진다")
+	var min_finish_dash := INF      # K2 우변 — 근접 무기의 최소 마무리 대시
+	var min_dash_id := ""
+	var knock_pairs := 0            # 침묵 통과 가드 — 실제로 돈 조합 수
+	var knock_enemies: Array = []   # [{name, def}, …] — 위반 라벨에 파일명을 싣기 위해 짝으로 든다
+	for enf2: String in DirAccess.get_files_at("res://data/enemies"):
+		var ebase2 := enf2.trim_suffix(".remap")
+		if ebase2.get_extension() != "tres":
+			continue
+		var ed2 := load("res://data/enemies/%s" % ebase2) as EnemyDef
+		if ed2 == null:
+			continue
+		knock_enemies.append({"name": ebase2.get_basename(), "def": ed2})
+		var rr := CombatMath.knock_resist(ed2)
+		if not is_finite(rr) or rr < 0.0 or rr > 1.0:
+			knock_resist_bad += "%s(%.3f) " % [ebase2, rr]
+	for kf: String in DirAccess.get_files_at("res://data/equipment"):
+		var kbase := kf.trim_suffix(".remap")
+		if kbase.get_extension() != "tres":
+			continue
+		var kw := load("res://data/equipment/%s" % kbase) as EquipDef
+		if kw == null:
+			continue
+		# 🔴 **K2의 좌변은 근접 무기만이다** — 넉백을 "내가 따라간다"로 갚는 것은 근접 전진(대시)이고,
+		#   발사형은 애초에 거리를 벌려 싸운다. 발사형까지 넣으면 대시 0인 활 한 자루가 불변식을
+		#   0으로 만들어 **트립와이어가 상시 빨강**이 된다(= 곧 꺼진다).
+		if not CombatMath.is_projectile_weapon(kw):
+			var fd := CombatMath.combo_dash_dist(kw, true)
+			if fd < min_finish_dash:
+				min_finish_dash = fd
+				min_dash_id = kw.id
+		for kent: Dictionary in knock_enemies:
+			var ked := kent["def"] as EnemyDef
+			var kname := str(kent["name"])
+			for kfin: int in [0, 1]:
+				for klv: int in range(CombatMath.MAX_CHARGE_LEVEL + 1):
+					var kpx := CombatMath.knockback_px(kw, kfin == 1, ked, klv)
+					knock_pairs += 1
+					if not is_finite(kpx) or kpx > CombatMath.MAX_KNOCK_PX + 0.000001:
+						knock_over += "%s×%s(f%d,c%d)=%.2f " % [kw.id, kname, kfin, klv, kpx]
+					if CombatMath.knock_speed_px_s(kpx) > CombatMath.MOB_LAG_SLACK_SPEED + 0.000001:
+						knock_speed_over += "%s×%s " % [kw.id, kname]
+					# 🔴 **cap 「뒤」에 resist** — 반대로 하면 저항이 큰 적에서 실효 상한이
+					#   `MAX / resist`가 되어(무게 축이 포화하지 않는다) A-4 계약이 깨진다.
+					#   ⚠ 현 데이터는 cap이 안 걸려 여기서는 안 갈린다 — **아래 합성 케이스가 본체**다.
+					if not is_equal_approx(kpx,
+							minf(CombatMath.knock_show_px(kw, kfin == 1, klv),
+								CombatMath.combo_dash_dist(kw, kfin == 1) * CombatMath.KNOCK_DASH_RATIO)
+							* CombatMath.knock_resist(ked)):
+						knock_compose += "%s×%s " % [kw.id, kname]
+					# 🔴 **K7 — 그 타의 전진 이하인가**(netreview M-B). K2는 `is_finish = true`의
+					#   **전역** 상한만 봐서 평타 축이 사각이었다: 도끼 평타가 11.73 vs 대시 8.0으로
+					#   실제로 어겼는데 **전수 트립와이어가 초록**이었다. 여기는 타별·무기별로 본다.
+					#   ⚠ 발사형 제외 이유는 K2와 같다(대시 0이라 상시 빨강 = 곧 꺼진다).
+					if not CombatMath.is_projectile_weapon(kw):
+						var dash_here := CombatMath.combo_dash_dist(kw, kfin == 1)
+						if kpx > dash_here + 0.000001:
+							knock_dash_over += "%s×%s(f%d)=%.2f>%.2f " % [
+								kw.id, kname, kfin, kpx, dash_here]
+			if CombatMath.knockback_px(kw, true, ked) < CombatMath.knockback_px(kw, false, ked):
+				knock_finish_lower += "%s×%s " % [kw.id, kname]
+	failures += _check(knock_pairs > 0 and not min_dash_id.is_empty(),
+		"넉백 전수: 무기×적 조합이 실제로 스캔됐다 (%d조합 · 최소대시 %s — 0건 = 침묵 통과)"
+			% [knock_pairs, "없음" if min_dash_id.is_empty() else min_dash_id])
+	failures += _check(knock_over.is_empty(),
+		"★넉백 전수 K1: knockback_px ≤ MAX_KNOCK_PX(%.1f) — K2 불변식의 좌변을 지킨다 (위반: %s)"
+			% [CombatMath.MAX_KNOCK_PX, "없음" if knock_over.is_empty() else knock_over])
+	failures += _check(knock_compose.is_empty(),
+		"★넉백 전수 K1ⓑ: knockback_px == knock_show_px × knock_resist — **cap과 resist의 순서**가 계약이다 (위반: %s)"
+			% ("없음" if knock_compose.is_empty() else knock_compose))
+	failures += _check(CombatMath.MAX_KNOCK_PX <= min_finish_dash,
+		"★넉백 전수 K2: MAX_KNOCK_PX(%.1f) ≤ 최소 마무리 대시(%s = %.1f) — **넉백이 자기 발등을 찍지 않는다**"
+			% [CombatMath.MAX_KNOCK_PX, min_dash_id, min_finish_dash])
+	failures += _check(knock_speed_over.is_empty(),
+		"★넉백 전수 K3: 넉백 속도 ≤ MOB_LAG_SLACK_SPEED(%.0f) — 넘으면 게스트 근접타가 무음 거부된다 (위반: %s)"
+			% [CombatMath.MOB_LAG_SLACK_SPEED, "없음" if knock_speed_over.is_empty() else knock_speed_over])
+	failures += _check(knock_resist_bad.is_empty(),
+		"★넉백 전수 K4: knock_resist가 모든 적에서 유한 + [0,1] (위반: %s)"
+			% ("없음" if knock_resist_bad.is_empty() else knock_resist_bad))
+	failures += _check(knock_finish_lower.is_empty(),
+		"★넉백 전수 K5: 마무리 ≥ 평타 — 뒤집히면 '세게 친 타가 덜 민다'가 된다 (위반: %s)"
+			% ("없음" if knock_finish_lower.is_empty() else knock_finish_lower))
+	failures += _check(knock_dash_over.is_empty(),
+		"★넉백 전수 K7: 넉백 ≤ **그 타의 대시** — 타별·무기별로 '때릴수록 멀어진다'를 막는다 (위반: %s)"
+			% ("없음" if knock_dash_over.is_empty() else knock_dash_over))
+	# 🔴 **K8 — `equip == null`에서 넉백이 0인가**(netreview M-A). `weapon_weight(null)`은 1.0이라
+	#   마무리가 6.4px 나오는데 `combo_dash_dist(null)`은 0이다 = 전진 없이 밀기만 하는 순수 손해.
+	#   ⚠ **전수 루프가 이 축을 원리적으로 못 본다** — `null`은 `data/equipment`의 표본이 아니다.
+	#   도달 경로: 무장 해제 · `can_job_equip` 거부로 `melee_weapon`이 null로 떨어진 게스트.
+	failures += _check(is_zero_approx(CombatMath.knockback_px(null, true, null))
+			and is_zero_approx(CombatMath.knockback_px(null, false, null)),
+		"★넉백 K8: 무기 미상(null)이면 넉백 0 = 도입 전 항등 (마무리 %.2f · 평타 %.2f)"
+			% [CombatMath.knockback_px(null, true, null), CombatMath.knockback_px(null, false, null)])
+	# ★검출력 — 현 데이터는 전부 상한 아래라 "clamp가 살아 있는가"를 못 보여준다(대시 clamp와 같은
+	#   관용구, 리뷰 I-1). 합성 무기·합성 적으로 두 clamp를 직접 겨눈다.
+	var fat_hammer := EquipDef.new()
+	fat_hammer.hit_shake = 99.0     # weapon_weight 상한(3.0)에 걸리고, 그래도 넉백은 cap을 넘는다
+	# 🔴 **대시를 채워야 이 케이스가 겨누는 축(resist 순서)이 드러난다** (2026-08-02).
+	#   `KNOCK_DASH_RATIO` 도입 후 넉백은 `min(전역 cap, 그 타의 대시 × 0.75)`인데, 합성 무기는
+	#   `combo_dash`가 0이라 **대시 상한이 먼저 0으로 걸려** 전역 cap이 관측되지 않는다(K6ⓐ/ⓑ가
+	#   둘 다 0을 보고 통과/실패해 **검출력이 사라진다**). 20 × 0.75 = 15 ≥ MAX_KNOCK_PX(12)라
+	#   대시 축은 비활성이고 전역 cap만 남는다 — 이 케이스의 원래 의도 그대로다.
+	fat_hammer.combo_dash = CombatMath.MAX_COMBO_DASH
+	failures += _check(is_equal_approx(
+			CombatMath.knock_show_px(fat_hammer, true, CombatMath.MAX_CHARGE_LEVEL),
+			CombatMath.MAX_KNOCK_PX),
+		"★넉백 검출력 K6ⓐ: hit_shake 99 + 마무리 + 최대 차지 → MAX_KNOCK_PX (cap을 지우면 빨개진다)")
+	var tank := EnemyDef.new()
+	tank.body_radius = CombatMath.KNOCK_REF_RADIUS * 4.0   # 저항 1/16
+	# 🔴 **cap이 실제로 걸리는 조합**에서만 두 순서가 갈린다 — 현 데이터는 전부 상한 아래라
+	#   위 전수는 이 축을 못 본다(합성이 유일한 관측 경로다). 파쇄망치 raw 19.2 · 저항 1/16이면
+	#   cap-뒤 = 12 × 0.0625 = **0.75** vs cap-앞 = min(19.2 × 0.0625, 12) = **1.2** 로 갈린다.
+	failures += _check(
+		is_equal_approx(CombatMath.knock_show_px(fat_hammer, true), CombatMath.MAX_KNOCK_PX)
+		and is_equal_approx(CombatMath.knockback_px(fat_hammer, true, tank),
+			CombatMath.MAX_KNOCK_PX * CombatMath.knock_resist(tank)),
+		"★넉백 검출력 K6ⓑ: cap 포화 조합에서 결과 == cap × resist — 🔴 resist를 cap **앞**으로 옮기면 여기가 빨개진다")
+	var pebble := EnemyDef.new()
+	pebble.body_radius = 1.0
+	failures += _check(is_equal_approx(CombatMath.knock_resist(pebble), 1.0)
+			and is_equal_approx(CombatMath.knock_resist(null), 1.0),
+		"넉백: 기준보다 작은 적·미상은 저항 1.0(clamp) — 온전히 밀린다")
+	# 🔵 속도 상한이 **구성으로** 성립하는가 — 어떤 거리에서도(0·미소·상한·초과) 90을 못 넘는다.
+	var speed_free := true
+	for px_probe: float in [0.0, 0.01, 1.0, 4.4999, 4.5, 12.0, 999.0]:
+		if CombatMath.knock_speed_px_s(px_probe) > CombatMath.MOB_LAG_SLACK_SPEED + 0.000001:
+			speed_free = false
+	failures += _check(speed_free,
+		"★넉백: 임의 거리에서도 속도 ≤ %.0f — `knock_time_s`를 상수로 바꾸면(= 시간 유도 폐기) 여기가 빨개진다"
+			% CombatMath.MOB_LAG_SLACK_SPEED)
+	failures += _check(is_equal_approx(CombatMath.knock_time_s(0.0), CombatMath.KNOCK_TIME_MIN_S)
+			and is_equal_approx(CombatMath.knock_time_s(-1.0), CombatMath.KNOCK_TIME_MIN_S),
+		"넉백: 0·음수 거리도 유한한 시간(0 나눗셈·무한 넉백 방어)")
+
 	# --- 발사형 판정 (호스트 G_SHOOT 신뢰 경계, 2026-07-27 netreview M4) ---
 	# 🔴 근접 무기가 이 경로에 새면 `arrow_range` 기본값 360짜리 권한 화살이 전사 공격력으로 확정된다.
 	var gsword := EquipDef.new()

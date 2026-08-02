@@ -559,6 +559,124 @@ static func weapon_weight(equip: EquipDef) -> float:
 	return clampf(hs / HIT_SHAKE_REF, HIT_WEIGHT_MIN, HIT_WEIGHT_MAX)
 
 
+# --- 넉백 (2026-08-02) — 층①(흠칫 표시)과 층②(몸 밀림)의 **공용 단일 소스** ---
+#
+# 🔴 **세기는 `EquipDef.hit_shake` 하나에서 파생한다** — 바로 위 `weapon_weight`가 그 창구다.
+#   무게 필드를 따로 만들지 마라(§3): 스크린셰이크·카메라 킥·적중 박힘이 이미 거기서 나오고,
+#   넉백만 다른 숫자를 쥐면 "도끼를 무겁게 조였는데 밀림만 그대로"가 된다.
+# 🔴 **`mob_melee.gd`·`combat_authority.gd`가 아니라 여기 사는 이유는 검출력이다**(리뷰 J-1·J-2).
+#   씬 글루는 `-s` preload가 안 돼 `data/**` 전수 트립와이어를 만들 수 없고, 그러면 테스트는
+#   코드보다 느슨한 근사만 쓸 수 있어 조용히 clamp된 값이 초록으로 샌다.
+#
+# 두 층이 갈리는 지점은 **`knock_resist` 하나뿐**이다:
+#   층① 흠칫(표시, 스프라이트 로컬)   = knock_show_px()        ← 적 저항 **없음**
+#   층② 밀림(몸 월드 좌표, 호스트)    = knockback_px()          ← 층① × knock_resist(적)
+# ⚠ **층①에 저항을 곱하지 않는 것은 의도된 해석이다**(리드 확인 요청 대상). 저항은 "얼마나
+#   밀리는가"의 축이고(A-5), 층①이 고치려는 결함은 *"파쇄 도끼든 낡은 대검이든 똑같이 5px
+#   흠칫한다"* = **무기 무게**다. 저항을 곱하면 보스(반경 63 → 저항 0.036)의 흠칫이 0.1~0.4px가
+#   되어 **가장 많이 때리는 적에서 층①이 통째로 사라진다.** 되돌리려면 `knockback_px`를
+#   층①에도 쓰면 되고, 그 한 줄이 이 해석의 전부다.
+const KNOCK_BASE_PX := 4.0        # 무게 1.0(hit_shake 1.5) 평타의 밀림 거리(px) — 손맛값(§0 예외)
+const KNOCK_FINISH_MULT := 1.6    # 마무리 타 배수 — `is_combo_finish` 단일 소스로 갈린다(사본 금지)
+# 🔴 **상한은 「내가 따라가는 거리」에서 유도한다 — 독립 상수가 아니다.**
+#   불변식: `MAX_KNOCK_PX ≤ min over data/equipment of combo_dash_dist(equip, true)`.
+#   플레이어는 **모든 타에 전진**하므로(마무리 전량 · 평타 `NONFINISH_DASH_RATIO`) 상한을 최소
+#   마무리 대시 아래로 묶으면 *"밀어낸 만큼 내가 따라간다"* 가 데이터가 아니라 **부등식**으로
+#   보장된다 — 안 묶으면 "때릴수록 못 때린다"가 되고 화면에 이유가 안 드러난다.
+#   현행 우변 = min(16, 20, 20, 20) = 16.0(낡은 대검 16) → 여유 25%.
+#   ⚠ 여유가 필요한 이유는 **창(槍) 판례**다 — 「폴백 창 불변식」이 84 vs 80으로 4px 여유뿐이라
+#     위험 등급이 됐다. `test_combat_math_auto`의 「★넉백 전수」가 전수로 지킨다.
+const MAX_KNOCK_PX := 12.0
+# 🔴 **넉백 속도 상한 = `MOB_LAG_SLACK_SPEED`(90)** — §3 「대상 좌표 각 슬랙」 유도식을 **문자 그대로
+#   참인 채로** 남기려는 것이다. 그 유도는 `mob_lag_slack_px = MOB_LAG_SLACK_SPEED × (송신주기 + 편도)`
+#   이고 근거가 "실측 최대 몹 이속 74 + 새 적 여지"다. 넉백이 몹을 90px/s보다 빠르게 움직이면
+#   **유도가 거짓이 되고** 게스트 화면의 몹 좌표가 슬랙 예산보다 낡아져 **게스트의 정당한 근접타가
+#   무음 거부**된다(증상: 스윙·궤적·소리는 다 나는데 적 HP만 안 깎인다 — 배포본·게스트에서만).
+#   대안이던 「상수를 270으로 올린다」는 창의 콘을 +44°(사실상 전방위)로 벌려 **기각**했다.
+#   대가 = 무거운 넉백이 "펀치"가 아니라 "밀침"으로 읽힌다. 🔵 **그래도 손맛은 안 죽는다 — 그건
+#   층①이 즉시·로컬·양쪽 화면에서 이미 팔기 때문이다**(두 층을 가른 것이 여기서 값을 한다).
+const KNOCK_TIME_MIN_S := 0.05
+# 저항 1.0의 기준 몸 반경 = 일반 잔몹(미노 12). 🔴 **`EnemyDef.knock_resist` 필드를 만들지 마라** —
+#   `body_radius`는 이미 판정 반경·그림자 폭·텔레그래프·화살 총구·길찾기 반경의 단일 소스이고,
+#   저항을 그 목록에 넣으면 **새 적 = 여전히 .tres 한 장**이다(§4). 덩치를 키운 적이 자동으로 덜
+#   밀린다 — 사람이 두 값을 손으로 맞출 자리를 안 만든다.
+# ⚠ 알려진 한계(수용): *작은데* 안 밀리는 적(고정 포탑·뿌리내린 적)은 이 유도로 표현할 수 없다.
+#   그런 적이 실제로 필요해질 때가 필드를 정당화하는 시점이다.
+const KNOCK_REF_RADIUS := 12.0
+# 🔴 **그 타의 전진(대시) 대비 상한 — `MAX_KNOCK_PX`(전역)로는 못 막는 두 구멍을 닫는다**
+#   (netreview 2026-08-02 M-A·M-B. 둘 다 **같은 뿌리**라 이 한 줄이 동시에 닫는다).
+#   ⒜ **무장 해제·거부된 무기**(`equip == null`): `weapon_weight(null)` = 1.0이라 마무리 6.4px가
+#      나오는데 `combo_dash_dist(null)` = **0.0**이다 → 적은 밀리는데 내 전진이 0 = 순수 손해.
+#      ⚠ 전역 상한은 이걸 **원리적으로** 못 본다 — `null`은 `data/equipment`에 없어서 전수
+#      트립와이어의 표본에 존재하지 않는다(테스트가 "지키는 척"만 하던 축이다).
+#   ⒝ **평타 축**: A-6 불변식은 `is_finish = true`만 걸었고 설계 A-8 표도 마무리만 계산했다.
+#      실측 = 파쇄 도끼 평타 밀림 11.73px vs 평타 대시 8.0px → **+3.73px 벌어진다**(미노 저항
+#      1.0이라 감쇠 없음, 게다가 도끼는 `melee_range` 38로 4종 중 최단이다).
+#   → 상한을 **그 타의 대시에서** 유도하면 "때릴수록 멀어진다"가 무기·타수·데이터와 무관하게
+#     **부등식으로** 불가능해진다. A-6의 정신을 전역 상수에서 **타별**로 정밀화한 것이다.
+# 🔴 **층②에만 건다 — 층①(흠칫)은 이 상한을 안 탄다.** 근거가 "내가 따라간다"(공간)인데 층①은
+#   몸을 안 움직이므로 그 근거가 성립하지 않는다. 걸면 도끼 평타 흠칫이 11.7 → 6.0px로 죽어
+#   **손맛만 잃고 얻는 것이 없다**(설계 A-0: 손맛은 ①이 팔고 공간은 ②가 판다).
+# 여유 0.25는 `MAX_KNOCK_PX`(12 vs 최소 마무리 대시 16)와 **같은 근거·같은 값**이다(창 판례).
+const KNOCK_DASH_RATIO := 0.75
+
+
+# 적 저항 [0, 1] — 질량 ∝ 면적 가정. 반경이 기준보다 작으면 1.0(clamp)이라 작은 적은 전부 온전히 밀린다.
+static func knock_resist(def: EnemyDef) -> float:
+	if def == null:
+		return 1.0
+	var r: float = def.body_radius
+	if not is_finite(r) or r <= 0.0:
+		return 1.0
+	var k := KNOCK_REF_RADIUS / r
+	return clampf(k * k, 0.0, 1.0)
+
+
+# 층① 흠칫 세기(px) — 적 저항 **전**의 상한 적용값. 표시 전용이라 네트워크 메시지가 0개다.
+# ⚠ `charge_lv`는 근접 차지(단계 C) 자리다 — 지금 근접은 항상 0을 넘기므로 **완전 항등**이고,
+#   발사형(법사 지팡이)만 실제로 0이 아닌 값을 쓴다. 배율표는 데미지와 **같은 표**를 지난다
+#   (배율을 따로 두면 "세게 모았는데 밀림만 그대로"가 된다).
+static func knock_show_px(equip: EquipDef, is_finish: bool = false, charge_lv: int = 0) -> float:
+	var raw := KNOCK_BASE_PX * weapon_weight(equip) \
+		* (KNOCK_FINISH_MULT if is_finish else 1.0) \
+		* CHARGE_DAMAGE_MULT[clamp_charge_level(charge_lv)]
+	return minf(raw, MAX_KNOCK_PX)
+
+
+# 층② 밀림 거리(px) = 층① × 적 저항.
+# 🔴 **`resist`는 cap 「뒤」에 곱한다 — 순서가 계약이다.** 그래야 `knockback_px ≤ MAX_KNOCK_PX`
+#   불변식이 **모든 적에 대해** 성립하고, 위 A-6 부등식(대시 ≥ 넉백)이 데이터와 무관하게 참이 된다.
+#   앞에 곱하면 저항이 큰 적에서 cap이 먼저 걸려 상한이 사실상 `MAX_KNOCK_PX / resist`가 된다.
+#   🔴 **대시 상한도 `resist` 「앞」이다** — 같은 이유다(cap류는 전부 저항 앞). 뒤로 옮기면 저항이
+#     큰 적에서 상한이 `dash × RATIO / resist`로 부풀어 A-6·M-B가 같이 무너진다.
+static func knockback_px(equip: EquipDef, is_finish: bool = false, enemy_def: EnemyDef = null,
+		charge_lv: int = 0) -> float:
+	# 🔴 그 타의 전진 이하로 묶는다(`KNOCK_DASH_RATIO` 주석 = 근거). `equip == null`이면 대시가
+	#   0이므로 넉백도 0 = **도입 전과 완전 항등**이고, 그것이 무기를 모르는 경로의 안전한 폴백이다.
+	var push := minf(knock_show_px(equip, is_finish, charge_lv),
+		combo_dash_dist(equip, is_finish) * KNOCK_DASH_RATIO)
+	return push * knock_resist(enemy_def)
+
+
+# 그 거리를 미는 데 걸리는 시간(s) — 속도가 아니라 **시간**을 유도해 속도 상한을 구성으로 만든다.
+static func knock_time_s(px: float) -> float:
+	if not is_finite(px) or px <= 0.0:
+		return KNOCK_TIME_MIN_S
+	return maxf(px / MOB_LAG_SLACK_SPEED, KNOCK_TIME_MIN_S)
+
+
+# 넉백 속도(px/s) — 🔵 **구성상 항상 ≤ `MOB_LAG_SLACK_SPEED`**: `t ≥ px / 90`이므로 `px / t ≤ 90`이다.
+# 🔴 **여기에 `minf(…, MOB_LAG_SLACK_SPEED)`를 덧붙이지 마라.** 그러면 부등식이 항등적으로 참이 되어
+#   `test_combat_math_auto`의 K3(속도 상한)이 **공허해진다** — 누가 `knock_time_s`를 상수로 바꿔
+#   속도가 240px/s가 돼도 트립와이어가 초록이다(rules: "코드와 테스트가 같은 모델을 공유하면
+#   검출력은 0이다"). 상한은 **시간 유도**가 지고, 그 유도가 살아 있는지는 테스트가 잰다.
+static func knock_speed_px_s(px: float) -> float:
+	var t := knock_time_s(px)
+	if t <= 0.0:
+		return 0.0
+	return px / t
+
+
 # --- 칼날 폭 리본 (2026-08-01) — 🔴 **판정을 만들지 않는다.** ---
 # `motion_phases`·`weapon_weight`와 **같은 자리**다: 표시 전용인데도 여기 있는 이유는 오직
 #   "`data/equipment` 전수 트립와이어가 닿아야 하기 때문"이다(J-1·J-2). `player.gd`에 두면 씬 글루라

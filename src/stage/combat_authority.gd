@@ -197,8 +197,13 @@ func _on_attack_hit(enemy: Node, job: JobDef, dir: Vector2) -> void:
 		# ⚠ 재계수하지 않는다 — 호스트 자신에게는 지연도 사칭 동기도 없고, 재계수하면 자기 화면 표시
 		#   (같은 값을 쓰는 궤적·킥)와 자기 판정이 갈라질 수 있다.
 		var me := _peer_sync.player(Net.my_id)
-		_confirm_damage((entry_v as Dictionary)["health"] as HealthComponent, job, Net.my_id,
-			me.melee_combo_mult() if me != null else 1.0)
+		# 🔴 넉백 입력도 **로컬 아바타**에서 온다 — 위와 같은 이유다(`_melee_combo`엔 자기 항목이 없다).
+		#   방향은 이미 인자로 온 `dir`(그 스윙의 조준각)이라 새 필드가 필요 없다.
+		var entry_self := entry_v as Dictionary
+		_confirm_damage(entry_self["health"] as HealthComponent, job, Net.my_id,
+			me.melee_combo_mult() if me != null else 1.0,
+			{} if me == null else {"root": entry_self["root"], "def": entry_self["def"],
+				"dir": dir, "equip": me.melee_weapon_def(), "finish": me.melee_is_finish()})
 	else:
 		Net.send_game({NetSchema.KEY_KIND: NetSchema.G_HIT_REQ, "eid": str(eid_v),
 			"dx": dir.x, "dy": dir.y})
@@ -210,7 +215,7 @@ func _on_attack_hit(enemy: Node, job: JobDef, dir: Vector2) -> void:
 #   리졸브하면 근거가 둘이 된다(호스트 자기 타격 = 로컬 아바타 / 게스트 = `_melee_combo` 계수분).
 #   1.0 = 콤보 없는 무기 = **도입 전과 완전 항등**. 곱셈은 `confirm_damage` 안 = 반올림 여전히 1회.
 func _confirm_damage(health: HealthComponent, job: JobDef, attacker_id: int,
-		combo_mult: float = 1.0) -> void:
+		combo_mult: float = 1.0, knock: Dictionary = {}) -> void:
 	var now := Time.get_ticks_msec()
 	var last := int(_last_hit_msec.get(attacker_id, -1000000000))
 	# 🔴 공속 반영 — 공격자 아바타의 level_stats에서 읽는다. **치명·피흡(_apply_confirmed)과 같은 소스**여야 한다:
@@ -225,7 +230,7 @@ func _confirm_damage(health: HealthComponent, job: JobDef, attacker_id: int,
 		return
 	if now - last > CombatMath.SAME_SWING_MS:
 		_last_hit_msec[attacker_id] = now  # 새 스윙 앵커 — 매 확정마다 갱신하면 창이 미끄러진다
-	_apply_confirmed(health, job, attacker_id, 0, combo_mult)  # 데미지 산출·치명·피흡은 공용 경로(아래) — 3경로 공통
+	_apply_confirmed(health, job, attacker_id, 0, combo_mult, knock)  # 데미지 산출·치명·피흡은 공용 경로(아래) — 3경로 공통
 
 
 # 🔴 호스트 전용 — 데미지 확정의 **단일 경로** (근접·투사체·폭발 공통, rules §3).
@@ -236,8 +241,10 @@ func _confirm_damage(health: HealthComponent, job: JobDef, attacker_id: int,
 # combo_mult = 평타 콤보 타별 데미지 배율. 🔴 **v2.2(2026-07-29)부터 근접도 실어 준다** — 전사 콤보가
 # "연출 전용"이라던 옛 서술은 거짓이 됐다(GDD §6 「공격 리듬」). 곱셈은 confirm_damage 안에서 =
 # 반올림 여전히 1회. 콤보 배열이 없는 무기는 1.0 = 도입 전과 완전 항등.
+# knock = 넉백 입력 {root, def, dir, equip, finish}. **비면 넉백 없음 = 도입 전과 완전 항등**이고,
+# 그것이 방향을 모르는 경로(dx/dy 없는 구버전·조작 클라)의 안전한 폴백이다.
 func _apply_confirmed(health: HealthComponent, job: JobDef, attacker_id: int, charge_level: int,
-		combo_mult: float = 1.0) -> void:
+		combo_mult: float = 1.0, knock: Dictionary = {}) -> void:
 	var atk_p := _peer_sync.player(attacker_id)
 	# 착용 장비 공격 보너스·레벨 5스탯 = 공격자 아바타(G_STATS로 반영). 미착용/미상 = 0·빈 dict (항등 폴백).
 	var bonus := atk_p.equip_atk_bonus if atk_p != null else 0
@@ -246,9 +253,46 @@ func _apply_confirmed(health: HealthComponent, job: JobDef, attacker_id: int, ch
 	var dmg := int(res["damage"])
 	if dmg <= 0:
 		return
+	# 🔴 **넉백은 `apply_damage` 「앞」이다 — 순서가 계약이다.** 바로 뒤 `hp_changed` → 배우의
+	#   `_on_hp_changed`가 층①(흠칫)의 세기·방향을 여기서 심은 값에서 읽는다. 뒤로 옮기면 흠칫이
+	#   **한 타 늦은 무기**의 세기로 재생되고(그리고 첫 타는 옛 고정값), 화면에 이유가 안 드러난다.
+	# ⚠ 데미지가 실제로 확정되는 자리에 둔 이유 = 쿨다운 게이트·0데미지에서 거부된 타격이
+	#   **밀기만 하는 것**을 막는다(스팸으로 몹을 밀어내는 경로가 안 생긴다).
+	_push_knockback(knock, charge_level)
 	var before := health.hp
 	health.apply_damage(dmg, bool(res["crit"]))  # crit은 Health.last_crit으로 표시 경로에 전달(§3)
 	_accrue_leech(attacker_id, before - health.hp, lv_stats)  # 🔴 실제로 깎인 HP 기준 = 오버킬 클립
+
+
+# 🔴 호스트 전용 — 넉백(층② 밀림 + 층① 흠칫 세기) 적용의 **단일 지점** (2026-08-02).
+#
+# 🔴 **네트워크 메시지·필드가 0개다.** 호스트가 몸을 밀면 그 결과가 이미 있는 `G_MOB_POS`
+#   (10Hz, 호스트→전원)로 그대로 흐르고, 게스트는 "목표점이 뒤로 갔다"로만 받는다 —
+#   게스트 코드 변경 0. 방향도 전송하지 않는다: 세 경로 모두 **이미 방향을 갖고 있다**
+#   (근접 = `dir`/`dx,dy` · 화살 = 비행 방향 · 폭발 = 중심→대상 방사).
+# 🔴 **세기는 `CombatMath` 하나에서 온다** — 여기서 무게·저항·상한을 다시 계산하지 마라(§3).
+#   저항은 `EnemyDef.body_radius`에서 유도되므로 **새 적 = 여전히 .tres 한 장**이다.
+# 🔴 **배우가 자기 상태를 안다** — 이 함수가 보는 것은 `can_knock()` 술어 하나뿐이고 보스의
+#   돌진·결박·그로기를 여기서 열거하지 않는다(열거하면 보스 상태기계가 바뀔 때마다 여기가 갈라진다).
+# ⚠ 잔몹·보스만 이 API를 갖는다 — 허수아비(`enemy.gd`, StaticBody2D)는 `has_method`에서 걸러져
+#   **도입 전과 완전 항등**이다(밀 몸이 애초에 없다).
+func _push_knockback(knock: Dictionary, charge_level: int) -> void:
+	if knock.is_empty():
+		return
+	var root := knock.get("root") as Node2D
+	if root == null or not root.has_method("apply_knockback") or not root.has_method("can_knock"):
+		return
+	if not bool(root.call("can_knock")):
+		return
+	var dir := knock.get("dir", Vector2.ZERO) as Vector2
+	if not dir.is_finite() or dir.length_squared() <= 0.000001:
+		return
+	var equip := knock.get("equip") as EquipDef
+	var is_finish := bool(knock.get("finish", false))
+	var edef := knock.get("def") as EnemyDef
+	root.call("apply_knockback", dir.normalized(),
+		CombatMath.knockback_px(equip, is_finish, edef, charge_level),
+		CombatMath.knock_show_px(equip, is_finish, charge_level))
 
 
 # 호스트 전용 — 피흡 적립·회복. 소수를 누적해 1 이상이면 confirm_hp로 확정한다(새 메시지 0개 —
@@ -343,9 +387,14 @@ func _register_arrow(aid: String, origin: Vector2, dir: Vector2, shooter_id: int
 	var shooter := _peer_sync.player(shooter_id)
 	var p := GameState.projectile_params(weapon_id, arrow_range, charge,
 		shooter.trait_value("proj_range") if shooter != null else 0.0, combo)
+	# 🔴 넉백 무게의 출처인 **무기 정의를 발사 시점에 굳힌다** — `combo_dmg`와 같은 규약이다:
+	#   명중 시점에 다시 리졸브하면 날아가는 동안 무기를 바꾼 발사자가 남의 무게를 얻는다.
+	#   ⚠ 새 네트워크 필드가 아니다(로컬 dict 한 칸) — `weapon_id`는 이미 호스트가 자기 데이터로
+	#     리졸브한 값이고, 모르는 id는 `equip_def`가 null로 떨어져 기본 무게(1.0)가 된다.
 	_arrows.append({"aid": aid, "pos": origin, "dir": d, "life": float(p["life"]),
 		"speed": float(p["speed"]), "blast": float(p["blast"]), "level": int(p["level"]),
-		"shooter": shooter_id, "combo_dmg": float(p["combo_dmg"])})
+		"shooter": shooter_id, "combo_dmg": float(p["combo_dmg"]),
+		"equip": GameState.equip_def(weapon_id)})
 
 
 # 호스트 전용 — 권한 투사체 전진 + 명중 판정. 매 프레임 거리 질의(is_arrow_hit)라 물리 레이어 함정(§5) 회피 + 단위 테스트 가능.
@@ -487,8 +536,13 @@ func _confirm_arrow_hit(eid: String, a: Dictionary) -> void:
 		return  # 발사자 이탈/무직업 = 무피해 (기존 동작 보존)
 	# 콤보 데미지 배율은 **발사 시점에 굳어 있다**(a["combo_dmg"]) — 명중 시점에 다시 리졸브하면
 	# 날아가는 동안 무기를 바꾼 발사자가 남의 배율을 얻는다(사거리는 이미 수명으로 굳어 있는 것과 대칭).
-	_apply_confirmed((entry_v as Dictionary)["health"] as HealthComponent,
-		shooter.job, int(a["shooter"]), int(a["level"]), float(a.get("combo_dmg", 1.0)))
+	# 넉백 방향 = **화살이 날아가던 방향**(관통 없음 = 이 화살의 마지막 방향). 세기는 발사 시 굳힌
+	# 무기 무게 × 차지 레벨에서 오고, 적 저항은 여기서 곱해진다(전부 `CombatMath` 단일 소스).
+	var entry_arrow := entry_v as Dictionary
+	_apply_confirmed(entry_arrow["health"] as HealthComponent,
+		shooter.job, int(a["shooter"]), int(a["level"]), float(a.get("combo_dmg", 1.0)),
+		{"root": entry_arrow["root"], "def": entry_arrow["def"], "dir": a["dir"],
+			"equip": a.get("equip"), "finish": false})
 
 
 # 호스트 전용 — 폭발 확정(차지 무기): 반경 안 살아있는 적 전원에게 같은 데미지 1회.
@@ -510,9 +564,16 @@ func _confirm_blast(a: Dictionary, center: Vector2) -> void:
 		var def := entry["def"] as EnemyDef
 		var body_r := def.body_radius if def != null else 0.0
 		if CombatMath.is_blast_hit(root.global_position, center, radius, body_r):
+			# 넉백 방향 = **폭심 → 대상**(방사). 중심에 정확히 겹친 대상은 방향이 0이라 화살 진행
+			# 방향으로 떨어진다 — `_push_knockback`이 0 벡터를 거부하므로 그 폴백이 필요하다.
+			var blast_dir := root.global_position - center
+			if blast_dir.length_squared() <= 0.000001:
+				blast_dir = a["dir"] as Vector2
 			# 대상별로 따로 확정 = 치명 굴림도 대상별 1회 (사용자 확정 2026-07-25)
 			_apply_confirmed(health, shooter.job, int(a["shooter"]), int(a["level"]),
-				float(a.get("combo_dmg", 1.0)))
+				float(a.get("combo_dmg", 1.0)),
+				{"root": root, "def": def, "dir": blast_dir,
+					"equip": a.get("equip"), "finish": false})
 
 
 # 호스트 전용 — 화살 종료 통지: 게스트는 G_ARROW_HIT로, 호스트 자신은 arrow_gone_local로(릴레이 미에코). ArrowField가 despawn.
@@ -869,10 +930,19 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 					(entry["root"] as Node2D).global_position, attacker.job,
 					reach_radius, attacker.trait_value("reach"), reach_equip,
 					hit_dir.angle(), hit_half, mob_lag, reach_finish):
-				# 🔴 데미지 배율도 **확정 타수**에서 온다 — 각과 같은 인덱스라 "세게 때리는 타 = 넓게
-				#   치는 타"가 데이터 한 장에서 함께 온다(`_register_arrow`의 같은 규약).
-				_confirm_damage(entry["health"] as HealthComponent, attacker.job, from_id,
-					CombatMath.combo_damage_mult_at(melee_weapon, req_combo))
+					# 🔴 데미지 배율도 **확정 타수**에서 온다 — 각과 같은 인덱스라 "세게 때리는 타 = 넓게
+					#   치는 타"가 데이터 한 장에서 함께 온다(`_register_arrow`의 같은 규약).
+					# ⚠ **이 블록의 들여쓰기를 눈으로 맞춰라**(netreview m-1). GDScript는 주석 깊이를
+					#   무시하고 **첫 statement**로 블록을 잡으므로, 위 주석이 `if`와 같은 깊이로 남아
+					#   있으면 다음 사람이 그 깊이로 코드를 더했을 때 그 줄이 조용히 `if` **밖**으로
+					#   빠진다 = **사거리 검증을 우회한 확정**(에러 0). 그래서 주석도 블록 깊이로 맞췄다.
+					# 🔴 넉백도 **데미지와 같은 타수**(`req_combo` = min된 것)를 쓴다 — 세기는 화력
+					#   축이라 각(주장 타수)이 아니라 데미지 편에 선다. 방향은 이미 온 `dx`/`dy`이고
+					#   없으면(`has_dir` false = 구버전·조작 클라) 넉백만 조용히 빠진다 = 항등 폴백.
+					_confirm_damage(entry["health"] as HealthComponent, attacker.job, from_id,
+						CombatMath.combo_damage_mult_at(melee_weapon, req_combo),
+						{} if not has_dir else {"root": entry["root"], "def": reach_def,
+							"dir": hit_dir, "equip": melee_weapon, "finish": req_finish})
 		NetSchema.G_ATK:
 			# 🔴 **근접 콤보 타수 계수 — 호스트 전용** (v2.2 2026-07-29). 표시 중계는 `PeerSync`가 따로
 			#   한다(그쪽은 연출, 여기는 **판정 입력**). 세는 소스가 G_ATK인 근거는 `_melee_combo` 주석.

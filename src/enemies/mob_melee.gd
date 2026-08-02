@@ -108,6 +108,22 @@ var _los_clear: bool = true           # 초기값 true = 도입 전(직진)과 �
 var _stuck_ref := Vector2.ZERO
 var _stuck_left: float = 0.0
 var _backoff_block_left: float = 0.0
+# --- 넉백 (2026-08-02) ---
+# 층② 밀림은 **호스트 권한**이다 — 게스트는 기존 `G_MOB_POS`(10Hz + lerp)로 "목표점이 뒤로 갔다"로만
+#   받는다(신규 메시지·필드 0개). 층①(흠칫)은 표시라 양쪽 클라에서 각자 로컬로 돈다.
+# 🔴 `_knock_show_px`는 **호스트에만 선다**(권한 경로가 심는다) — 게스트는 -1로 남아
+#   `Flinch`가 옛 고정값으로 떨어진다 = 게스트 화면은 도입 전과 항등. 세기는 때린 무기에서 오는데
+#   게스트는 그 무기를 모르고, 알려면 `combat_impact`에 필드를 실어야 한다(= 새 표면).
+var _knock_dir := Vector2.ZERO
+var _knock_left: float = 0.0
+var _knock_speed: float = 0.0
+var _knock_show_px: float = -1.0   # 다음 `_on_hp_changed`가 소비할 층① 세기. -1 = 미상(항등 폴백)
+# 🔴 예고 장판의 **월드 좌표**를 따로 들고 매 프레임 재주장한다 — `$Telegraph`는 이 몸의 **자식**이라
+#   한 번만 심으면 **부모가 움직인 만큼 끌려간다**(보스가 2026-07-27 netreview에서 밟은 그 자리).
+#   ⚠ 도입 전에도 **게스트에서는 이미 어긋나고 있었다**(매 프레임 lerp로 몸이 움직인다). 넉백은
+#     호스트에서도 그 경로를 연다(WINDUP 중에 밀린다) — 타격점 `_strike_center`는 고정인데 표시만
+#     따라가면 「보이는 예고 ≠ 맞는 자리」다(§3).
+var _telegraph_center := Vector2.ZERO
 
 @onready var _sprite: AnimatedSprite2D = $Sprite
 @onready var _collision: CollisionShape2D = $Collision
@@ -205,13 +221,14 @@ func _on_hp_changed(hp: int, dropped: bool) -> void:
 		else:
 			HitStop.punch(_sprite)   # 맞은 대상만 정지+스케일 튕김
 			HitFlash.flash(_sprite)  # 흰색 번쩍
-			var opp := Flinch.nearest_pos(global_position, get_tree().get_nodes_in_group("player"))
-			Flinch.play(_sprite, global_position - opp)  # 플레이어 반대로 흠칫
+			_play_flinch()
 	else:
 		_prev_hp = hp
 	if dead:
 		_telegraph.visible = false
 		_hide_aim_line()   # 죽으면 조준선도 즉시 거둔다 — 남으면 시체가 조준 중인 것처럼 보인다
+		_knock_left = 0.0  # 시체는 안 밀린다 — 밀리던 중에 죽어도 그 프레임에 멎는다
+		_knock_show_px = -1.0
 		velocity = Vector2.ZERO
 		_state = State.IDLE
 		# 🔴 배속을 반드시 되돌린다 — 당기던 중에 죽으면 늘려 둔 배율(예: 0.28)이 그대로 **death
@@ -238,6 +255,89 @@ func _on_hp_changed(hp: int, dropped: bool) -> void:
 			_play(&"idle")
 
 
+# --- 넉백 (2026-08-02) ---
+#
+# 🔴 **층①(흠칫 표시)의 단일 진입점.** 세기·방향을 호스트 권한 경로가 심어 뒀으면 그것을 쓰고,
+#   없으면(게스트 수신 표시·넉백 없는 경로) 옛 추측으로 떨어진다 = **도입 전과 완전 항등**.
+#   ⚠ 옛 추측(`nearest_pos`)은 *가장 가까운 플레이어* 반대로 미는 것이라 2인에서 파트너가 더
+#     가까우면 엉뚱한 쪽으로 흠칫한다 — 그래서 **아는 경우에는 반드시 실제 넉백 방향을 쓴다.**
+# 🔴 **「아는 경우」는 호스트뿐이다 — 게스트 화면에선 이 폴백이 상시다**(netreview m-2).
+#   `_knock_show_px`를 심는 것은 `apply_knockback`이고 그것은 **호스트 권한 경로에서만** 불린다.
+#   게스트는 `G_MOB_POS`로 위치만 받으므로 영원히 `-1` → 위 추측으로 떨어진다. 즉 **같은 피격에
+#   두 화면이 서로 다른 방향으로 흠칫할 수 있다**(파트너가 때린 사람보다 적에게 가까울 때).
+#   ⚠ **이것을 고치려고 방향을 `combat_impact`에 싣지 마라** — 그 순간 표시 전용 훅이 네트워크
+#   필드를 갖게 되고, 손맛 계층의 "네트워크 메시지 0개" 규약(rules §2)이 깨진다. 표시 오차를
+#   수용하는 쪽이 옳다. 층②(몸 밀림)는 호스트 권한이라 **양쪽 화면에서 정확히 같다.**
+func _play_flinch() -> void:
+	# 🔴 방향과 세기를 **함께** 소비한다 — `_knock_show_px < 0`이면 이번 피격에 권한 경로가 아무것도
+	#   안 심은 것이므로 `_knock_dir`(직전 타격의 방향)은 **낡았다.** 둘을 따로 판단하면 밀리지 않은
+	#   피격이 한 타 전 방향으로 흠칫한다(2인에서만·간헐이라 원인이 화면에 안 드러난다).
+	var dir := _knock_dir if _knock_show_px >= 0.0 else Vector2.ZERO
+	if dir.length_squared() <= 0.000001:
+		var opp := Flinch.nearest_pos(global_position, get_tree().get_nodes_in_group("player"))
+		dir = global_position - opp
+	Flinch.play(_sprite, dir, _knock_show_px)
+	_knock_show_px = -1.0   # 1회 소비 — 다음 피격이 이전 무기의 세기를 물려받지 않게
+
+
+# 🔴 **배우가 자기 상태를 안다** — 적용 지점(CombatAuthority)은 이 술어 하나만 본다.
+#   잔몹은 항상 밀린다(보스만 돌진·결박·그로기에서 false). `_apply_anim_scale` 관용구와 같다.
+func can_knock() -> bool:
+	return true
+
+
+# 🔴 **호스트 권한 경로 전용 진입점** — 데미지 확정 **직전**에 불린다(그래야 바로 뒤에 오는
+#   `_on_hp_changed`가 층① 세기를 소비할 수 있다). `push_px` = 적 저항까지 반영된 몸 밀림 거리,
+#   `show_px` = 저항 전 표시 세기(둘 다 `CombatMath`가 유일한 소스 — 여기서 다시 계산하지 마라).
+func apply_knockback(dir: Vector2, push_px: float, show_px: float) -> void:
+	if not dir.is_finite() or dir.length_squared() <= 0.000001:
+		return
+	# 🔴 **사망은 층①보다 먼저 거른다**(netreview m-3). 아래 `_knock_show_px`는 `hp_changed` →
+	#   `_on_hp_changed`가 **소비할 때 비워지는** 값이라, 죽은 적에 들어온 확정(같은 스윙의 두 번째
+	#   타격 · `invincible` 랩)은 심기만 하고 소비가 안 돼 **다음 피격까지 남는다.** 현 잔몹은 부활을
+	#   안 해 무해하지만, `respawns = true` 적이 이 배우로 만들어지는 순간(rules §2 허수아비 게이트가
+	#   이미 그 방향을 열어 뒀다) **부활 후 첫 흠칫이 한 타 전 세기·방향으로** 재생된다.
+	# ⚠ **`push_px <= 0`과 같은 가드에 묶지 마라** — 그쪽은 정상 경로다(무기 미상이면 넉백이 0이지만
+	#   층①은 살아야 한다, `KNOCK_DASH_RATIO` 주석 참조). 묶으면 무장 해제에서 흠칫이 통째로 사라진다.
+	if _health.is_dead():
+		return
+	_knock_dir = dir.normalized()
+	if is_finite(show_px) and show_px > 0.0:
+		_knock_show_px = show_px
+	if not is_finite(push_px) or push_px <= 0.0:
+		return
+	_knock_speed = CombatMath.knock_speed_px_s(push_px)
+	_knock_left = CombatMath.knock_time_s(push_px)
+	# 🔴 **경로 무효화 한 줄**(설계 A-11) — `_path_i`는 전진만 하므로 뒤로 밀린 몹이 이미 지난
+	#   웨이포인트로 되돌아가려 하고, 장애물 반대편으로 밀렸다면 경로가 통째로 틀린다.
+	#   ⚠ `_los_clear = false`로 **강제하지 마라** — 그러면 열린 벌판에서도 매 타격마다 A*를 굽는다.
+	#     경로만 비우고 판단은 기존 0.2s 주기에 맡긴다.
+	_path.resize(0)
+	# 갇힘 감지 보정 — 넉백 변위를 "내가 걸었다"로 세면 실제로는 갇혔는데 안 갇힌 것으로 읽힌다.
+	_stuck_ref = global_position
+
+
+# 🔴 **AI 이동을 「대체」한다 — 합산 금지**(설계 A-9). 추격 전진이 넉백을 부분 상쇄하면 거리가
+#   데이터와 갈라지고 화면에 이유가 안 드러난다(`player._local_move`의 대시 규칙과 같은 부호).
+# 🔴 **`global_position +=` 금지 — `velocity` + `move_and_slide()`여야 한다.** 직접 대입은 충돌
+#   해결을 건너뛰어 물·낭떠러지 **안으로 순간이동**시킨다(스테이지 바닥이 layer 1 콜리전을 쥔다).
+#   이 한 줄 덕에 지형 차단이 **게임 코드 변경 0**으로 따라온다.
+# ⚠ 상태 타이머는 여기서 **아무것도 건드리지 않는다** — 스턴락 금지(A-10). 접는 것은 자기 이동뿐이라
+#   WINDUP은 정시에 STRIKE하고 「예고를 보고 구른다」가 그대로 산다. 무료 인터럽트 0.
+func _tick_knock(delta: float) -> void:
+	if _knock_left <= 0.0:
+		return
+	if not can_knock() or _health.is_dead():
+		_knock_left = 0.0
+		velocity = Vector2.ZERO
+		return
+	_knock_left -= delta
+	velocity = _knock_dir * _knock_speed
+	move_and_slide()
+	if _knock_left <= 0.0:
+		velocity = Vector2.ZERO
+
+
 func _physics_process(delta: float) -> void:
 	if _telegraph_left > 0.0:
 		var before := _telegraph_left
@@ -257,7 +357,13 @@ func _physics_process(delta: float) -> void:
 		return
 	if Net.is_host():
 		_host_ai(delta)
+		_tick_knock(delta)   # 🔴 AI **뒤** — 넉백이 그 프레임의 이동을 대체한다(합산 금지, A-9)
+		# ⚠ **넉백 중은 걷는 것이 아니다**(netreview m-4). 이 판정은 `_tick_knock` **뒤**라 그 프레임의
+		#   `velocity`가 넉백 속도로 채워져 있는데, `_face()`는 넉백 분기 밖이라 몹이 플레이어를 본 채
+		#   뒤로 밀린다 = **뒤로 미끄러지는 걷기**. 호스트 화면에서만 보인다(게스트는 `_remote_target`
+		#   거리로 따로 판정한다) — 즉 두 화면이 서로 다르게 보이는 자리이기도 하다.
 		var walking := (_state == State.CHASE or _state == State.BACKOFF) \
+			and _knock_left <= 0.0 \
 			and velocity.length_squared() > 0.0
 		_update_move_anim(walking)
 	else:
@@ -268,6 +374,10 @@ func _physics_process(delta: float) -> void:
 	# 🔴 **맨 끝에서 배속을 재주장한다** — 소유자가 매 프레임 자기 의도를 다시 심는 관용구
 	#   (rules §2 · boss._apply_anim_scale). 이 프레임에 무엇이 speed_scale을 건드렸든 여기가 마지막이다.
 	_apply_anim_scale()
+	# 🔴 **몸이 움직인 뒤에** 예고를 제자리에 다시 못 박는다 — 순서가 계약이다(boss와 같은 관용구·
+	#   같은 근거, rules §3). 위쪽에서 부르면 그 프레임의 이동(넉백 move_and_slide · 게스트 lerp)이
+	#   뒤따라와 한 프레임씩 밀린다.
+	_reassert_telegraph_pos()
 
 
 func _host_ai(delta: float) -> void:
@@ -275,7 +385,10 @@ func _host_ai(delta: float) -> void:
 	_backoff_block_left -= delta
 	# 갇힘 감지는 **실제로 걷는 상태에서만** 의미가 있다 — 예고(WINDUP)로 서 있는 0.6~1.1s를
 	# "안 움직였다"로 읽으면 매 공격마다 헛되이 경로를 다시 낸다.
-	if _state != State.CHASE and _state != State.BACKOFF:
+	# ⚠ **넉백 중도 "자기 이동이 아니다"** (2026-08-02) — 넉백 변위(최대 12px)가
+	#   `NAV_STUCK_MIN_PX`(6)를 넘으므로, 안 빼면 **벽에 걸려 못 가는 몹이 맞을 때마다 "걸었다"로
+	#   읽혀** 경로 전환이 영영 안 걸린다(에러 없이 그 자리에서 걷는 애니만 돈다).
+	if (_state != State.CHASE and _state != State.BACKOFF) or _knock_left > 0.0:
 		_stuck_left = NAV_STUCK_WINDOW_S
 		_stuck_ref = global_position
 	match _state:
@@ -328,8 +441,13 @@ func _host_ai(delta: float) -> void:
 			# 🔴 길찾기에 맡기는 것은 **방향뿐이다 — 속력은 여전히 `def.move_speed`다.**
 			#   이속을 건드리면 `CombatMath.MOB_LAG_SLACK_SPEED`(90)에서 유도한 각 슬랙이
 			#   과소평가되어 창의 팁 타격이 게스트에서 조용히 거부된다(rules §3 「대상 좌표 각 슬랙」).
-			velocity = _chase_dir(anchor, delta) * def.move_speed
-			move_and_slide()
+			# 🔴 **넉백 중엔 자기 이동을 접는다 — 대체이지 합산이 아니다**(A-9). 여기서 `_chase_dir`가
+			#   아예 안 불리므로 경로 계산 비용도 0이다(A-11). 상태 타이머는 위에서 이미 흘렀다.
+			if _knock_left > 0.0:
+				velocity = Vector2.ZERO
+			else:
+				velocity = _chase_dir(anchor, delta) * def.move_speed
+				move_and_slide()
 			_face(anchor)
 			_tick_stuck(delta, false)
 		State.BACKOFF:
@@ -346,8 +464,11 @@ func _host_ai(delta: float) -> void:
 				velocity = Vector2.ZERO
 				_state = State.CHASE
 				return
-			velocity = (global_position - bpos).normalized() * def.move_speed
-			move_and_slide()
+			if _knock_left > 0.0:
+				velocity = Vector2.ZERO   # 넉백이 후퇴를 대체한다 (CHASE와 같은 규칙)
+			else:
+				velocity = (global_position - bpos).normalized() * def.move_speed
+				move_and_slide()
 			_face(bpos)  # 물러나면서도 플레이어를 본다(조준 자세 유지 — 뒷모습으로 걷지 않는다)
 			# 물러날 곳이 없으면(벽·물가) 그 자리에서 갈리는 대신 추격으로 돌아가 그냥 쏜다.
 			_tick_stuck(delta, true)
@@ -518,9 +639,19 @@ func show_telegraph(center: Vector2, duration: float = -1.0) -> void:
 		_aim_total = dur
 		_telegraph_left = dur      # 근접과 같은 카운트다운을 재사용(만료 시 선을 끈다)
 		return
+	_telegraph_center = center
 	_telegraph.global_position = center
 	_telegraph.visible = true
 	_telegraph_left = dur
+
+
+# 🔴 예고는 **뜬 자리에 못 박혀 있어야 한다** — `$Telegraph`가 이 몸의 자식이라 몸이 움직이면
+#   끌려간다. 타격점(`_strike_center`)은 WINDUP 진입에 고정되므로, 표시만 따라가면 「보이는 예고 ≠
+#   맞는 자리」가 되고 그 어긋남이 **회피를 결정하는 바로 그 구간**에 생긴다(rules §3, 보스 판례).
+#   ⚠ 호출 위치가 계약이다 — `_physics_process` **맨 끝**(이동 뒤). 앞에서 부르면 한 프레임씩 밀린다.
+func _reassert_telegraph_pos() -> void:
+	if _telegraph.visible:
+		_telegraph.global_position = _telegraph_center
 
 
 # 🔴 게스트 전용 진입점 — MobSync가 G_MOB_SHOOT 수신 시 부른다(`show_telegraph`의 미러).
