@@ -31,7 +31,10 @@
 | ② | **가로지른다**(768px 폭) | 260px | 🔴 **데이터만으로 안 된다** — 코드 상수가 막는다(§3) |
 | ③ | **왕복 3회+ · 회차마다 빨라진다** | 1회 후 RECOVER | 필드 2 + 회차 카운터 1 + `_telegraph_duration` 확장 |
 | ④ | 조준 = **호스트 고정** | `_nearest_alive_player()` | 필드 1(`target_mode`) + 선택 함수 1 |
-| ⑤ | 카메라는 **시간 아닌 신호** | `WIDE_HOLD_S` 2.4s 고정 | 시그널 1 + 필드 1, `WIDE_PATTERNS` 상수 **삭제** |
+| ⑤ | 카메라는 **시간 아닌 신호** «확정» | `WIDE_HOLD_S` 2.4s 고정 | **신규 kind 1**(`G_BOSS_VIEW`) + 시그널 1 + 필드 1. `WIDE_PATTERNS`는 **남긴다**(spin = 타이머형 공존) |
+| ⑥ | 횡단은 **바위를 부수고 지나간다** «확정» | 박으면 그로기(P3) | 필드 1(`breaks_rock`) + 수직 고정 한 줄 |
+
+> «확정» = 사용자가 직접 고른 것. 대안 비교는 근거로 남겨 두되 **설계가 뒤집지 않는다.**
 
 ---
 
@@ -43,7 +46,15 @@
 ### 배선 (기존 심볼 그대로)
 - `_host_ai`의 `State.CHASE`에서 `_select_pattern`이 이 패턴을 고르면 → `_begin_windup` 대신 `_enter_charge_approach(pat, target)`.
 - 목표점 = `Vector2(가까운 쪽 끝 x, 대상 net_anchor().y)`. 도달하면 **`_begin_windup(pat, 반대편 끝 점)`을 그대로 부른다** — 🔴 인자만 바꾸면 `_strike_angle`이 정확히 `0`/`PI`가 되고 `_strike_center`가 출발단이 된다. **함수 무변경.**
-- 끝 좌표 = 아레나에서 유도. 🔴 **`stage_boss.tscn`에 벽도 `map_rect`도 없다**(실측 — 아레나는 순수 스프라이트다) → 씬 루트가 `set_meta("arena_rect", Rect2(192, 116, 768, 416))` 한 줄 선언하고 보스가 조상 체인에서 찾는다(`camera_rig`의 `map_rect` 관용구 미러 — 복붙 배선 방지). 메타 없으면(하네스) 보스 `_ready` 위치 기준 폴백.
+- 끝 좌표 = 아레나에서 유도. 🔴 **`stage_boss.tscn`에 벽도 `map_rect`도 없다**(실측 — 아레나는 순수 스프라이트다) → 씬 루트가 `set_meta("arena_rect", Rect2(192, 116, 768, 416))` 한 줄 선언하고 보스가 조상 체인에서 찾는다(`camera_rig`의 `map_rect` 관용구 미러 — 복붙 배선 방지). ✅ **리드 승인.** 메타 없으면(하네스) 보스 `_ready` 위치 기준 폴백.
+  - 🔴 **`map_rect`와 이름이 비슷하니 역할을 헷갈리지 마라 — 둘은 다른 것이고 값이 같을 이유도 없다.**
+
+    | 메타 | 소비자 | 뜻 | 없으면 |
+    |---|---|---|---|
+    | `map_rect` | `camera_rig.set_limits` | **카메라가 보여줘도 되는 범위**(맵 밖 공허 차단) | 카메라 무제한 — 보스방은 지금 이 상태 |
+    | `arena_rect` | `boss._cross_segment` | **패턴 기하가 쓰는 싸움터 경계**(횡단 끝 좌표) | 보스 `_ready` 위치 기준 폴백 |
+
+    ⚠ 같은 씬에 둘 다 선언될 수 있고 그때도 값이 달라도 된다(카메라는 여유를 더 보여줘도 되고, 패턴은 몸이 들어가야 하므로 `body_radius`만큼 안쪽이다). **한쪽을 다른 쪽에서 유도하지 마라** — 근거가 다른 축이다(`proj_range`와 `reach` 상한을 별칭으로 묶지 않은 것과 같은 이유).
 - 이동 거리 상한 = **아레나 반폭(384) + 세로 최대(208) ≈ 435px**. 가까운 쪽 끝을 고르므로 반대편까지 갈 일이 없다.
 - 2회차부터는 이미 반대편 끝에 서 있으므로 **세로 이동만**(≤208px).
 
@@ -95,8 +106,53 @@ _state_left = maxf(CHARGE_SPIN_TIME,
 | `LEASH_MULT` 리시 | CHASE에서만 검사 — 돌진과 무관 ✅ |
 | `aggro_range` 600 | RECOVER → **CHASE 직접 대입**(`:577`)이라 IDLE 재진입 조건(≤600)을 안 거친다 ✅ |
 | 벽 충돌 | 아레나에 StaticBody가 **없다**(실측) — 끝단에서 안 낀다 ✅ |
-| `_dash_rock_collision` | 그대로 문다 → 🔴 **밸런스 결정 필요**(§10-5) |
+| `_dash_rock_collision` | 그대로 문다 → **부수고 지나간다**(§3-3 «확정») |
 | 회전 클립 | `spin`이 loop이라 길어져도 안 깨진다 ✅ |
+
+### 3-3. 🔴 «확정» 바위 = **부수고 그대로 지나간다** (P3는 한 픽셀도 안 바뀐다)
+
+**분기는 데이터로 뺀다** — 기존 행동 토글이 전부 그 형태다(`creates_swamp`·`center_self`·`leaves_rock`·`is_charge`):
+```gdscript
+@export var breaks_rock: bool = false   # true면 돌진이 바위를 부수고 통과(그로기 없음). P3는 필드 없음 = false = 항등
+```
+이름은 `leaves_rock`(낙석이 남긴다)과 **대칭**으로 골랐다 — 한 축의 두 방향이 같은 어휘를 쓴다.
+```gdscript
+# boss.gd CHARGE_DASH — 현행 두 줄에 분기 하나
+var rock: Node = _dash_rock_collision()
+if rock != null:
+    if _cur_pattern.breaks_rock:
+        _break_rock(rock)          # 부수고 계속 — 상태 전이 없음
+    else:
+        _enter_charge_hit(rock)    # 🔴 P3 현행 경로 그대로
+```
+
+**물리적으로 어떻게 통과하나 — 🔵 추가 작업이 없다.**
+`boss_rock.shatter()`가 **첫 줄에서** `_collision.set_deferred("disabled", true)`를 이미 한다(실측 `boss_rock.gd:78-84`). 즉 `shatter()`만 부르면 **다음 물리 프레임부터 막지 않는다.** 콜리전 해제 순서를 따로 설계할 것이 없다.
+
+**🔴 그런데 한 프레임의 슬라이드 드리프트가 남는다 — 이게 §3 금지 방향이다.**
+충돌을 감지한 그 프레임에 `move_and_slide()`는 **이미 보스를 옆으로 미끄러뜨렸다**(최대 `500/60 = 8.3px`). 보스가 선분에서 벗어나면 **스윕 원이 예고 캡슐 밖으로 나간다 = 「표시 < 판정」**(= 안 보이는데 맞는다).
+
+**처방 = CROSS_DASH에서 수직 성분을 매 프레임 고정한다. 한 줄이다.**
+```gdscript
+move_and_slide()
+if _cur_pattern.breaks_rock:
+    global_position.y = _cross_line_y      # 🔴 선분 이탈 금지 — 판정 ⊆ 표시 보존
+EventBus.boss_sweep.emit(global_position, _strike_angle, _cur_pattern, _charge_seq)
+```
+- 🔴 **순서가 계약이다** — `emit` **뒤**에 두면 그 프레임의 판정이 드리프트된 좌표로 난다(고쳐 놓고도 한 프레임씩 새는 형태). `_reassert_telegraph_pos()`가 `_physics_process` 맨 끝이어야 하는 것과 **같은 부류의 순서 계약**이다.
+- 🔵 이 한 줄이 「판정 ⊆ 표시」를 **바위 충돌에도 구조로 보존한다.** 가리비 부등식(§3 A안, 0.12px)과 합쳐지면 이 패턴의 표시 정합은 **튜닝값이 하나도 없다.**
+- ⚠ `breaks_rock`이 아닌 패턴(P3)에는 적용하지 않는다 — 거기선 슬라이드가 곧 "박았다"는 신호다. **항등.**
+
+**연출** — 새 자산 0.
+- 바위 자체가 이미 **5단계 파괴 애니**(균열 → 갈라짐 → 파편 → 붕괴 → 페이드)를 갖고 있다.
+- 추가는 `EventBus.screen_shake`(§2 손맛 훅) **하나**. 🔴 `HitStop.punch`는 쓰지 마라 — 피격용이고 보스 `speed_scale`을 0으로 만들어 `_apply_anim_scale`과 채널이 겹친다(§2 "소유자가 매 프레임 재주장한다"가 그 자리다).
+- **바위 재생성 없음.** 그 자리는 다음 낙석(`spray` + `leaves_rock`)까지 빈다. 🔵 완화 = `rock_ttl` 10s로 어차피 수명이 짧고 `spray` 쿨다운이 6s라 재공급이 빠르다.
+
+**🔴 남는 것 둘**
+1. **밸런스(사용자가 알고 고른 대가)**: 선분 위 바위가 사라져 **P3 돌진의 처벌 도구가 준다.** 🔵 반대로 그것이 페이즈2의 의미이기도 하다 — "페이즈1에서 통하던 바위 유도가 안 통한다"가 실루엣으로 학습된다. `docs/TUNING.md` 등재.
+2. **게스트 미동기화(기존 부채 E-4 확대)**: 게스트 보스는 lerp라 `move_and_slide`를 안 해 `shatter()`가 안 돈다 → **게스트 화면에서는 보스가 온전한 바위를 통과하는 것처럼 보인다.** P3(박고 멈춤)보다 눈에 띈다. **판정이 없어 무해**하지만 체감은 나쁘다.
+   - 정공법 = `G_ROCK_BREAK` 저빈도 kind(2026-07-31 netreview가 이미 지목).
+   - ⚠ **⑤의 `G_BOSS_VIEW`에 묶지 마라** — 하나의 kind = 하나의 의미다. 별도 Minor로 남긴다.
 
 ### 🔴 그런데 경로 예고(cone)가 길이에 못 따라온다 — 실측 문제다
 
@@ -218,12 +274,15 @@ static func charge_telegraph_scale(pat: BossPatternDef, idx: int) -> float:
 
 ---
 
-## 5. ④ 조준 = 호스트 고정 (`.tres` 한 줄로 뒤집히게)
+## 5. ④ «확정» 조준 = **호스트 고정**
+
+🔴 **사용자가 직접 고른 것이다**(*"호스트 고정 (내가 말한 그대로)"*). 앞선 초안의 「번갈아」 권장은 **철회한다** — 그 근거(한 플레이어의 영구 제외)는 「가까운 쪽」을 기각하는 데는 유효하지만 「호스트 고정 vs 번갈아」는 사용자 판단 영역이다. 아래에 근거를 남기는 것은 **나중에 뒤집을 때 다시 유도하지 않기 위해서**이지 재고를 요청하는 것이 아니다.
 
 ```gdscript
-# BossPatternDef
-@export var target_mode: String = "nearest"   # "nearest"(현행 = 항등) | "host" | "alternate"
+# BossPatternDef — 🔴 이 패턴의 기본값은 "host"(확정안). "nearest"는 기존 패턴의 항등 폴백이다.
+@export var target_mode: String = "nearest"   # "nearest"(기존 패턴 = 항등) | "host"(cross 확정) | "alternate"
 ```
+🔵 **호스트 고정이 오히려 더 단순하다** — `NetSchema.HOST_ID`가 **상수**라 RNG도, 이전 대상 기억(`_last_target_peer`)도 필요 없다. 「번갈아」는 상태를 하나 더 들고 `peer_left`에서 정리해야 하지만(`_melee_combo` 선례) 호스트 고정은 그 표면이 **0**이다.
 ```gdscript
 # boss.gd — 대상 선택 단일 소스. 🔴 폴백이 계약이다.
 func _select_target(pat: BossPatternDef) -> PlayerActor:
@@ -234,33 +293,82 @@ func _select_target(pat: BossPatternDef) -> PlayerActor:
 ```
 - **결정적** — `HOST_ID`가 상수라 RNG가 없다. 🔴 **게스트는 대상 id를 알 필요조차 없다**: 조준 결과는 `_strike_center`/`_strike_angle`(= `G_BOSS_ATK`의 `x, y, a`)로 **이미 전부 표현된다.** `target_mode`를 무엇으로 바꿔도 **네트워크 표면 0**.
 - 🔴 **폴백 없이 null을 돌리면 패턴이 조용히 안 나온다** — 호스트가 죽어 관전 중이면 대상이 없다. `nearest` 폴백이면 「호스트 사망 = 게스트가 표적」으로 자연스럽게 넘어간다. 모르는 문자열도 같은 폴백으로 떨어져 **데이터 오타가 패턴을 죽이지 않는다.**
-- ⚠ **리드가 지적한 불균형은 실재한다** — 2인이면 게스트가 그 패턴 동안 완전히 안전해지고, 페이즈2 주력 패턴이 한 명만 위협한다. **이 필드의 존재 이유가 그것**이고 `target_mode = "alternate"` **한 줄**로 뒤집힌다. 실기에서 사용자가 고른다(`docs/TUNING.md` 등재).
-- ⚠ 4인 확장 시 `"alternate"`는 라운드로빈으로 넓혀야 한다(값은 그대로, §2 게이트 등재).
+- 🔴 **알려진 대가**: 2인이면 **게스트가 그 패턴 동안 완전히 안전해진다.** 페이즈2 주력 패턴(12초)이 한 명만 위협하므로, 게스트 입장에서는 12초 동안 아무 일도 안 일어난다. **실기에서 심심하면 `.tres` 한 줄(`target_mode = "alternate"`)로 바꾼다** — 그 한 줄을 위해 필드로 뺐고, 그것이 이 필드의 존재 이유 전부다. `docs/TUNING.md` 등재.
+  - 🔵 완화 요소: 게스트가 안전하다 = **자유롭게 딜을 넣을 수 있다.** 「한 명이 끌고 한 명이 때린다」로 읽히면 협동으로 성립한다. 반대로 게스트가 할 일이 없다고 느끼면 그때 바꾼다 — 이건 화면에서만 판별된다.
+- ⚠ 4인 확장 시 `"alternate"`는 라운드로빈으로 넓혀야 한다(값은 그대로, §2 게이트 등재). `"host"`는 4인에서 **더 나빠진다**(3명이 안전).
 
 ---
 
-## 6. ⑤ 카메라 — 시간이 아니라 신호
+## 6. ⑤ «확정» 카메라 — 신규 kind로 **시작·종료를 신호한다**
 
 ### 문제
-`WIDE_HOLD_S = 2.4s` 고정인데 이 패턴은 **10~12초**이고 길이가 `charge_repeat`에 따라 가변이다. 상수로는 원리적으로 불가능하다.
+`WIDE_HOLD_S = 2.4s` 고정인데 이 패턴은 **10~12초**이고 길이가 `charge_repeat`·회차 단축·지연 보상에 따라 **가변**이다. 상수로는 원리적으로 불가능하다.
 
-### 제안 — 🔵 `WIDE_PATTERNS` 상수를 **삭제**한다
+### 6-1. 신규 kind 1개 «확정» — 사용자가 비용을 알고 골랐다
+
 ```gdscript
-# core (리드): 표시 전용 로컬 시그널 — 중계 없음, 네트워크 0
+# net_schema.gd (리드)
+const G_BOSS_VIEW := "bview"   # {k, on} 호스트→전원: 보스 패턴 광역 시야 on/off (표시 전용, 판정 0)
+
+# event_bus.gd (리드) — 로컬 시그널. boss_phase_changed와 **같은 자리·같은 성격**
 signal boss_wide_view(active: bool)
 
-# BossPatternDef: 어떤 패턴이 넓은 화면을 요구하는지 = **데이터**
+# BossPatternDef — 어떤 패턴이 넓은 화면을 요구하는지 = 데이터
 @export var wide_view: bool = false
 ```
-- `camera_rig`는 `boss_telegraph` 대신 **`boss_wide_view`만 구독**한다. `WIDE_PATTERNS`(패턴 id 하드코딩 미러)·`WIDE_HOLD_S`가 사라진다 → 🔵 **§2 「id 하드코딩 미러」가 하나 줄어든다.** `spin`은 `.tres`에 `wide_view = true` 한 줄 = 항등.
-- **누가 emit하나 — 호스트·게스트 둘 다 로컬에서.**
-  - `true`: **접근 진입**(`CHARGE_APPROACH`). 🔵 예고보다 먼저 빠지므로 접근이 읽힌다(§2).
-  - `false`: 마지막 회차 돌진 종료(RECOVER 진입) · 보스 사망(`_on_hp_changed` dead 경로).
-- **게스트는 상태기계를 안 돈다** → 게스트가 아는 것은 `show_boss_telegraph` 수신뿐이다:
-  - `true`: 🔴 **`G_BOSS_ATK`의 `"i"`를 `−1`로 보내 「접근 시작」을 알린다.** 수신부는 `i < 0`이면 **예고 도형을 안 그리고** `boss_wide_view(true)`만 낸다. **신규 kind 0 · 신규 필드 0**(§8의 `"i"` 재사용). **도형이 없으므로 2단계 예고가 아니다.**
-  - `false`: 마지막 회차(`i == pat.charge_repeat − 1`)의 예고를 받았으면, 보스가 **자기 로컬 타이머**(예고 + 돌진 — 둘 다 데이터 유도라 클라 공통)로 낸다. 🔴 **패턴 def를 가진 보스가 계산하고 카메라는 순수 신호 구독자로 남는다** — 그게 §2 손맛 계층 경계(`src/feel`은 EventBus 구독만)에 맞다.
-- 🔴 **워치독 필수**: `false`가 유실될 수 있는 경로(보스 사망 레이스·씬 전환·재합류)를 위해 카메라에 **상한 타임아웃**(15s)을 남긴다. 없으면 **줌아웃 상태로 영영 남는다**(에러 없음). 기존 `WIDE_HOLD_S`를 그 역할로 재해석하면 상수 추가가 0이다.
-- `ZOOM_WIDE = 0.8`은 그대로 맞다 — 보이는 영역 800×450 ⊃ 아레나 768×416. ⚠ 그 값이 아레나 크기의 **사람 미러**라는 것은 남는다(`camera_rig.gd:49-53`). `arena_rect` 메타의 세 번째 소비자가 생기면 그때 유도로 옮겨라(§2 「두 번째 사용처 전 공용화」).
+
+- 🔴 **이름 충돌 확인 완료**: `grep -rn '"bview"' src tests server` → **0건**(착수 시 재확인 — `"ping"` 사고가 그 규율의 근거다).
+- **페이로드는 `on` 하나.** eid·패턴 id를 안 싣는다 — 카메라는 지금도 eid를 안 본다(*"보스가 하나뿐이고, 둘이 되면 「누구의 패턴인가」가 아니라 「이 화면에서 보여줄 가치가 있는가」가 기준"* — `camera_rig.gd:92` 주석이 정본). 실을 이유가 생기면 그때 넓힌다.
+- 🔵 **`"i" = −1`로 접근 시작을 알리던 초안의 해킹은 폐기한다.** 새 kind가 시작·종료를 **둘 다** 나르므로 `"i"`는 **순수 회차 인덱스**로 남는다(`show_boss_telegraph`에 "도형을 안 그리는 갈래"를 만들 필요가 없다). 설계가 더 단순해졌다.
+
+### 6-2. 🔵 배선은 `boss_phase_changed`의 **1:1 미러**다 (선례가 있어 설계 위험이 거의 없다)
+
+```
+호스트 boss.gd  ──EventBus.boss_wide_view.emit(on)──┬─→ camera_rig (호스트 자기 화면)
+                                                     └─→ mob_sync._on_boss_wide_view → Net.send_game(G_BOSS_VIEW)
+게스트 mob_sync._on_net_msg(G_BOSS_VIEW) ──EventBus.boss_wide_view.emit(on)──→ camera_rig
+```
+🔴 **호스트가 자기 메시지를 못 받는 함정(Net 루프백 없음)이 이 관용구로 이미 해결돼 있다** — 그래서 `boss.gd`가 `Net.send_game`을 직접 부르면 안 된다(그러면 호스트 화면만 안 바뀐다. §3이 여러 번 값을 치른 그 자리다). `boss_phase_changed`·`boss_telegraph`가 전부 이 형태다.
+
+### 6-3. 호스트가 언제 보내나
+
+| 엣지 | 시점 |
+|---|---|
+| `on = 1` | **첫 `CHARGE_APPROACH` 진입**. 🔵 예고보다 먼저 빠지므로 접근이 읽힌다(§2 — 도형이 아니라서 「2단계 예고」가 아니다) |
+| `on = 0` | 아래 **모든** 출구 |
+
+🔴 **출구가 여럿이라는 것이 이 항목의 유일한 위험이다:**
+① 마지막 횡단 후 RECOVER · ② 바위 그로기 분기(`CHARGE_HIT` → RECOVER) · ③ 보스 사망(`_on_hp_changed` dead) · ④ `coop_locked`(C1 결박이 패턴을 끊는다) · ⑤ 대상 전멸(`_select_target` null → RECOVER) · ⑥ CROSS_APPROACH 타임아웃.
+
+→ **`_set_wide(false)` 단일 choke point로 모으고, 크로스 상태를 벗어나는 모든 경로가 그것만 부른다.** 호출부에 흩어 두면 다음 사람이 **일곱 번째 출구에서 빠뜨린다** — `apply_job_loadout()`이 정확히 그 이유로 만들어졌다(§3: *"세 줄을 손으로 맞춰 들고 있으면 네 번째 자리에서 반드시 빠진다"*). `_set_wide`는 값이 실제로 바뀔 때만 emit한다(엣지 게이트 = 중복 전송 0).
+
+### 6-4. 🔴🔴 채널 — `RTC_FAST_KINDS`에 **절대 넣지 마라**
+
+종료는 "다음 패킷이 곧 덮어쓰는 것"이 아니라 **사건**이다. 한 통 유실 = **카메라가 영영 안 돌아온다**(줌 0.8에 갇힘). ✅ `RTC_FAST_KINDS`는 **allowlist**라 **아무것도 안 하면 safe**이고, `test_net_transport_auto`가 집합을 단정하므로 실수로 넣으면 **빨개진다**(추가 테스트 불필요).
+
+### 6-5. 유실 대비 폴백 — 워치독은 **비정상 경로에만** 산다
+
+safe 채널이라 정상 경로에서는 유실이 없다. 그래도 **끊김 경로**는 있다: 보스 사망 레이스 · 호스트 이탈 · 스테이지 중 재합류 · P2P → 릴레이 폴백 순간.
+
+- **워치독 `WIDE_WATCHDOG_S = 20s`** — 정상 최악(12.1s)의 1.65배라 **정상 경로가 절대 여기 닿지 않는다.** 즉 "시간 말고 신호로"가 지켜지고, 시간은 «비정상 경로»에만 존재한다.
+- 🔵 **공짜 안전망 하나 더**: `camera_rig`는 **player의 자식**이라 씬 스왑 때 새로 태어난다 → 줌이 기본값으로 리셋된다. **씬 전환 경로는 코드 없이 닫힌다.**
+
+### 6-6. 🔴 신호형(cross)과 타이머형(spin)의 공존
+
+`spin`은 종료 신호를 안 보낸다(단발 패턴) → 기존 경로를 그대로 둔다. 카메라가 **둘을 동시에 지원**한다:
+
+```gdscript
+var _wide_left: float = 0.0      # 타이머형(spin) + 신호형 워치독 — 두 역할을 겸한다
+var _wide_signal: bool = false   # 신호형(cross)
+# 합성: wide = _wide_signal or _wide_left > 0.0  → 이 bool이 **바뀌는 엣지**에서만 _tween_zoom
+```
+- 타이머형: `boss_telegraph` + `WIDE_PATTERNS`(**현행 그대로 = spin 완전 항등**).
+- 신호형: `boss_wide_view(on)` → `_wide_signal = on`, on이면 `_wide_left = maxf(_wide_left, WIDE_WATCHDOG_S)`.
+- 🔴 `_tween_zoom`의 `kill()` 관용구를 반드시 유지해라 — 두 경로가 겹쳐 트윈이 둘 살면 **줌이 진동한다**(그 함수 주석이 정본).
+- 🔵 **후속(이번엔 안 한다)**: `spin`도 `.tres`에 `wide_view = true`를 주면 신호형으로 통일되고 `WIDE_PATTERNS` 상수(패턴 id 하드코딩 미러)가 **사라진다.** 카메라가 이미 둘 다 지원하므로 `.tres` 한 줄 + 상수 항목 제거로 끝난다. 지금 안 하는 이유는 **spin 동작 항등을 유지하려는 것뿐**이다. ⚠ 옮기면 얻는 것: 현재 `WIDE_HOLD_S` 주석이 인정한 한계(*"호스트 예고 창은 지연 보상만큼 길어질 수 있는데 카메라는 그 값을 모른다"*)가 통째로 사라진다.
+
+### 6-7. 줌 값
+`ZOOM_WIDE = 0.8` 그대로 맞다 — 보이는 영역 800×450 ⊃ 아레나 768×416. ⚠ 그 값이 아레나 크기의 **사람 미러**라는 것은 남는다(`camera_rig.gd:49-53`). `arena_rect`의 세 번째 소비자가 생기면 그때 유도로 옮겨라(§2 「두 번째 사용처 전 공용화」) — **이번에 옮기지 마라**(카메라가 보여줄 범위와 패턴 기하는 근거가 다른 축이다, §2 표).
 
 ---
 
@@ -288,16 +396,18 @@ signal boss_wide_view(active: bool)
 
 | 축 | 결과 |
 |---|---|
-| 신규 kind | **0** |
-| `G_BOSS_ATK` 신규 필드 | **`"i"` 1개** — 회차 인덱스. `−1` = 접근 시작(도형 없음) · 기본 `0` = **현행 항등** |
-| EventBus | `boss_wide_view(active)` 신설(**로컬 전용·중계 없음**) · `boss_telegraph`에 `idx` 인자 추가(리드 core) |
-| 채널 | `G_BOSS_ATK`는 **사건** = safe 유지. 한 통 유실 = **예고 없이 맞는다**. `RTC_FAST_KINDS`는 allowlist라 기본 safe ✅ |
-| 크기 | 정수 한 칸 — 릴레이 2048 상한 무관 ✅ |
+| 신규 kind | **1** — `G_BOSS_VIEW := "bview"`(⑤ 확정). 🔴 **`RTC_FAST_KINDS` 금지**(§6-4) · 충돌 grep 0건 |
+| `G_BOSS_ATK` 신규 필드 | **`"i"` 1개** — **순수 회차 인덱스**(초안의 `−1` 해킹 폐기). 기본 `0` = **현행 항등** |
+| EventBus | `boss_wide_view(active)` 신설(로컬 시그널 + MobSync 중계 = `boss_phase_changed` 미러) · `boss_telegraph`에 `idx` 인자 추가 — 둘 다 리드 core |
+| 채널 | 둘 다 **사건** = safe. `G_BOSS_ATK` 유실 = 예고 없이 맞는다 · `G_BOSS_VIEW` 유실 = 줌아웃에 갇힌다. allowlist라 기본 safe ✅ |
+| 크기 | 정수 한 칸 + 불린 한 칸 — 릴레이 2048 상한 무관 ✅ |
+| 빈도 | `G_BOSS_VIEW`는 **패턴당 2통**(엣지에서만). 상시 트래픽 0 |
 
 **신뢰 경계**
-- `"i"`는 호스트 발신 전용이고 수신부가 이미 `from_id != NetSchema.HOST_ID`를 거부한다(`mob_sync.gd:142`).
-- 값 검증은 **`charge_telegraph_scale`의 `maxi(idx, 0)` + 하한 포화**가 구조로 한다. 별도 clamp 불필요.
+- 둘 다 호스트 발신 전용이고 수신부가 이미 `from_id != NetSchema.HOST_ID`를 거부한다(`mob_sync.gd:142`).
+- `"i"` 값 검증은 **`charge_telegraph_scale`의 `maxi(idx, 0)` + 하한 포화**가 구조로 한다. 별도 clamp 불필요.
 - 🔴 **`"i"`는 "수치"가 아니라 "인덱스"다** — 예고 길이 자체는 각 클라가 자기 `.tres`에서 리졸브한다. 특성 축이 id만 보내고 값은 로컬에서 푸는 것과 **같은 철학**(§3).
+- `G_BOSS_VIEW`는 **판정에 아무것도 안 한다** — 최악의 오용도 "화면이 넓어진다"뿐이라 신뢰 표면이 실질 0이다(그래서 페이로드를 `on` 하나로 좁혔다).
 
 🔴 **netreview 필요: 예.** 신규 kind가 0이어도 회차 동기화·예고 창 정합·호스트 권한 경로에 닿는다.
 
@@ -324,21 +434,30 @@ signal boss_wide_view(active: bool)
    - ⚠ **증명하는 것은 "식이 같다"뿐** — GLSL 컴파일·uniform 배선은 실기 몫.
    - 🔵 오라클을 **엔진 함수로 쓰는 것**이 핵심이다 — 테스트가 코드를 미러하면 검출력이 0이다(§3 N-1).
 6. **★`ATTACK_ANIMS` 커버리지 전수(신설)** — 모든 `BossDef`의 모든 패턴 id·클립이 접두 규칙으로 덮이는지. 🔵 §2 게이트 절반을 규율에서 구조로 옮긴다.
-7. **★`target_mode` allowlist** — 모르는 값이 `nearest` 폴백으로 떨어지는지.
+7. **★`target_mode` allowlist** — 모르는 값이 `nearest` 폴백으로 떨어지는지 · `"host"`에서 호스트가 죽으면 `nearest`로 넘어가는지(폴백이 계약).
+8. **★`G_BOSS_VIEW`가 fast 집합에 없는지** — ✅ **추가 작업 0**: `test_net_transport_auto`가 이미 `RTC_FAST_KINDS` 집합을 단정하므로 실수로 넣으면 자동으로 빨개진다.
+9. **★kind 이름 충돌** — 착수 시 `grep -rn '"bview"' src tests server` 재확인(§6-1. 지금 0건).
+10. **★`breaks_rock = false` 항등** — P3 데이터에서 충돌 분기가 `_enter_charge_hit`로 가는지.
 
 ### 9-3. 🔴 실기 몫
 
 - **GLSL 캡슐 분기 컴파일**(웹). 안 돌면 **예고만 사라지고 판정은 정상** = 최악의 방향.
 - **원·콘 예고 항등 육안 확인** — swing·slam·spray·spin 네 패턴 캡처. `half_len_px` 미기입 경로가 하나라도 있으면 원이 캡슐로 그려진다.
 - **접근 중 walk 애니**(`raw_moving` 수정 확인) — 안 고치면 idle로 미끄러진다.
-- **카메라 on/off 신호 타이밍 + 워치독** — 줌아웃에 갇히는지.
+- 🔴 **카메라 종료 신호의 여섯 출구**(§6-3) — 특히 **바위 그로기**·**보스 사망**·**C1 결박**으로 패턴이 끊겼을 때 줌이 돌아오는지. 워치독(20s)이 가려 주므로 **"결국 돌아오더라"로 통과시키지 마라** — 20초를 세서 확인해야 진짜 신호 경로가 검증된다.
+- 🔴 **바위 파괴 시 보스가 선분을 벗어나지 않는지**(수직 고정, §3-3). 벗어나면 **띠 밖에서 맞는다** — 헤드리스가 못 잡는다(씬 글루).
+- **게스트 화면: 보스가 온전한 바위를 통과하는 것처럼 보이는 정도**(§3-3 남는 것 ②).
 - 🔴 **2클라 배포본: 회차별 예고 단축 정합** — 3회차에서 게스트가 늦게 반응하지 않는지. **`"i"` 필드의 존재 이유이고 `dev_local.sh` 13.8ms로는 재현 안 된다.**
 - **12초 지루함 임계** — 사용자 판단(`charge_repeat` 2 vs 3).
 - **보스 스프라이트가 아레나 밖으로 삐져나오는 정도** — 그려지는 폭 = 64 × 2(씬) × 1.5(`sprite_scale`) = **192px** vs 끝단 여유 `body_radius` 63.
 
 ### 9-4. `docs/TUNING.md` 등재
 
-`charge_repeat`(3) · `charge_speedup`(0.25) · `charge_approach_speed`(260~400) · `charge_travel_max`(642) · `cooldown_s`(14) · `damage`(18) · `target_mode`(host ↔ alternate) · `CHARGE_TELEGRAPH_MIN`(0.35) · 바위 파괴 여부.
+`charge_repeat`(3) · `charge_speedup`(0.25) · `charge_approach_speed`(260~400) · `charge_travel_max`(642) · `cooldown_s`(14) · `damage`(18) · `CHARGE_TELEGRAPH_MIN`(0.35) · `WIDE_WATCHDOG_S`(20).
+
+🔴 **확정됐지만 실기에서 되돌아올 수 있는 것 둘** — 둘 다 `.tres` 한 줄이다:
+- **`target_mode`** `"host"` → `"alternate"`: 게스트가 12초 동안 할 일이 없다고 느끼면.
+- **`breaks_rock`** `true` → `false`: 바위가 너무 빨리 사라져 P3 처벌 루프가 죽으면. ⚠ 끄면 **횡단이 바위에 막혀 중단된다**(layer 1) — 되돌릴 땐 `charge_travel_max`도 같이 본다.
 
 ---
 
@@ -350,13 +469,14 @@ signal boss_wide_view(active: bool)
 |---|---|---|---|
 | 1 | `CombatMath`: `charge_telegraph_scale` + 트립와이어 ①②③④⑦ | **S** | **없음(항등)** |
 | 2 | `_state_left`를 `maxf` 유도로 + `CHARGE_TIMEOUT_MARGIN` 부활 | **XS** | **없음(P3 항등)** |
-| 3 | 스키마 6필드 — 리드: `charge_repeat`·`charge_speedup`·`charge_approach_speed`·`target_mode`·`wide_view`(+A안이면 `shape="capsule"`) | **XS** | 없음 |
-| 4 | `CHARGE_APPROACH` + `_select_target` + `arena_rect` 메타 + 🔴 `raw_moving`·`debug_hold` 게이트 | **M** | 신규 경로 |
-| 5 | 왕복 루프(`_charge_idx`) + 예고 단축 + `G_BOSS_ATK "i"` + `boss_telegraph` 인자 | **M** ← netreview 핵심 | 신규 경로 |
+| 3 | 스키마 — 리드: `BossPatternDef` 6필드(`charge_repeat`·`charge_speedup`·`charge_approach_speed`·`target_mode`·`wide_view`·`breaks_rock`, +A안이면 `shape="capsule"`) · `NetSchema.G_BOSS_VIEW` · `EventBus.boss_wide_view` · `boss_telegraph` 인자 | **S** | 없음 |
+| 4 | `CHARGE_APPROACH` + `_select_target`(host) + `arena_rect` 메타 + 🔴 `raw_moving`·`debug_hold` 게이트 | **M** | 신규 경로 |
+| 5 | 왕복 루프(`_charge_idx`) + 예고 단축 + `G_BOSS_ATK "i"` | **M** ← netreview 핵심 | 신규 경로 |
 | 6 | 캡슐 shape(A안) — 셰이더 uniform 1 + `capsule_depth` + 트립와이어 ⑤ | **S** | **없음(항등 증명)** |
-| 7 | `boss_wide_view` 전환 + `WIDE_PATTERNS` 삭제 + 워치독 | **S** | spin 항등 |
-| 8 | 데이터 `pat_cross` + `spin.wide_view = true` | **XS** | 신규 패턴 |
-| 9 | 🔴 netreview + 실기(§9-3) | — | — |
+| 7 | `breaks_rock` 분기 + 🔴 수직 고정 한 줄 + 파괴 셰이크 | **S** | **없음(P3 항등)** |
+| 8 | 카메라: `boss_wide_view` 구독 + `_set_wide` choke point + MobSync 중계·수신 + 워치독 20s (신호형/타이머형 공존) | **S** | spin 항등 |
+| 9 | 데이터 `pat_cross` 인라인 sub_resource + 애니 클립 배선(placeholder = `mino_spin_full`) | **S** | 신규 패턴 |
+| 10 | 🔴 netreview + 실기(§9-3) | — | — |
 
 🔵 **1·2·3·6은 라이브 동작을 한 픽셀도 안 바꾼다.** 위험은 4·5에 몰려 있고 그 앞에서 트립와이어가 깔린다.
 ⚠ **시간이 모자라면 6(캡슐)을 미루고 C안(과예고 수용)으로 나갈 수 있다** — 안전한 방향이라 회귀는 없고 학습성만 손해다. 5는 못 미룬다(게스트 정합).
@@ -367,14 +487,14 @@ signal boss_wide_view(active: bool)
 2. 🔴 **`_telegraph_duration` 게스트 갈래 확장이 모든 패턴에 닿는다.** `charge_speedup = 0`에서 배율 1.0 = 항등이 근거.
 3. 🔴 **셰이더 `half_len_px`(A안)는 모든 보스 예고에 닿는다.** 항등 증명 + 트립와이어 + 4패턴 캡처를 **다 하기 전에 4단계로 넘어가지 마라.**
 4. 🔴 **`half_len_px`를 조건부로 심는 실수** — 캡슐 뒤의 원 예고가 캡슐로 그려진다. 에러 없음.
-5. 🔒 **밸런스: 횡단이 바위를 부수나?** (사용자 판단, 구현은 한 줄)
-   - **부순다**: 페이즈2 escalation이 읽힌다("페이즈1에서 통하던 바위 유도가 안 통한다"). 대가 = 선분 위 바위가 사라져 P3 처벌 도구를 잃는다.
-   - **안 부순다**: `boss_rock`이 layer 1이고 보스 mask가 1이라 **보스가 막혀 횡단이 중단된다.**
-   - **현행 그대로(그로기)**: 횡단이 P3와 구분이 안 되고 왕복이 매번 끊긴다.
-   - ⚠ 어느 쪽이든 게스트에서는 `shatter()`가 안 돌아 바위가 남는다(기존 부채 E-4). 판정이 없어 무해.
-6. 🔴 **12초 패턴의 지루함**(§4-5). `charge_repeat` 3 확정 전 실기 필요.
-7. 🔴 **A안을 안 하면 남는 부채**: 경로 예고가 스윕의 **2.76배 과예고**(아레나 세로의 95%). 안전한 방향이지만 "못 피하는 패턴"으로 학습된다.
-8. **`target_mode = "host"` 기본은 2인에서 게스트를 완전히 안전하게 만든다**(§5). `.tres` 한 줄로 뒤집히게 설계했다는 것이 완화책 전부다.
+5. ✅ **바위 = 부순다 «확정»**(§3-3). 남는 위험 둘:
+   - **밸런스** — 선분 위 바위가 사라져 P3 처벌 도구가 준다(사용자가 알고 고른 대가). 완화 = `rock_ttl` 10s·`spray` 쿨 6s로 재공급이 빠르다.
+   - 🔴 **`breaks_rock`이 켜진 패턴에서 수직 고정을 빠뜨리면** 한 프레임 슬라이드로 보스가 띠 밖에서 판정한다 = 「표시 < 판정」. **한 줄인데 없으면 §3 위반**이고, 증상이 "가끔 안 보이는데 맞는다"라 재현이 어렵다.
+6. 🔴 **카메라 종료 신호의 출구 누락** — 여섯 곳 중 하나만 빠져도 그 경로에서 **줌아웃에 갇힌다.** `_set_wide(false)` **단일 choke point**가 방어의 전부이고, 워치독(20s)은 안전망일 뿐 **증상을 가려 검증을 통과시키는 부작용**이 있다(§9-3).
+7. 🔴 **12초 패턴의 지루함**(§4-5). `charge_repeat` 3 확정 전 실기 필요.
+8. 🔴 **A안(캡슐)을 안 하면 남는 부채**: 경로 예고가 스윕의 **2.76배 과예고**(아레나 세로의 95%). 안전한 방향이지만 "못 피하는 패턴"으로 학습된다.
+9. **`target_mode = "host"`는 2인에서 게스트를 12초 동안 완전히 안전하게 만든다**(§5 «확정»). `.tres` 한 줄로 뒤집히게 설계했다는 것이 완화책 전부다.
+10. **신규 kind는 되돌리기 어려운 축이다** — 배포본 구버전 클라와 섞이면 모르는 kind를 무시한다(= 그 클라만 줌이 안 바뀐다, 표시라 무해). 🔵 판정에 아무것도 안 하는 kind라 이 축의 위험은 이 프로젝트 기준으로 가장 낮은 편이다.
 
 ---
 
@@ -382,8 +502,10 @@ signal boss_wide_view(active: bool)
 
 1. 🔴 **회차 예고 배율 = `CombatMath.charge_telegraph_scale(pat, idx)`.** 호스트는 `_telegraph_hold_s`에 곱해 넣고 게스트는 `_telegraph_duration`이 직접 읽는다 — **양쪽이 같은 함수를 지나야** 「다 찼다 = 지금 맞는다」가 유지된다. 하한 `CHARGE_TELEGRAPH_MIN`의 근거는 `ROLL_TIME_S`다.
 2. 🔴 **돌진 지속 = `maxf(CHARGE_SPIN_TIME, travel/speed + CHARGE_TIMEOUT_MARGIN)`.** 상수 고정이면 `charge_travel_max`를 늘려도 보스가 중간에 멈춘다(예고는 끝까지 그려진 채로).
-3. 🔴 **대상 선택 = `boss._select_target(pat)` + `BossPatternDef.target_mode`.** 조준 결과는 `x/y/a`로만 나가므로 **모드를 바꿔도 네트워크 표면 0**. 폴백(`nearest`)이 계약이다.
-4. **넓은 화면 = `BossPatternDef.wide_view` + `EventBus.boss_wide_view`.** 카메라의 패턴 id 하드코딩 미러를 없앤다. 워치독 타임아웃이 안전장치.
-5. (A안 채택 시) **캡슐 예고 = `CombatMath.capsule_depth` + 셰이더 `half_len_px`.** 판정은 여전히 이동 원이고 캡슐은 그 합집합 — 「판정 ⊆ 표시」가 가리비 부등식(0.12px)으로 증명된다.
+3. 🔴 **대상 선택 = `boss._select_target(pat)` + `BossPatternDef.target_mode`.** cross는 «확정» `"host"`. 조준 결과는 `x/y/a`로만 나가므로 **모드를 바꿔도 네트워크 표면 0**. 폴백(`nearest`)이 계약이다(호스트 사망 시 대상 없음).
+4. 🔴 **광역 시야 = `BossPatternDef.wide_view` + `EventBus.boss_wide_view` + `NetSchema.G_BOSS_VIEW`.** 배선은 **`boss_phase_changed`의 1:1 미러**(로컬 emit → MobSync 중계 → 게스트 재emit). 🔴 **fast 채널 금지** · **종료 emit은 `_set_wide(false)` 한 곳** · 워치독 20s는 **비정상 경로 전용**.
+5. 🔴 **`breaks_rock` + CROSS_DASH 수직 고정.** `shatter()`가 콜리전을 즉시 끄므로 통과는 공짜지만, **수직 고정이 없으면 한 프레임 슬라이드로 「판정 ⊆ 표시」가 깨진다.** 고정은 `move_and_slide()` **뒤**·`boss_sweep.emit` **앞**(순서가 계약).
+6. (A안 채택 시) **캡슐 예고 = `CombatMath.capsule_depth` + 셰이더 `half_len_px`.** 판정은 여전히 이동 원이고 캡슐은 그 합집합 — 「판정 ⊆ 표시」가 가리비 부등식(0.12px)으로 증명된다.
+7. **씬 메타 `arena_rect`(패턴 기하) ≠ `map_rect`(카메라 클램프).** 값이 같을 이유가 없고 **한쪽을 다른 쪽에서 유도하지 마라**(§2 표).
 
 §2 갱신 둘: 「`ATTACK_ANIMS` 미러」에 **전수 트립와이어가 생겼다** + **P3가 `spin` 이름의 우연에 기대고 있었다**는 사실 · 「재합류 스냅샷」에 **진행 중인 charge 회차** 추가.
