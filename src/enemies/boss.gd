@@ -21,20 +21,29 @@ const REMOTE_MOVE_EPS := 1.0      # 게스트 표시: 목표점과 이만큼 이
 # 텔레그래프 연출값 (rules §0 예외 — 사용자가 조인다, docs/TUNING.md 대상).
 # 🔴 기하값(각·반지름)은 여기 없다 — 전부 BossPatternDef에서 파생한다. 여기 숫자를 늘려
 # 예고를 "조금 더 크게" 만들지 마라: 그 순간 보이는 곳과 맞는 곳이 갈라진다(§3).
-const TELEGRAPH_PIXEL_PX := 2.0        # 픽셀 양자화 격자(월드 px) — 16px 도트와 어울리는 계단
 const TELEGRAPH_BORDER_PX := 3.0       # 테두리 두께(경계 안쪽)
-# 🔴 격자 스냅 여유 = **셀 반대각선**. 표본점이 셀 중심으로 옮겨지는 최대 거리가 이 값이므로,
-# 이만큼 바깥으로 관대하게 칠하면 "판정 안인데 안 칠해지는 픽셀"이 격자 모델 안에서 0이 된다.
-# 격자에서 유도한다 — 독립 상수로 두면 pixel_px를 조일 때 이 보장이 조용히 깨진다.
-# ⚠ **완전한 0은 아니다**: 화면 픽셀 양자화까지 넣으면 최악 위상에서 0.34px(≈0.7 화면픽셀)가
-# 남는다(리뷰 실측 430만 표본). 고친 결함이 19px이라 실질 무의미하지만, "0"으로 읽고 그 위에
-# 다른 보장을 쌓지 마라. 확실한 것은 **틀리는 방향이 항상 과예고**라는 쪽이다.
-const TELEGRAPH_EDGE_BIAS_PX := TELEGRAPH_PIXEL_PX * 0.7071068
+# 🔴 경계 소프트 폭(월드 px) — **바깥으로만** 퍼진다. 셰이더가 알파 램프를 `smoothstep(-aa, 0, d)`로
+# 잡아 판정 안(d ≥ 0)은 알파 1이고 밖으로만 이만큼 사라진다 = **틀리는 방향이 항상 과예고**.
+# ⚠ 2026-08-02에 격자 스냅(`pixel_px` 2.0 + `edge_bias_px` 1.41)을 폐기하며 이 상수가 그 자리를
+# 대신했다. 옛 여유는 "스냅이 표본점을 최대 셀 반대각선만큼 옮기니 그만큼 관대하게"라는 유도였는데,
+# 스냅이 없으면 표본점이 진짜 그 자리라 여유 자체가 필요 없다(실측 과예고 2.83px → aa 1.0px, 그것도
+# 반투명). 근거였던 "전 게임 16px 도트와 같은 계단"은 **16px 세대 기준**이고 지금은 32px + 줌 1.5다.
+# ⚠ 안티에일리어싱에 `fwidth`/derivative를 쓰지 않는다(웹 Compatibility 안전 목록 밖, rules §5) —
+# 셰이더가 월드 px 폭을 직접 받는 이유다.
+const TELEGRAPH_AA_PX := 1.0
+# 쿼드 여유(월드 px) — 화면 픽셀 중심이 쿼드 밖으로 나가 프래그먼트가 아예 안 도는 것을 막는다.
+# 줌 1.5에서 화면 반픽셀 = 0.33 월드px이므로 1.0이면 넉넉하다.
+const TELEGRAPH_QUAD_MARGIN_PX := 1.0
 const TELEGRAPH_FILL := Color(0.910, 0.275, 0.110, 0.306)    # 옛 telegraph_cone.png 채움색 실측 미러
 const TELEGRAPH_BORDER := Color(1.000, 0.604, 0.235, 0.729)  # 옛 telegraph_cone.png 테두리색 실측 미러
 const TELEGRAPH_FILL_FADE := 0.25      # 바깥으로 갈수록 옅어지는 정도
 const TELEGRAPH_PULSE_AMP := 0.10
 const TELEGRAPH_PULSE_HZ := 2.2
+# 차오름(임박도) 연출값 — "언제 터지는지가 눈에 보인다". 🔴 기하가 아니라 **색만** 바꾼다(§3).
+const TELEGRAPH_CHARGE := Color(1.000, 0.451, 0.129, 0.620)  # 다 찬 구역(더 뜨겁고 진하게)
+const TELEGRAPH_LEAD_PX := 7.0         # 차오름 선단(밝은 파면) 두께
+const TELEGRAPH_FLASH := Color(1.000, 0.925, 0.722, 0.880)   # 마지막 순간 번쩍
+const TELEGRAPH_FLASH_START := 0.86    # 이 진행도부터 번쩍이 올라온다
 
 # 추격 이탈 = aggro_range × 이 배수. 씬 스왑 프레임 유령 어그로 방지 (mob_melee와 동일 규약, rules §5).
 const LEASH_MULT := 1.5
@@ -113,6 +122,11 @@ var _telegraph_center: Vector2 = Vector2.ZERO
 # 이번 예고를 띄워둘 시간(초) — 호스트는 지연 보상분이 더해진 값, 게스트는 pat.telegraph_s 그대로.
 # WINDUP 진입/예고 수신 때 한 번 확정해 표시·타격이 같은 값을 쓰게 한다(중간에 RTT가 흔들려도 안 갈라지게).
 var _telegraph_hold_s: float = 0.0
+# 🔴 이번 예고의 **총 길이** = 차오름(progress)의 분모. `_telegraph_duration()` 한 곳에서만 온다 —
+# 그 함수의 네 번째 파생값이고 새 계산이 아니다(§3: 표시 지속 · N개 원 타이머 · 애니 길이 · 차오름).
+# 식을 여기서 다시 쓰면 "예고는 끝났는데 차오름은 70%"처럼 표시끼리 갈라진다.
+var _telegraph_total_s: float = 0.0
+var _telegraph_mat: ShaderMaterial = null  # 매 프레임 progress를 심을 대상(캐시 — 재조회 비용 제거)
 var _move_hold: float = 0.0   # 이동 디바운스 — 잔멈춤에도 walk 애니가 프레임0으로 리셋 안 되게 (0이면 idle 복귀)
 var _face_dir: String = "s"   # 8방향 바라보기 접미사(플레이어 방향) — 디렉셔널 애니(idle_<dir>/slam_<dir>) 선택용. 없으면 base 폴백.
 var _anim_scale: float = 1.0           # 지금 애니에 걸려 있어야 할 speed_scale (공격 애니만 1.0이 아니다)
@@ -140,6 +154,8 @@ var coop_locked: bool = false          # C1 결박 중 — 패턴 AI 정지(외�
 @onready var _collision: CollisionShape2D = $Collision
 @onready var _telegraph: Sprite2D = $Telegraph
 @onready var _health: HealthComponent = $Health
+# 접지 그림자 — 씬에 authoring된 위치·크기를 `sprite_scale`로 같이 키운다(없으면 발밑이 뜬다).
+@onready var _shadow: Sprite2D = get_node_or_null("Shadow") as Sprite2D
 
 
 func _ready() -> void:
@@ -162,6 +178,24 @@ func _ready() -> void:
 			sf.rename_animation(&"default", &"idle")
 			sf.add_frame(&"idle", def.sprite)
 			_sprite.sprite_frames = sf
+		# 스프라이트 배율 — 시트 재작화 없이 덩치만 키운다 (`mob_melee.gd`의 `sprite_scale` 관용구).
+		# 🔴🔴 **잔몹처럼 `Vector2.ONE * sprite_scale`로 대입하지 마라 — 보스는 작아진다.**
+		#   `boss.tscn`의 Sprite는 이미 `scale = (2, 2)`로 authoring돼 있다(64px 시트를 128px로).
+		#   대입식을 그대로 베끼면 2.0 → 1.5가 되어 **키우려던 변경이 축소가 된다**(에러 없음).
+		#   곱셈이면 기본값 1.0에서 **완전 항등**이라 배율을 안 적은 BossDef도 안 깨진다.
+		# 🔴 **`body_radius`도 같이 올려야 한다** — 판정은 그쪽이 정한다(`EnemyDef.sprite_scale` 필드
+		#   주석이 정본). 그림만 키우면 "몸통에 맞췄는데 안 맞는다"가 되고 화면에 이유가 안 드러난다.
+		#   `tests/test_boss_data_auto.gd`의 「덩치 ↔ 판정 반경」 단정이 데이터 축에서 이걸 지킨다.
+		# 🔴 **`HitStop.punch`보다 먼저여야 한다** — punch가 첫 호출 때 현재 `scale`을 `hs_base_scale`
+		#   meta에 저장해 복원 기준으로 삼기 때문이다(rules §2). `_ready` 시점이라 안전하다.
+		if def.sprite_scale > 0.0:
+			_sprite.scale *= def.sprite_scale
+			# 그림자는 스프라이트를 안 따라간다(별도 형제 노드) → 같은 배율로 위치·크기를 같이 민다.
+			# 위치까지 곱하는 이유: authoring 값 y=42는 "그 배율에서의 발밑"이라 배율에 비례한다.
+			# 안 밀면 보스가 커진 만큼 발이 그림자 아래로 내려가 **떠 보인다**.
+			if _shadow != null:
+				_shadow.position *= def.sprite_scale
+				_shadow.scale *= def.sprite_scale
 		# 몸 판정 반경 = def.body_radius — shape 리소스는 씬 인스턴스 간 공유라 복제 후 적용 (rules §5)
 		var shape := _collision.shape.duplicate() as CircleShape2D
 		if shape != null:
@@ -245,6 +279,7 @@ func _physics_process(delta: float) -> void:
 		_telegraph_left -= delta
 		if _telegraph_left <= 0.0:
 			_telegraph.visible = false
+		_update_telegraph_progress()
 	_apply_anim_scale()
 	_update_life_feel(delta)
 	if _health.is_dead() or def == null:
@@ -783,10 +818,21 @@ func _spawn_spray_circle(pat: BossPatternDef, center: Vector2) -> void:
 	get_parent().add_child(spr)  # 스테이지 Node2D 자식 (런타임 add_child — _ready 함정 무관, rules §5)
 	spr.global_position = center
 	# 표시 지속 = 호스트는 지연 보상분 포함(_begin_windup 확정), 게스트는 자기 telegraph_s (단일 원과 같은 규약)
-	get_tree().create_timer(_telegraph_duration(pat)).timeout.connect(
+	var dur := _telegraph_duration(pat)
+	get_tree().create_timer(dur).timeout.connect(
 		func() -> void:
 			if is_instance_valid(spr):
 				spr.queue_free())
+	# 차오름 — 🔴 **분모가 위 자동 free 타이머와 문자 그대로 같은 값**이라 "다 찼다 = 사라진다 =
+	# 맞는다"가 세 축에서 동시에 성립한다(§3 `_telegraph_duration` 파생값). 단일 원은
+	# `_telegraph_left`를 매 프레임 감산해 만들지만 N개 원은 노드가 여럿이라 각자 트윈으로 돈다 —
+	# 시간 소스는 둘 다 벽시계이고 분모가 같으므로 갈라질 축이 없다.
+	# ⚠ 트윈을 `spr`에 묶어 두면 스프라이트가 free될 때 같이 죽는다(고아 트윈 없음).
+	var spray_mat := spr.material as ShaderMaterial
+	if spray_mat != null and dur > 0.0:
+		spr.create_tween().tween_method(
+			func(v: float) -> void: spray_mat.set_shader_parameter(&"progress", v),
+			0.0, 1.0, dur)
 
 
 func _resolve_pattern(pattern_id: String) -> BossPatternDef:
@@ -812,6 +858,20 @@ func _telegraph_duration(pat: BossPatternDef) -> float:
 func _reassert_telegraph_pos() -> void:
 	if _telegraph_left > 0.0:
 		_telegraph.global_position = _telegraph_center
+
+
+# 차오름(임박도)을 셰이더에 심는다 — "언제 터지는지가 눈에 보인다".
+# 🔴 **분모는 `_telegraph_duration()`이 확정한 `_telegraph_total_s` 하나다** (§3). 각 클라가 **자기**
+#   예고 창으로 리졸브한 값이라(호스트 = 지연 보상분 포함 · 게스트 = 자기 telegraph_s) 지연이 있어도
+#   양쪽 화면에서 "다 찼다 = 지금 맞는다"가 동시에 성립한다.
+# 🔴 **`TIME`에서 유도하지 마라** — 예고 창 길이가 클라마다 달라 게스트가 틀린 임박 신호를 읽는다
+#   (셰이더 `progress` 주석이 정본, netreview 2026-07-27 계약).
+# ⚠ 판정 형태는 안 건드린다 — 셰이더는 이 값으로 **색만** 바꾼다(부채꼴/원은 range·half_angle 그대로).
+func _update_telegraph_progress() -> void:
+	if _telegraph_mat == null or _telegraph_total_s <= 0.0:
+		return
+	_telegraph_mat.set_shader_parameter(
+		&"progress", clampf(1.0 - _telegraph_left / _telegraph_total_s, 0.0, 1.0))
 
 
 # 예고 스프라이트의 쿼드 소스 — 1×1 흰 텍스처 한 장을 모든 예고가 공유한다(단일 콘/원 + N개 원).
@@ -854,11 +914,16 @@ func _apply_telegraph_geometry(spr: Sprite2D, pat: BossPatternDef, angle: float)
 	spr.centered = true
 	spr.offset = Vector2.ZERO
 	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	spr.rotation = angle if is_cone else 0.0  # 원은 회전 불변 — 격자를 월드 축에 맞춰 둔다
-	# 쿼드 한 변 = 지름 + 여유(격자 1칸 + 스냅 여유)의 2배. 🔴 딱 지름으로 두면 원호의 상하좌우 끝에서
-	# 셀 중심이 쿼드 밖으로 나가 그 픽셀이 아예 안 그려진다(= 판정 안인데 무예고). 여유는 표시용일 뿐
-	# 판정 기하가 아니다 — 셰이더는 radius_px로만 안팎을 가른다.
-	var quad := 2.0 * (radius + TELEGRAPH_PIXEL_PX + TELEGRAPH_EDGE_BIAS_PX)
+	spr.rotation = angle if is_cone else 0.0  # 원은 회전 불변 — 회전을 넣어도 그림이 같다
+	# 쿼드 한 변 = (반지름 + 소프트 폭 + 화면픽셀 마진)의 2배.
+	# 🔴 딱 지름으로 두면 원호의 상하좌우 끝에서 화면 픽셀 중심이 쿼드 밖으로 나가 그 픽셀이 아예
+	#   안 그려진다(= 판정 안인데 무예고). 여유는 표시용일 뿐 판정 기하가 아니다 — 셰이더는
+	#   radius_px로만 안팎을 가른다.
+	# ⚠ **유도식을 격자 스냅 폐기에 맞춰 다시 세웠다**(2026-08-02): 옛 여유 `pixel_px + edge_bias_px`
+	#   (= 2.0 + 1.41)는 격자 셀 크기와 그 반대각선에서 나온 값이라 격자가 없어지면 근거가 없다.
+	#   새 항 둘은 각각 ⑴ 알파 램프가 바깥으로 퍼지는 폭(`aa_px`) ⑵ 프래그먼트가 픽셀 **중심**에서만
+	#   생기는 데서 오는 화면 반픽셀(줌 1.5에서 0.33 월드px)이고, 후자를 1.0으로 넉넉히 잡았다.
+	var quad := 2.0 * (radius + TELEGRAPH_AA_PX + TELEGRAPH_QUAD_MARGIN_PX)
 	# 텍스처가 2×2라 월드 한 변 = 2*scale → scale = quad/2. quad_px(월드 span)은 quad 그대로 넘긴다.
 	spr.scale = Vector2.ONE * (quad * 0.5)
 	var mat := spr.material as ShaderMaterial
@@ -870,14 +935,20 @@ func _apply_telegraph_geometry(spr: Sprite2D, pat: BossPatternDef, angle: float)
 	mat.set_shader_parameter(&"radius_px", radius)
 	# 원 = 각 제한 없음. PI를 넘기면 셰이더가 각 검사를 통째로 건너뛴다(is_strike_hit와 항등).
 	mat.set_shader_parameter(&"half_angle", pat.half_angle if is_cone else PI)
-	mat.set_shader_parameter(&"pixel_px", TELEGRAPH_PIXEL_PX)
-	mat.set_shader_parameter(&"edge_bias_px", TELEGRAPH_EDGE_BIAS_PX)
+	mat.set_shader_parameter(&"aa_px", TELEGRAPH_AA_PX)
 	mat.set_shader_parameter(&"border_px", TELEGRAPH_BORDER_PX)
 	mat.set_shader_parameter(&"fill_color", TELEGRAPH_FILL)
 	mat.set_shader_parameter(&"border_color", TELEGRAPH_BORDER)
 	mat.set_shader_parameter(&"fill_fade", TELEGRAPH_FILL_FADE)
 	mat.set_shader_parameter(&"pulse_amp", TELEGRAPH_PULSE_AMP)
 	mat.set_shader_parameter(&"pulse_hz", TELEGRAPH_PULSE_HZ)
+	# 차오름 — 🔴 여기서 **0으로 되심는 것이 계약의 일부다**. Telegraph 노드는 재사용되므로 안 심으면
+	# 다음 예고가 **이전 회차의 다 찬 상태로 시작**한다(에러 없음, 임박 신호만 거짓).
+	mat.set_shader_parameter(&"progress", 0.0)
+	mat.set_shader_parameter(&"charge_color", TELEGRAPH_CHARGE)
+	mat.set_shader_parameter(&"lead_px", TELEGRAPH_LEAD_PX)
+	mat.set_shader_parameter(&"flash_color", TELEGRAPH_FLASH)
+	mat.set_shader_parameter(&"flash_start", TELEGRAPH_FLASH_START)
 
 
 # 텔레그래프 표시 — 판정 기하(range·half_angle·angle)를 셰이더에 그대로 넘긴다. "맞는 곳=보이는 곳" (§3).
@@ -895,7 +966,9 @@ func _show_telegraph_visual(pat: BossPatternDef, center: Vector2, angle: float) 
 	_telegraph.visible = true
 	# 호스트는 지연 보상분이 더해진 시간(_begin_windup에서 확정), 게스트는 자기 telegraph_s.
 	# 게스트가 편도 지연만큼 늦게 시작하고 호스트가 그만큼 늦게 때리므로 양쪽 예고가 같은 순간에 끝난다.
-	_telegraph_left = _telegraph_duration(pat)
+	_telegraph_total_s = _telegraph_duration(pat)   # 차오름 분모 = 표시 지속과 **같은 값**(§3)
+	_telegraph_left = _telegraph_total_s
+	_telegraph_mat = _telegraph.material as ShaderMaterial
 
 
 # --- 애니 표시 경로 (호스트/게스트 공용 — 판정과 무관) ---

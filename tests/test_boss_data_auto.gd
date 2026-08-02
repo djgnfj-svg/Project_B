@@ -29,6 +29,28 @@ const LEN_TOLERANCE := 1.5
 # 설 수 있으므로 모든 방향에서 애니가 풀려야 "조용한 무모션"이 안 난다.
 const DIRS := ["e", "se", "s", "sw", "w", "nw", "n", "ne"]
 
+# 🔴 **덩치 ↔ 판정 반경 미러** (2026-08-02, 보스 1.5배 확대) — CLAUDE.md·`EnemyDef.sprite_scale`이
+#   명시한 계약: *"`sprite_scale`을 바꾸면 `body_radius`도 같이 바꿔라."* 판정은 `body_radius`가
+#   정하므로 그림만 키우면 **"몸통에 맞췄는데 안 맞는다"** 가 되고 **화면에 이유가 안 드러난다**.
+#   여기서 잡지 않으면 자동 방어가 0이다(`boss.gd`는 씬 글루라 `-s`가 preload를 못 한다).
+#
+#   검사량 = **판정 지름 ÷ 화면에 그려지는 프레임 폭**:
+#     화면 프레임 폭(월드 px) = 시트 프레임 폭 × ACTOR_NODE_SCALE × sprite_scale
+#     판정 지름(월드 px)      = 2 × body_radius
+#   현행 미노 = 2×63 ÷ (64 × 2 × 1.5) = **0.656**. 실루엣(알파 실측 24~31 tex px)보다 판정이
+#   1.35배 넓은데, 그 비는 둘 다 sprite_scale에 비례하므로 **배율을 같이 올리면 보존된다**.
+#
+#   ⚠ 이 단정이 잡는 것: `sprite_scale` 1.5 → 3.0인데 `body_radius`가 63 그대로면 0.328 → FAIL.
+#      반대로 `body_radius`만 42로 되돌리면 0.438 → FAIL. **둘 중 하나만 움직이면 반드시 빨개진다.**
+# 🔴 `ACTOR_NODE_SCALE`은 `src/enemies/boss.tscn`의 `Sprite` node scale(2, 2)과 **미러**다 — 그 씬을
+#   다시 authoring하면 여기도 같이 고쳐야 한다. 미러를 없애려면 씬 scale을 1로 내리고 그 배수를
+#   `sprite_scale`에 합치면 되지만(그러면 데이터가 덩치의 단일 소스가 된다) 그건 별도 결정이다.
+#   ⚠ 이 파일은 `boss.tscn`을 load하지 않는다 — 그 씬은 `boss.gd`를 물고 있고 그 스크립트가
+#     `EventBus`/`Net` 전역을 써서 `-s`에서 **컴파일이 통째로 실패**한다(rules §5).
+const ACTOR_NODE_SCALE := 2.0
+const BODY_FRAC_MIN := 0.50
+const BODY_FRAC_MAX := 0.95
+
 var _fail := 0
 var _checks := 0
 
@@ -107,6 +129,31 @@ func _boss_defs() -> Array:
 	return out
 
 
+# 🔴 덩치 ↔ 판정 반경 — 상단 `ACTOR_NODE_SCALE` 주석이 유도의 정본이다.
+func _check_body_scale(file: String, def: BossDef, sf: SpriteFrames) -> void:
+	_check(def.sprite_scale > 0.0,
+		"%s: sprite_scale > 0 (%.2f) — 0/음수면 `boss.gd` 가드가 배율을 통째로 건너뛴다"
+		% [file, def.sprite_scale])
+	_check(def.body_radius > 0.0,
+		"%s: body_radius > 0 (%.1f) — 0이면 근접이 중심 판정이 되어 몸통에 맞춰도 안 맞는다"
+		% [file, def.body_radius])
+	# 프레임 폭은 시트에서 읽는다 — 숫자를 박으면 아트가 캔버스를 바꿀 때 이 검사가 조용히 틀려진다.
+	var anim := _resolve(sf, "idle", "se")
+	if anim == &"" or sf.get_frame_count(anim) <= 0:
+		_check(false, "%s: idle 프레임을 못 읽어 덩치↔판정 검사를 못 한다 [%s]" % [file, anim])
+		return
+	var tex := sf.get_frame_texture(anim, 0)
+	var frame_w := float(tex.get_width()) if tex != null else 0.0
+	if frame_w <= 0.0:
+		_check(false, "%s: idle 프레임 폭이 0 — 덩치↔판정 검사를 못 한다" % file)
+		return
+	var drawn_w := frame_w * ACTOR_NODE_SCALE * def.sprite_scale   # 화면에 그려지는 폭(월드 px)
+	var frac := (2.0 * def.body_radius) / drawn_w                  # 판정 지름 ÷ 그려지는 폭
+	_check(frac >= BODY_FRAC_MIN and frac <= BODY_FRAC_MAX,
+		"★%s: 판정 지름 ÷ 그려지는 폭 = %.3f ∈ [%.2f, %.2f] (body_radius %.1f · sprite_scale %.2f · 프레임 %.0fpx) — 벗어나면 둘 중 하나만 움직인 것이다"
+		% [file, frac, BODY_FRAC_MIN, BODY_FRAC_MAX, def.body_radius, def.sprite_scale, frame_w])
+
+
 func _check_boss(file: String, def: BossDef) -> void:
 	var sf := def.frames
 	if sf == null:
@@ -120,6 +167,7 @@ func _check_boss(file: String, def: BossDef) -> void:
 	if sf.has_animation(&"death"):
 		# 시체 남김이 loop=false 전제 — 반복되면 시체가 계속 죽는 모션을 반복한다
 		_check(not sf.get_animation_loop(&"death"), "%s: death loop=false (시체 남김 전제)" % file)
+	_check_body_scale(file, def, sf)
 	_check(not def.patterns.is_empty(), "%s: patterns가 1개 이상 (%d개)" % [file, def.patterns.size()])
 	for p: BossPatternDef in def.patterns:
 		if p == null:
