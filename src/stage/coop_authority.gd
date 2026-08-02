@@ -1035,6 +1035,14 @@ func _build_prompt() -> void:
 	slayer.layer = 9
 	add_child(slayer)
 	_status = Label.new()
+	# 🔴 **개발 진단 줄이라 평상시엔 숨긴다** (2026-08-02) — 사용자 요구: *"글자를 줄이고 숫자
+	#   위주로"*. 보스방에 들어서자마자 `coop v0725g-menu · boss:0 · 인원:1 · host next 5s`가
+	#   좌상단에 상시로 떴는데, 이건 파훼 상태를 디버깅하려고 넣은 것이고 플레이어에게 의미가 없다.
+	# ⚠ **지운 것이 아니라 게이트 뒤로 옮긴 것**이다 — 코옵 파훼는 재현이 어려워 이 줄이 값을 한다.
+	# 🔴 게이트는 `DebugBridge.panel_enabled()` **하나**다(F1 패널·웹 브리지와 같은 판정) —
+	#   판정식을 여기 복제하면 "패널은 열렸는데 이 줄만 안 뜬다"가 된다(그 함수 주석이 명시한 함정).
+	#   그래서 에디터·네이티브에서는 여전히 보이고, **웹 배포본에서만** `?debug=1` 없이는 숨는다.
+	_status.visible = DebugBridge.panel_enabled()
 	_status.mouse_filter = Control.MOUSE_FILTER_IGNORE  # 장식 — 아래 게임 클릭을 먹지 않게 (rules §5)
 	_status.position = Vector2(6, 4)
 	_status.add_theme_color_override("font_color", Color(0.7, 1.0, 0.6))

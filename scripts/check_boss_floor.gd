@@ -103,7 +103,12 @@ func _init() -> void:
 	var arena_tex := props.get("BossArena", {}).get("texture") as Texture2D
 	_check(arena_tex != null, "BossArena.texture 로드됨")
 	var asz := Vector2(768, 416) if arena_tex == null else Vector2(arena_tex.get_size())
-	var boss_r := 63.0    # BossDef.body_radius(63) ≥ 충돌 반경(48) — 넓은 쪽으로 검사한다
+	# 🔴 **`body_radius`를 여기 숫자로 적지 마라 — 데이터에서 읽는다** (2026-08-02에 한 번 갈라졌다).
+	#   보스 덩치를 줄였을 때(1.5 → 1.2 · 반경 63 → 50) 이 상수만 63으로 남아, 검사가 **실제보다 넓은**
+	#   아레나를 요구했다. 이번엔 보수적인 방향이라 무해했지만 반대로 키우면 검사가 조용히 느슨해진다.
+	var boss_def := load("res://data/enemies/wraith_boss.tres") as EnemyDef
+	var boss_r: float = 63.0 if boss_def == null else boss_def.body_radius
+	_check(boss_def != null, "wraith_boss.tres 로드됨 (실패 시 폴백 63 — 검사가 낡은 값으로 돈다)")
 	var arena := Rect2(arena_pos - asz * 0.5, asz).grow(boss_r)
 
 	var cells := 0
