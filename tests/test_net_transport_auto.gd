@@ -42,7 +42,14 @@ func _init() -> void:
 		NetSchema.G_SWAMP,
 		# 코옵 파훼(소울 브레이크) — 🔴 G_COOP_IN이 유실되면 파훼가 실패해 파티가 피해를 입는다.
 		# "둘 다 눌렀나"는 다음 패킷이 덮어쓰지 않는 **사건**이다(2026-07-26 master 병합분).
-		NetSchema.G_COOP_CALL, NetSchema.G_COOP_IN, NetSchema.G_COOP_RES]
+		NetSchema.G_COOP_CALL, NetSchema.G_COOP_IN, NetSchema.G_COOP_RES,
+		# 하위 직업 스킬 — 🔴 유실되면 **쿨다운은 도는데 아무 일도 안 일어난다**(양쪽 앵커가 이미
+		#   섰다). 근접은 400ms 뒤 다시 치지만 스킬은 **8~9초를 통째로 잃는다.**
+		NetSchema.G_SKILL,
+		# ⚠ **선재 누락**(2026-08-02 netreview I-1에서 함께 발견) — `net_schema.gd`가 "몹 발사는
+		#   사건이라 fast 금지"라고 적어 두고도 이 배열엔 없었다. 유실되면 게스트 화면에 몹 화살이
+		#   아예 안 생기는데 호스트는 판정을 계속한다 = "안 보이는데 맞는다".
+		NetSchema.G_MOB_SHOOT]
 	for k: String in events:
 		failures += _check(not fast.has(k), "fast 분류: 사건 %s 제외(유실 시 상태 갈라짐)" % k)
 

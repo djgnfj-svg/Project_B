@@ -69,6 +69,30 @@ var _last_atk_msec: Dictionary = {}  # peer_id -> 마지막 G_ATK 수신 msec (�
 # ⚠ 순서 의존: G_ATK(클릭 시점)와 G_HIT_REQ(판정 시점)가 **같은 ordered 채널**(`RTC_CH_SAFE`/릴레이 TCP)
 #   이라 같은 스윙의 G_ATK가 항상 먼저 도착한다. G_ATK를 fast로 내리면 이 기록이 조용히 낡는다(§3 불변식).
 var _melee_claim: Dictionary = {}
+# peer_id -> 마지막 **확정된** 하위 직업 스킬 발동 msec (호스트 전용 발동률 게이트, `_last_shot_msec` 미러).
+# 🔴 **호스트 자신도 이 딕셔너리를 쓴다** — 자기 발동은 `G_SKILL`이 아니라 로컬 아바타의 `skill_cast`
+#   시그널로 오지만(Net 루프백 없음), 게이트는 하나여야 "내 스킬만 규칙이 다른" 갈래가 안 생긴다.
+# ⚠ `peer_left`에서 반드시 erase한다 — 안 지우면 재접속 id가 **남의 쿨다운을 물려받아** 첫 스킬이
+#   조용히 거부된다(`_melee_combo`·`_shot_combo`가 같은 규약).
+var _skill_msec: Dictionary = {}
+# peer_id -> 진행 중인 스킬의 **남은 판정** (호스트 전용). 모델이 둘이고 `"travel"` 키가 가른다:
+#   ⑴ 제자리 다단  {caster, skill, dir, slack, left:int, timer:float}
+#   ⑵ 이동형 검기  {caster, skill, dir, travel:true, pos:Vector2, life:float, hit:Dictionary}
+# 🔴🔴 **두 모델을 한 큐에 넣는 것이 계약이다** (2026-08-02 이동형 도입). 끊는 조건이 셋인데
+#   (스테이지 종료 · 시전자 사망/노드 해제 · 피어 이탈) 큐를 따로 파면 **세 곳을 두 번씩** 지켜야
+#   하고 반드시 한쪽을 빠뜨린다 — 그러면 전멸·클리어 뒤에도 검기가 계속 몹을 때린다(호스트 권한
+#   단일 소스라 갈라지지도 에러도 없다). 아래 끊는 자리 셋이 **두 모델을 함께** 덮는다.
+# 🔴 **한 번의 `G_SKILL`이 N타(또는 한 번의 비행 전체)를 만든다 — 클라가 N번 보내지 않는다**
+#   (`SkillDef.hit_count`/`travel_speed` 주석이 계약). 발신을 늘리면 그게 곧 `is_skill_ready`
+#   (발동률 게이트)를 N배로 넓히는 스팸 표면이다.
+#   그래서 **신규 네트워크 kind·필드 0**이고, 각 타의 데미지는 기존 `G_ENEMY_HP`로 흐른다.
+# 🔴 **한 시전자당 한 칸이다** — 새 시전이 오면 진행 중이던 다단을 **대체**한다(누적 금지). 쿨다운
+#   하한(3s)이 총 시전 길이(≤ 8 × 0.5)보다 길다는 것은 `test_skill_auto`가 데이터로 지키지만,
+#   코드 쪽도 겹치면 덮어쓰는 쪽으로 닫아 둔다(겹쳐도 타수가 발산하지 않는다).
+# ⚠ 끊는 자리 셋 = ⑴ 스테이지 종료(`_stage_over` — `_physics_process` 가드 + 확정 지점에서 clear)
+#   ⑵ 시전자 사망·노드 해제(틱마다 `is_instance_valid` → `is_alive`) ⑶ 피어 이탈(`peer_left` erase).
+#   안 끊으면 **전멸·클리어 뒤에도 몹이 계속 맞는다**(호스트 권한이라 갈라지지도 않고 에러도 없다).
+var _skill_ticks: Dictionary = {}
 var _rng := RandomNumberGenerator.new()  # 치명타 굴림 — 호스트만 (DropAuthority._rng 관용구). 게스트는 굴리지 않는다(§1)
 var _leech_frac: Dictionary = {}  # peer_id -> 피흡 소수 잔량(호스트 전용). 데미지가 4~34 정수라 매 타격 절삭하면 6% 흡혈이 0이 된다 → 1 이상 쌓이면 회복(§3)
 
@@ -129,11 +153,24 @@ func _ready() -> void:
 		_melee_combo.erase(peer_id)  # 근접 콤보도 같은 이유로 (v2.2 — 이쪽은 데미지 배율·마무리 각을 고른다)
 		_last_atk_msec.erase(peer_id)  # 근접 콤보 간격 기준점 (_last_shot_msec 대칭)
 		_melee_claim.erase(peer_id)  # 주장 타수(각 축)도 대칭 정리 — 안 지우면 재접속 id가 남의 넓은 마무리 각을 물려받는다
+		_skill_msec.erase(peer_id)  # 하위 직업 스킬 쿨다운 앵커도 대칭 정리 (선언부 주석이 근거)
+		_skill_ticks.erase(peer_id)  # 🔴 진행 중이던 다단도 여기서 끊는다 — 안 지우면 이탈한 피어의 남은 타가 계속 몹을 때린다
 		_leech_frac.erase(peer_id)  # 피흡 잔량도 대칭 정리 (이탈 피어 잔류 방지)
 		_pending_php.erase(peer_id)
 		_boss_strike_frame.erase(peer_id)  # 보스 STRIKE dedup 기록도 대칭 정리 (유한하나 정리 일관성)
 		_boss_sweep_seq.erase(peer_id)  # 돌진 스윕 dedup 기록도 대칭 정리 (재접속 id가 남의 돌진 피격 이월 방지)
-		GameState.drop_party_hp(peer_id))  # 챕터 내 잔류 이월 기록 정리 (재접속 id는 증가라 재사용 없음)
+		GameState.drop_party_hp(peer_id)  # 챕터 내 잔류 이월 기록 정리 (재접속 id는 증가라 재사용 없음)
+		# 🔴🔴 **피어 이탈도 전멸 판정의 트리거다** (netreview M-2, 2026-08-02).
+		#   `_check_wipe`를 부르는 곳이 「HP 확정이 0 이하」 하나뿐이면 아래가 안 닫힌다:
+		#     호스트 사망(게스트 생존이라 전멸 아님) → 게스트가 창을 닫음 → 방 생존자 0인데
+		#     **HP 확정이 더는 오지 않아** `_check_wipe`가 영영 안 불린다. 스테이지가 안 끝나고
+		#     `stage_wiped`가 안 나므로 **전멸 롤백(`SaveManager.reload`)이 통째로 건너뛰어진다**
+		#     = 실패한 판에서 주운 드랍을 그대로 들고 나간다(GDD §11 페널티가 조용히 사라진다).
+		# 🔴 **`call_deferred`가 계약이다** — 같은 `peer_left`를 `peer_sync`도 구독해 그 피어의
+		#   아바타를 `queue_free`하는데 **구독 순서는 보장되지 않는다.** 즉시 부르면 이탈 피어가
+		#   아직 「살아 있음」으로 세어져 아무 일도 안 일어난다(고치려는 그 결함의 재판).
+		#   deferred면 모든 핸들러가 돈 뒤라 `is_queued_for_deletion()`이 이미 true다.
+		_check_wipe.call_deferred())
 
 
 # 스폰 후속 처리. 호스트: 챕터 내 스테이지 간 HP 이월(GDD §4 한 호흡 진행 — 모닥불 회복의 전제)
@@ -144,6 +181,16 @@ func _on_player_spawned(peer_id: int, player: Node) -> void:
 	var p := player as PlayerActor
 	if p == null:
 		return
+	# 🔴🔴 **호스트 자기 스킬의 유일한 입구** (2026-08-02). Net에 루프백이 없어 호스트는 자기
+	#   `G_SKILL`을 **받지 않는다** — 아래 `_on_net_msg`만 두면 "게스트 스킬은 아픈데 내 스킬은
+	#   아무 일도 안 일어난다"가 되고, 스킬 FX는 로컬에서 그대로 뜨므로 **화면에 이유가 안 드러난다**.
+	#   2026-07-25 「호스트 자기 공속」 Critical과 **같은 함정**이고, `_on_player_shoot`이 EventBus로
+	#   같은 구멍을 메운 그 자리다(rules §3 "호스트는 항상 대상 아바타/로컬 아바타에서 읽는다").
+	# ⚠ 게스트에서도 연결되지만 핸들러 첫 줄의 `is_host()` 가드가 막는다(권한은 호스트만, §1) —
+	#   `is_host()`로 **연결을 가르지 않는** 이유는 그게 두 번째 조건이 되어 갈라지기 때문이다.
+	# ⚠ 씬 컴포넌트라 씬마다 새로 연결된다(`_spawn`이 피어당 1회). 중복 연결 가드는 방어적 중복이다.
+	if peer_id == Net.my_id and not p.skill_cast.is_connected(_on_local_skill_cast):
+		p.skill_cast.connect(_on_local_skill_cast)
 	if not Net.is_host():
 		if _pending_php.has(peer_id):
 			p.confirm_hp_from_net(int(_pending_php[peer_id]))
@@ -407,6 +454,10 @@ func _physics_process(delta: float) -> void:
 		_step_player_arrows(delta)
 	if not _mob_arrows.is_empty():
 		_step_mob_arrows(delta)
+	# ⚠ `_stage_over` 가드는 위 early-return이 이미 진다 — 클리어·전멸 뒤에는 남은 타가 **한 번도**
+	#   더 나가지 않는다(`_step_mob_arrows`와 같은 규율). 확정 지점의 `clear()`는 그 위의 명시다.
+	if not _skill_ticks.is_empty():
+		_step_skill_ticks(delta)
 
 
 func _step_player_arrows(delta: float) -> void:
@@ -576,6 +627,289 @@ func _confirm_blast(a: Dictionary, center: Vector2) -> void:
 					"equip": a.get("equip"), "finish": false})
 
 
+# ============================================================================
+# 하위 직업 스킬 확정 (호스트 전용, 2026-08-02) — G_SKILL 수신 / 호스트 자기 발동이 여기서 만난다
+# ============================================================================
+# 🔴 **결과는 새 메시지를 만들지 않고 기존 `G_ENEMY_HP`로 흐른다** — `_apply_confirmed` →
+#   `Health.apply_damage` → `enemy_hp_confirmed` → 브로드캐스트. 폭발(`_confirm_blast`)과 같은 형태다.
+
+
+# 호스트 자기 발동 — 로컬 아바타의 `skill_cast` 시그널(= Net 루프백 대체, `_on_player_spawned` 주석).
+# 🔴 **스킬 정의는 「로컬 아바타/GameState」에서 읽는다** — `_peer_stats`(peer_sync 수신 기록)에는
+#   호스트 자신 항목이 **영원히 없다**(Net 루프백 없음). 그걸 읽으면 자기 스킬이 항상 null이 되어
+#   FX만 뜨고 데미지가 0이다 — 2026-07-25 공속 Critical과 같은 함정(rules §3).
+func _on_local_skill_cast(dir: Vector2) -> void:
+	if not Net.is_host() or _stage_over:
+		return
+	var me := _peer_sync.player(Net.my_id)
+	if me == null or not me.is_alive() or me.job == null:
+		return  # 게스트 G_SKILL과 **같은 게이트**(사망자 발동 거부 — G_SHOOT·G_HIT_REQ 규율)
+	# 🔴 `GameState.active_skill()` = `main_skill_of(내 메인, 내 계열)` — 게스트 쪽 `peer_skill()`과
+	#   **같은 리졸버·같은 게이트**를 지난다(사본 조건문 금지, rules §3 `main_slot_def`).
+	var sk := GameState.active_skill()
+	if sk == null:
+		return
+	# 🔴 쿨다운도 **같은 딕셔너리·같은 함수**로 잰다 — 자기만 게이트가 없으면 "내 스킬만 무한"이 된다.
+	#   ⚠ 로컬 아바타가 이미 같은 함수로 걸렀으므로 정상 흐름에서는 항상 통과한다(방어적 이중 게이트).
+	var now := Time.get_ticks_msec()
+	if not CombatMath.is_skill_ready(int(_skill_msec.get(Net.my_id, -1000000000)), now, sk.cooldown_s):
+		return
+	_skill_msec[Net.my_id] = now
+	# ⚠ slack 0 — 호스트는 몹 실시간 좌표를 안다(보상할 낡음이 없다). `is_strike_hit_lagged`가
+	#   호스트 자신에게 항등인 것과 같은 이유다.
+	_resolve_skill(Net.my_id, me, sk, dir, 0.0)
+
+
+# 🔴 **스킬 명중 확정 — 게스트·호스트 공용 단일 경로.** 갈래를 만들면 "내 스킬만 규칙이 다른"
+#   상태가 열린다(호스트 자신은 slack만 0이다).
+# 🔴 판정은 `CombatMath.is_skill_hit` **하나**를 지난다 — 로컬 FX(`skill_fx.gd`)·로컬 손맛
+#   (`player._skill_feel`)이 같은 함수·같은 수치를 쓰므로 "맞는 곳 = 보이는 곳"이 구조로 성립한다(§3).
+# 🔴 **수치는 메시지가 아니라 `SkillDef`에서 온다** — 호스트가 그 피어의 공지 하위 직업 id로 자기
+#   data/skills에서 리졸브한 것이다(`peer_weapon_id`·`projectile_params` 철학).
+# ⚠ **넉백은 안 준다**(`knock` 생략 = `{}` = 도입 전과 완전 항등). 넉백 세기·상한 불변식(§3 K1~K7)이
+#   전부 **무기 콤보 대시**에서 유도돼 있어 스킬은 그 모델 안에 없다 — 넣으려면 그 유도부터 늘려야
+#   하고, 안 넣으면 잃는 것은 연출뿐이다(밀림 없이도 데미지·셰이크·킥은 그대로 난다).
+func _resolve_skill(caster_id: int, caster: PlayerActor, skill: SkillDef, dir: Vector2,
+		slack_px: float) -> void:
+	var d := dir
+	if not d.is_finite() or d.length_squared() <= 0.000001:
+		# 🔴 방향 없는 beam은 `is_skill_hit`이 **false로 떨어뜨린다**(띠가 정의되지 않는다) —
+		#   여기서 임의 방향을 지어내면 클라 화면과 다른 축으로 판정한다. spin은 방향과 무관하다.
+		d = Vector2.RIGHT
+	d = d.normalized()
+	# 🔴 **①타(= 이동형이면 발사 프레임)는 여기서 즉시 난다** — 단발과 완전 항등이고, 시전자 축
+	#   지연 보상(`net_anchor` ∨ `net_anchor_lead`)이 걸리는 **유일한** 패스다(아래 travel 주석).
+	var born: Dictionary = {}   # 이동형이면 ①타에 맞은 eid를 여기 받아 「적별 1회」를 이어 간다
+	_skill_hit_pass(caster_id, caster, skill, d, slack_px, born, skill.is_travel())
+	# 🔴 **이동형이 다단보다 먼저다 — 두 모델이 겹치면 안 된다**(`SkillDef.travel_speed` 계약:
+	#   이동형에서 `hit_count`/`hit_interval_s`는 무시된다). 클라 FX도 같은 자리에서 같은 판단을 한다
+	#   (`player.play_skill_fx`) — 한쪽만 모델을 바꾸면 화면 장수와 판정 모델이 갈라진다.
+	if skill.is_travel():
+		# 🔴🔴 **발사 원점만 시전자에서 유도하고, 그 뒤로는 검기 자체가 진실원이다** (화살과 같다).
+		#   원점 = `net_anchor_lead` = 호스트가 아는 "지금" 좌표의 최선 추정(외삽, `LAG_MAX_LEAD_DIST`
+		#   clamp) — 호스트 자신에겐 `global_position`이라 **완전 항등**이다.
+		#   ⚠ **비행 내내 두 좌표(anchor ∨ lead)를 훑지 마라** — 제자리 스킬에서 그것이 옳은 이유는
+		#     노출이 **한 순간**이기 때문이다. 이동형은 1.7초 동안 520px를 지나므로, 두 원반을 115px
+		#     간격으로 나란히 밀면 신뢰 표면이 「한 순간의 관대함」에서 **비행 전 구간의 두 배 폭**으로
+		#     성격이 바뀐다. 낡음 보상은 ①타에서 이미 했다.
+		_skill_ticks[caster_id] = {
+			"caster": caster, "skill": skill, "dir": d, "travel": true,
+			"pos": caster.net_anchor_lead(Net.one_way_ms(caster_id)),
+			# 🔴 수명 = `skill_travel_lifetime_s` — **클라 FX 수명과 같은 함수**다(§3 단일 소스).
+			"life": CombatMath.skill_travel_lifetime_s(skill.travel_speed, skill.travel_dist),
+			"hit": born}   # 🔴 ①타에 맞은 적은 다시 안 맞는다 = 「적별 1회」가 발사 프레임부터 성립
+		return
+	# 🔴 남은 타는 **타이머 큐**로 간다 — 여기서 루프를 돌려 한 프레임에 N번 때리면 "다단"이 아니라
+	#   그냥 큰 한 방이고, 적이 빠져나갈 틈(`hit_interval_s`)이 사라진다.
+	var hits := CombatMath.clamp_skill_hit_count(skill.hit_count)
+	if hits <= 1:
+		_skill_ticks.erase(caster_id)   # 단발 = 이 축 도입 전과 항등(진행 중이던 다단이 있으면 대체)
+		return
+	_skill_ticks[caster_id] = {"caster": caster, "skill": skill, "dir": d, "slack": slack_px,
+		"left": hits - 1,
+		"timer": CombatMath.clamp_skill_hit_interval(skill.hit_interval_s)}
+
+
+# 다단 진행 — 🔴 **타마다 시전자 좌표를 다시 읽는다**(`_skill_hit_pass`가 `net_anchor()`를 매번 판다).
+#   5타가 0.4초에 걸쳐 있어 그동안 시전자가 걷는다 — 첫 타 좌표를 얼려 두면 뒤 타가 **엉뚱한 자리**에서
+#   판정되고, 각 클라의 FX는 그 타 순간의 자기 좌표에 뜨므로 "보이는 곳 ≠ 맞는 곳"이 된다(§3).
+# 🔴 **키 스냅샷(`keys()`)으로 돈다** — 마지막 타가 마지막 적을 죽이면 이 루프 **안에서**
+#   `_on_enemy_hp_confirmed` → `_check_clear` → `_skill_ticks.clear()`가 돈다(딕셔너리 변형).
+# ⚠ 프레임이 튀면 `while`이 밀린 타를 따라잡는다 — 총 타수는 데이터 그대로 유지된다(`hit_interval_s`
+#   하한이 0.05라 이 루프는 항상 끝난다). 플레이어 쪽 FX 반복도 **같은 따라잡기 규칙**을 쓴다.
+func _step_skill_ticks(delta: float) -> void:
+	for cid: int in _skill_ticks.keys():
+		if _stage_over:
+			break                       # ⑴ 클리어·전멸 — 남은 타는 한 번도 안 나간다
+		if not _skill_ticks.has(cid):
+			continue                    # 이 루프 안에서 지워졌다(위 clear 경로)
+		var t := _skill_ticks[cid] as Dictionary
+		var cv: Variant = t.get("caster")
+		# 🔴 `as` 캐스트 **앞에서** 본다 — 해제된 객체는 캐스트하는 그 순간 터져 함수가 중단된다
+		#   (rules §5: `== null` 가드는 못 막는다). 씬 스왑·피어 이탈이 이 경로를 실제로 만든다.
+		if not is_instance_valid(cv):
+			_skill_ticks.erase(cid)
+			continue
+		var caster := cv as PlayerActor
+		var travel := bool(t.get("travel", false))
+		# 🔴🔴 **⑵ 시전자 사망 — 이동형은 예외다**(netreview I-3 2026-08-02).
+		#   제자리 다단은 **시전자 몸이 곧 판정 원점**이라 죽은 시전자의 좌표는 뜻이 없다.
+		#   이동형은 발사 뒤 시전자를 **한 번도 안 읽는다**(검기가 진실원) — 그래서 이 프로젝트가
+		#   이미 가진 계약과 정렬해야 한다: `_step_player_arrows`에는 **사수 생존 검사가 없고**
+		#   그것이 원거리 축의 명시된 계약(「사수 사망 무관」)이다.
+		# 🔴 안 맞추면 표시와 판정이 갈린다 — `SkillFx`는 씬 루트 자식이라 시전자가 죽어도 **계속
+		#   날아가는데**, 호스트만 판정을 끊어 "원반이 몹 넷을 관통하는데 HP가 하나도 안 깎인다"가
+		#   된다. 죽는 순간이라 플레이어는 "죽어서 그런가"로 읽고 에러도 로그도 없다.
+		# ⚠ `caster.job`은 데미지 계산에 계속 필요하므로 **노드 참조는 유지한다**(위 `is_instance_valid`
+		#   가드가 그 몫이다). 죽은 것과 해제된 것은 다르다 — 사망은 `is_alive()`만 false가 되고
+		#   `job`은 그대로라, 이동형은 그 값을 끝까지 읽을 수 있다.
+		# ⚠ **발동 자체는 여전히 생존자만 한다** — G_SKILL 수신부(`is_alive()` 게이트)가 그 몫이고,
+		#   여기서 푸는 것은 「이미 날아간 검기가 시전자의 죽음으로 사라지는가」뿐이다.
+		if caster == null or caster.job == null:
+			_skill_ticks.erase(cid)
+			continue
+		if not travel and not caster.is_alive():
+			_skill_ticks.erase(cid)
+			continue
+		var sk := t["skill"] as SkillDef
+		if sk == null:
+			_skill_ticks.erase(cid)
+			continue
+		# 🔴 **끊는 조건을 여기까지 공유한 뒤에 모델이 갈린다** — 멤버 주석이 그 이유의 정본이다.
+		#   ⚠ 사망 조건만 위에서 이미 갈렸다(이동형 = 화살 정렬, I-3).
+		if travel:
+			_step_skill_travel(cid, caster, sk, t, delta)
+			continue
+		var gap := CombatMath.clamp_skill_hit_interval(sk.hit_interval_s)
+		t["timer"] = float(t["timer"]) - delta
+		while float(t["timer"]) <= 0.0 and int(t["left"]) > 0:
+			# 🔴 슬랙도 **타마다 다시 판다**(netreview C-1 처방 ⑵·M-4) — 캐스트 시각에 얼려 두면
+			#   다단 0.32초 중간에 직결 → 릴레이 폴백이 일어났을 때 편도가 통째로 바뀐 채 남는다.
+			# ⚠ 호스트 자기 시전은 **0이어야 한다** — 호스트는 몹 실시간 좌표를 알기 때문이다.
+			#   여기서 `mob_lag_slack_px(0)`을 쓰면 9px가 붙어 항등이 깨진다(`_on_local_skill_cast`가
+			#   0을 넘기던 구분을 그대로 유지한다).
+			var live_slack := 0.0 if cid == Net.my_id \
+				else CombatMath.mob_lag_slack_px(Net.one_way_ms(cid))
+			# ⚠ `{}`를 **타마다 새로** 넘긴다 = 같은 적이 타마다 다시 맞는다(다단의 설계 그 자체).
+			#   dedup은 false — 「적별 1회」는 이동형 전용이다(`_skill_hit_pass` 주석).
+			_skill_hit_pass(cid, caster, sk, t["dir"] as Vector2, live_slack, {}, false)
+			t["left"] = int(t["left"]) - 1
+			t["timer"] = float(t["timer"]) + gap
+			if _stage_over:
+				break                   # 이 타가 마지막 적을 죽였다 — 남은 타는 버린다
+		if _stage_over or int(t["left"]) <= 0:
+			_skill_ticks.erase(cid)
+
+
+# 🔴 **이동형 검기 한 프레임** (2026-08-02 「월륜」) — 판정 원을 앞으로 밀며 닿는 적을 **적별 1회** 때린다.
+#   구조는 화살(`_step_player_arrows`)과 같다: 권한 개체가 좌표를 들고 매 물리 프레임 거리 질의를 한다.
+#   그래야 *"아직 검기가 안 왔는데 맞는다"* 가 **시간 축에서 원천 불가**해진다(§3 근접이 판정을
+#   「선딜+스윕 끝」에 둔 것과 같은 이유).
+#
+# 🔴 **적별 1회 = `t["hit"]`** — 없으면 「관통」이 아니라 **접촉 지속 피해**가 되어 프레임당 한 번씩
+#   때린다(1.7초 = 최대 104회). `damage_mult` 한 칸으로는 그 화력을 못 잡는다(`SkillDef` 계약).
+#
+# 🔴 **터널링 안전 — 두 겹으로 닫았다.**
+#   ⑴ 데이터 실측: 프레임당 전진 = 300 ÷ 60 = **5px**(보수적으로 30fps를 잡아도 10px)인데, 최소
+#      명중 지름은 `2 × (반경 46 + 최소 body_radius 6 = 허수아비)` = **104px**이다 = 여유 10~20배.
+#      화살 불변식(`ARROW_SPEED` 주석: 프레임당 전진 < 최소 명중 지름)의 미러이고 `test_skill_auto`가
+#      `data/skills` × `data/enemies` 전수로 지킨다(⚠ 최소 body_radius를 **스캔**하므로 더 작은 적을
+#      넣으면 그 순간 빨개진다 — 값을 여기 적어 두면 데이터와 갈라진 채 초록이다).
+#   ⑵ 구조: 아래 **서브스텝**이 한 걸음을 판정 반경 이하로 자른다 — 전진이 반경보다 크면 원을
+#      두 번 이상 나눠 밀므로, 데이터가 어떻게 바뀌어도 연속한 두 원이 반드시 겹친다.
+#      ⚠ `_physics_process`의 delta는 고정이라 현행 데이터에서 이 루프는 **항상 1회**다(비용 0).
+func _step_skill_travel(cid: int, caster: PlayerActor, sk: SkillDef, t: Dictionary,
+		delta: float) -> void:
+	var speed := CombatMath.clamp_skill_travel_speed(sk.travel_speed)
+	if speed <= 0.0:
+		_skill_ticks.erase(cid)   # 데이터가 깨졌다 = 이동형이 아니다(안전한 쪽 = 끝낸다)
+		return
+	var life := float(t["life"]) - delta
+	t["life"] = life
+	var d := t["dir"] as Vector2
+	var pos := t["pos"] as Vector2
+	var hit := t["hit"] as Dictionary
+	# 🔴 슬랙은 **프레임마다 다시 판다**(다단과 같은 규약) — 비행 1.7초 중간에 직결 → 릴레이 폴백이
+	#   일어나면 편도가 통째로 바뀐다. 호스트 자기 시전은 0이어야 한다(몹 실시간 좌표를 안다).
+	# 🔴🔴 **이동형에는 몹 지연 슬랙을 더하지 않는다 — 0이다** (netreview I-1 2026-08-02).
+	#   §3 「대상 좌표에도 각 슬랙이 필요하다」는 그 슬랙을 **각에만** 더하라고 못 박고, 거리에 더하면
+	#   판정 원이 커져 「판정 집합 ⊆ anchor 원」이 깨진다고 적어 뒀다. spin은 각 축이 아예 없어서
+	#   슬랙이 곧 **반경 가산**이 된다 — 46px 원이 57~73px(면적 1.5~2.5배)이 되고, 화면에서는
+	#   **원반 테두리에서 눈에 띄게 떨어진 몹이 죽는다**(= §3이 금지하는 「안 보이는데 맞는다」).
+	# 🔴 이동형에서는 슬랙의 **유도 근거 자체가 사라진다.** 그 값은 "게스트 화면의 몹이 G_MOB_POS
+	#   10Hz라 0.2초 낡았다"를 보상하는 것인데, 검기가 그 몹에 닿기까지 최대 1.73초가 걸려 게스트는
+	#   그 사이 G_MOB_POS를 17번 더 받는다. 보상할 낡음이 이미 사라진 뒤에 반경만 부풀리는 셈이다.
+	# ⚠ 정지형(다단·단발)의 슬랙은 **그대로 둔다** — 거기선 발동과 판정이 같은 순간이라 근거가 살아
+	#   있다. 이 갈림이 곧 「①타는 보상하고 비행은 안 한다」와 같은 축이다.
+	var live_slack := 0.0
+	# 서브스텝 — 한 걸음 ≤ 판정 반경(위 ⑵). 반경이 0/깨짐이면 1px로 떨어뜨려 무한 루프를 막는다.
+	var advance := speed * maxf(delta, 0.0)
+	var max_step := maxf(CombatMath.clamp_skill_radius(sk.radius), 1.0)
+	var steps := maxi(1, int(ceil(advance / max_step)))
+	var per := advance / float(steps)
+	for _i: int in range(steps):
+		pos += d * per
+		_skill_confirm_pass(cid, caster, sk, d, live_slack, pos, hit, true)
+		if _stage_over:
+			break                 # 이 걸음이 마지막 적을 죽였다 — 남은 비행은 버린다(다단과 같은 규약)
+	t["pos"] = pos
+	if _stage_over or life <= 0.0:
+		_skill_ticks.erase(cid)
+
+
+# 한 타의 명중 확정 — 🔴 **좌표를 여기서 판다**(위 주석이 근거: 타마다 다시 읽어야 한다).
+# 좌표는 `net_anchor()` — 표시 보간 지연을 검증에서 제외한다(근접·발사 검증과 같은 철학, §3).
+# ⚠ G_SKILL은 원점을 **안 싣는다**(그게 곧 순간이동 스푸핑 표면이다) → 호스트가 아는 최신 좌표가
+#   곧 그 타의 원점이다. 클라도 매 프레임 좌표를 G_POS로 보내므로 곧 수렴한다.
+# hit_once/dedup = 「적별 1회」 기록. 🔴 **이동형만 true**이고, 그때 이 패스에서 맞은 eid가
+#   `hit_once`에 적혀 비행 내내 다시 안 맞는다(`_step_skill_travel` 주석이 근거).
+#   ⚠ 제자리 다단은 false다 — **같은 적을 타마다 다시 때리는 것이 그쪽 설계**다(단일 대상 연타).
+# 🔴🔴 **두 인자에 기본값을 주지 마라 — 호출부가 매번 명시한다.** `hit_once: Dictionary = {}`로 두면
+#   기본값 평가 시점에 기대게 되는데, 그 딕셔너리가 호출 간에 **공유되는 순간** 다단 2~5타가
+#   "이미 맞은 적"으로 걸러져 **단발이 된다**(데미지가 1/5인데 FX·소리는 다섯 번 = 에러 0).
+#   위험 대비 이득이 0이라 구조로 닫는다.
+func _skill_hit_pass(caster_id: int, caster: PlayerActor, skill: SkillDef, d: Vector2,
+		slack_px: float, hit_once: Dictionary, dedup: bool) -> void:
+	# 🔴🔴 **시전자 축 지연 보상 — 낡은 좌표 ∨ 외삽 좌표 중 하나만 맞으면 통과**
+	#   (netreview C-1 2026-08-02). 근접의 `is_hit_in_reach_lagged`와 **같은 부호·같은 근거**다:
+	#   여기서 게스트는 **공격자**라 오차가 "안 맞는 쪽"으로 떨어지면 그건 곧 삭제된 타격이고,
+	#   관대해지는 대상이 **NPC**라 §3 「방어자 우대」와 이해가 충돌하지 않는다.
+	# 🔴 다단이 이 축을 새로 나쁘게 만들었다 — 단발이면 노출이 발동 **한 순간**인데, 5타는
+	#   **0.32초 내내** 노출되고 그 구간이 플레이어가 재배치·회피로 **가장 빨리 움직이는** 구간이다.
+	#   실측(배포 릴레이 편도 107ms + G_POS 주기 33ms = 140ms): 걷기 18px · **구르기 68px**.
+	#   여유는 `body_radius + mob slack` = 9~27px뿐이라 구르기는 확실히 넘는다.
+	# 🔴 **호스트 자기 시전은 완전 항등이다** — 로컬 아바타의 `net_anchor_lead`가 `global_position`을
+	#   돌려주므로 두 인자가 같은 점이 된다. 그래서 이 결함은 **리드 화면에서 영원히 안 보인다**
+	#   (게스트에서만·배포본에서만 — `dev_local.sh` 13.8ms에서는 낡음이 ≈1px다).
+	# ⚠ **두 좌표·슬랙 모두 타마다 다시 판다** — 캐스트 시각에 캐시하면 정확히 필요한 순간에 낡는다.
+	#   특히 다단 중간에 직결 → 릴레이 폴백이 일어나면 편도가 통째로 바뀐다.
+	var origin := caster.net_anchor()
+	var lead := caster.net_anchor_lead(Net.one_way_ms(caster_id))
+	_skill_confirm_pass(caster_id, caster, skill, d, slack_px, origin, hit_once, dedup)
+	# ⚠ `_stage_over` 재확인 — 위 패스가 마지막 적을 죽였을 수 있다(`_apply_confirmed` →
+	#   `_check_clear`). 확정 뒤에는 한 번도 더 나가지 않는다(`_step_skill_ticks`와 같은 규율).
+	if lead != origin and not _stage_over:
+		# 🔴 **두 번째 원점은 「하나라도 통과하면 확정」의 or 항이다** — 두 번 확정이 아니다:
+		#   dedup이 켜진 이동형은 `hit_once`가 막고, 꺼진 제자리 다단은 아래 함수의 `_hit_this_pass`가
+		#   막는다(같은 패스에서 같은 적을 두 번 때리면 그 타의 데미지가 조용히 2배가 된다).
+		_skill_confirm_pass(caster_id, caster, skill, d, slack_px, lead, hit_once, dedup, true)
+
+
+# 🔴 **명중 확정 루프 — 제자리 다단과 이동형 검기가 같이 쓰는 유일한 자리다.**
+#   갈래를 만들면 "이동형만 대상 선별·배율·확정 경로가 다른" 상태가 열린다.
+# origin = 이 패스의 판정 원점. 제자리 = 시전자 좌표(두 후보를 따로 두 번 부른다) ·
+#   이동형 = **검기의 현재 위치**(발사 뒤로는 검기가 진실원이다 — `_resolve_skill` travel 주석).
+# hit_once/dedup = 「적별 1회」(이동형). ⚠ `and_pass`는 같은 타의 **두 번째 원점**이라는 표시다 —
+#   dedup이 꺼져 있어도 그 패스에서 이미 맞은 적을 다시 확정하지 않게 한다.
+func _skill_confirm_pass(caster_id: int, caster: PlayerActor, skill: SkillDef, d: Vector2,
+		slack_px: float, origin: Vector2, hit_once: Dictionary, dedup: bool,
+		and_pass: bool = false) -> void:
+	for eid: String in _enemies:
+		if (dedup or and_pass) and hit_once.has(eid):
+			continue
+		var entry := _enemies[eid] as Dictionary
+		var health := entry["health"] as HealthComponent
+		if health == null or health.is_dead():
+			continue
+		var root := entry["root"] as Node2D
+		if root == null:
+			continue
+		var edef := entry["def"] as EnemyDef
+		var ebody := edef.body_radius if edef != null else 0.0
+		if not CombatMath.is_skill_hit(skill.shape, root.global_position, origin, d,
+				skill.radius, skill.length, ebody, slack_px):
+			continue
+		hit_once[eid] = true
+		# 🔴 배율은 `confirm_damage`의 `combo_mult` 자리에 들어간다 — **새 곱셈 축을 만들지 않는다**
+		#   (곱 순서·반올림 1회가 §3 계약이다). 상한은 `clamp_skill_mult`(데이터가 깨져도 3.0 이내).
+		# ⚠ 대상별로 따로 확정 = 치명 굴림도 대상별 1회 (`_confirm_blast`와 같은 규약, 사용자 확정).
+		# 🔴 `_confirm_damage`(근접 래퍼)를 **부르지 마라** — 그쪽은 근접 쿨다운 게이트
+		#   (`is_hit_cooldown_ok` + `_last_hit_msec`)를 걸어, ⑴ 방금 휘두른 평타 때문에 스킬이 조용히
+		#   거부되고 ⑵ 스킬이 앵커를 옮겨 다음 평타가 거부된다. 스킬의 발동률 게이트는 `is_skill_ready`다.
+		_apply_confirmed(health, caster.job, caster_id, 0,
+			CombatMath.clamp_skill_mult(skill.damage_mult))
+
+
 # 호스트 전용 — 화살 종료 통지: 게스트는 G_ARROW_HIT로, 호스트 자신은 arrow_gone_local로(릴레이 미에코). ArrowField가 despawn.
 func _terminate_arrow(aid: String, pos: Vector2) -> void:
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ARROW_HIT, "aid": aid, "x": pos.x, "y": pos.y})
@@ -737,6 +1071,7 @@ func _check_clear() -> void:
 	if required == 0:
 		return  # 비부활 적 없는 씬 — 입장 즉시 클리어 방지 가드
 	_stage_over = true
+	_skill_ticks.clear()  # 진행 중이던 다단 스킬의 남은 타 폐기 — 전멸 후에도 몹이 계속 맞는 것을 막는다
 	_drop_mob_arrows()  # 비행 중이던 적 화살 폐기 — 아래 함수 주석이 근거
 	# 사망자 HP1 부활 확정 (GDD §5) — php는 player_hp_confirmed 경유로 자동 브로드캐스트
 	for node: Node in get_tree().get_nodes_in_group("player"):
@@ -752,10 +1087,18 @@ func _check_wipe() -> void:
 	if _stage_over or not Net.is_host():
 		return
 	for node: Node in get_tree().get_nodes_in_group("player"):
+		# 🔴🔴 **캐스트 앞에 유효성** — 해제된 노드는 `as`가 **그 자리에서 터지고** GDScript가 함수를
+		#   통째로 중단한다(`x == null` 가드는 영영 도달 못 한다 — docs/DECISIONS.md 2026-08-01).
+		#   여기서 특히 중요한 이유: 이 함수는 이제 `peer_left`에서도 불리는데, 그 시점의 이탈 피어
+		#   아바타는 **해제 예정**이다. `is_queued_for_deletion()`을 같이 보지 않으면 아직 그룹에 남은
+		#   그 노드가 「살아 있음」으로 세어져 전멸이 성립하지 않는다(= M-2가 고치려던 그 결함).
+		if not is_instance_valid(node) or node.is_queued_for_deletion():
+			continue
 		var p := node as PlayerActor
 		if p != null and p.is_alive():
 			return
 	_stage_over = true
+	_skill_ticks.clear()  # 클리어 경로와 같은 이유 — 전멸 확정 뒤 남은 타가 계속 나가지 않게
 	_drop_mob_arrows()
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_WIPE})
 	EventBus.stage_wiped.emit()  # 마을 귀환 전환은 ChapterFlow(호스트)가 결정
@@ -1059,6 +1402,42 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			_register_arrow(aid_s, origin,
 				Vector2(float(data.get("dx", 1.0)), float(data.get("dy", 0.0))), from_id,
 				float(data.get("r", CombatMath.DEFAULT_ARROW_RANGE)), weapon_id, charge, combo)
+		NetSchema.G_SKILL:
+			# 🔴 **하위 직업 스킬 확정 — 검증 3종**(NetSchema.G_SKILL 주석이 계약 전문).
+			#   ⑴ 생존 ⑵ 그 피어가 그 스킬을 실제로 메인에 꼈는가 ⑶ 쿨다운(호스트 자기 수신 시각).
+			# 🔴 **새 결과 메시지가 없다** — 데미지는 기존 G_ENEMY_HP로 흐른다(`_resolve_skill` 주석).
+			if not Net.is_host() or _stage_over:
+				return  # 확정 권한은 호스트만 (게스트에게도 도달하지만 무시 — G_HIT_REQ와 같은 규율)
+			# ⑴ 사망(관전 고스트)·무스폰 피어의 발동 거부 — G_SHOOT·G_HIT_REQ 미러 (rules §3)
+			var caster := _peer_sync.player(from_id)
+			if caster == null or not caster.is_alive() or caster.job == null:
+				return
+			# ⑵ 🔴 **클라 주장이 아니라 호스트가 리졸브한 자기 데이터가 정본이다** — 메시지에는 스킬
+			#   id조차 없고, 그 피어가 G_STATS로 **공지한 메인 하위 직업 id**로 호스트가 자기
+			#   data/subjobs → data/skills에서 찾는다(`peer_weapon_id` 철학, rules §3).
+			#   그래서 "안 낀 스킬"·"남의 계열 스킬"·"모르는 id"가 전부 여기서 null로 떨어진다.
+			# ⚠ null은 **거부**다(`G_HIT_REQ`의 `weapon_def == null`이 거부가 아닌 것과 다르다):
+			#   저기선 null이 「직업 기본 기하」라는 뜻 있는 폴백이지만, 여기서 폴백할 기본 스킬이
+			#   **존재하지 않는다**. 관대한 쪽으로 실패할 자리가 없다.
+			var sk := _peer_sync.peer_skill(from_id)
+			if sk == null:
+				return
+			# ⑶ 🔴 발동률 — **호스트 자기 수신 시각** 기준(`is_fire_rate_ok` 규약 미러). 클라가 보낸
+			#   시각을 믿으면 그게 곧 "나는 아까 썼다"고 주장하는 표면이다. 로컬 클라와 **같은 함수**를
+			#   지나므로(`is_skill_ready`) 정직한 발동이 무음 거부되지 않는다 — 쿨다운 8~9s 대비
+			#   `FIRE_RATE_SLACK`(10%)이 네트워크 지터를 통째로 덮는다.
+			var now_skill := Time.get_ticks_msec()
+			if not CombatMath.is_skill_ready(
+					int(_skill_msec.get(from_id, -1000000000)), now_skill, sk.cooldown_s):
+				return
+			_skill_msec[from_id] = now_skill
+			# 🔴 **적 좌표 지연 슬랙** — 게스트 화면의 잔몹은 호스트보다 낡았다(G_MOB_POS 10Hz·외삽
+			#   없음). 안 넘기면 정직한 발동이 거부되고 증상이 "스킬은 나갔는데 적 HP만 안 깎인다"가
+			#   되어 §3 근접 지연 결함과 **구분되지 않는다**(서로를 가린다). 관대해지는 대상이 NPC라
+			#   「방어자 우대」와 이해가 충돌하지 않는다 — 근접 각 슬랙과 같은 판단.
+			_resolve_skill(from_id, caster, sk,
+				Vector2(float(data.get("dx", 0.0)), float(data.get("dy", 0.0))),
+				CombatMath.mob_lag_slack_px(Net.one_way_ms(from_id)))
 		NetSchema.G_ENEMY_HP:
 			if Net.is_host():
 				return  # 호스트 상태가 원본

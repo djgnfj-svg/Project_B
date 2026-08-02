@@ -70,15 +70,49 @@ const TRAIL_MIN_INNER_DIST := 1.0
 # ⚠ **실기에서 조일 값이 바로 이것이다.** 너무 넓어 "휘둘렀는데 안 맞는다"가 되면 판정이 아니라
 #   여기를 내려라(1.0 = 판정과 정확히 일치하는 도입 시점 동작).
 const TRAIL_REACH_SHOW_MULT := 2.0
+# 🔴 **검기 반달의 타수별 차등** (2026-08-02 사용자 확정: *"1·2·3타 전부 반달이고 크기만 차등"*).
+#   마무리 타에서 **판정 각·사거리가 실제로 넓어지므로**(v2.2 `combo_finish_arc` · v2.3
+#   `combo_finish_range`) 화면이 그 방향과 일치해야 한다 — 타수가 오를수록 크고 넓게.
+# 🔴 **둘 다 비율이다 — 절대 px/rad을 적지 마라.** 반경은 `CombatMath.effective_attack_range`,
+#   반각은 `melee_show_half_angle`에서 오고 여기 곱은 그 위에 얹는 **연출 램프**뿐이다. 절대값을
+#   적는 순간 무기를 바꾸거나 `melee_range`를 튜닝해도 검기가 안 따라오는 두 번째 진실원이 된다.
+# ⚠ **이 램프는 판정에 닿지 않는다.** 검기는 자체 데미지가 없고(GDD §6) 이 값들은 `SlashFx`의
+#   셰이더 유니폼으로만 흐른다 — `is_hit_in_reach`/`is_melee_in_cone`의 `half_angle` 인자에는
+#   **절대 넘어가지 않는다**(§3이 금지한 「제3의 값」은 그 인자 자리를 말한다).
+# ⚠ 반각 램프의 상한이 1.0인 것도 의도다 — 검기가 그 스윙의 **표시 반각을 넘지 않으므로**
+#   "궤적은 안 지나갔는데 검기만 그 각에 있다"가 생기지 않는다.
+# ⚠ **실기에서 조일 값이다** → `docs/TUNING.md` 등재 대상.
+const SLASH_ARC_RAMP_MIN := 0.55      # 1타 검기 반각 / 그 스윙의 표시 반각 (마지막 타 = 1.0)
+const SLASH_RADIUS_RAMP_MIN := 0.85   # 1타 검기 반경 / 판정 도달
+const SLASH_RADIUS_RAMP_MAX := 1.15   # 마지막 타 검기 반경 / 판정 도달
+# 🔴 **반각 포화 상한 = 「반달」의 정의 그 자체(±90° = 전체 180°)다.**
+#   램프만 두면 넓은 무기의 마무리가 반각 **175°**(철 대검 `combo_finish_arc` 2.9 + 표시 여유)까지
+#   가서 사실상 **고리**가 된다 — 그건 사용자가 이번에 버린 옛 `slash_2`(링) 그림 그 자체이고,
+#   진행 방향으로 날아가는데 양 끝이 **뒤를 향해** 있어 "날아가는 날"로도 안 읽힌다.
+# 🔴 **하드 clamp가 아니라 `tanh` 포화다** — clamp면 철 대검 2·3타가 **둘 다 90°**로 같아져
+#   "타수가 오를수록 넓게"라는 요구가 넓은 무기에서만 죽는다(도끼는 88° → 90°로 차이가 사라진다).
+#   tanh는 상한에 점근할 뿐 **절대 도달하지 않아 순서가 엄밀히 보존**되고, 좁은 무기(창 0.17rad)는
+#   `tanh(x) ≈ x` 구간이라 **사실상 항등**이다 — 즉 좁은 무기의 데이터 차이를 하나도 안 먹는다.
+# ⚠ 크기 축의 차등은 반경이 계속 진다(철 대검 마무리 반경 55 → 94px). 각이 포화해도 마무리가
+#   확연히 커 보이는 것은 그쪽 축이 보장한다.
+# ⚠ **실기에서 조일 값이다** → `docs/TUNING.md` 등재 대상.
+const SLASH_MAX_HALF_ANGLE := PI * 0.5
 # 선에서 면이 되면서 칠해지는 면적이 5배 가까이 늘었다 — 알파 1.0이면 잔상·칼과 겹쳐 하얗게 탄다.
-const TRAIL_ALPHA_MAX := 0.72
+# 🔴 **0.72 → 0.88** (2026-08-02 사용자: *"검기 임팩트? 리본들을 좀더 강렬하게 해줄래?"*).
+#   ⚠ 올린 것은 **알파뿐이고 기하는 한 픽셀도 안 건드렸다** — 리본의 두 변은 여전히 칼밑·칼끝
+#     좌표 그 자체다(위 주석의 "포개짐"이 그대로 산다). 탁하면 짝 노브는 `AfterImage.WEAPON_ALPHA`다.
+const TRAIL_ALPHA_MAX := 0.88
 # 꼬리 알파 곡선 — 옛 씬 `Gradient`(0 / 0.45→0.55 / 1)와 **같은 모양**을 코드로 옮긴 것이다
 # (면 리본은 정점 색을 직접 넣어야 해서 Line2D의 gradient를 쓸 수 없다).
 const TRAIL_FADE_MID := 0.45
 const TRAIL_FADE_MID_A := 0.55
 # 칼 잔상 장수 — 🔴 **시간이 아니라 스윕 진행(u) 간격으로 센다.** 시간 타이머로 돌리면 프레임률과
 #   무기 속도(0.24~0.34s)에 따라 장수가 들쭉날쭉해져 "빠른 무기는 잔상이 한 장"이 된다.
-const GHOST_STEPS := 4
+# ⚠ **4 → 5** (2026-08-02 강렬화). 밀도만 늘고 각·반경은 `_swing_angle_at` 하나가 정하므로 §3 무관.
+#   🔴 **더 올리지 마라 — 여기는 드로우콜 축이다**: 실제 장수 = 이 값 × `_subjob_fx_ghost`(상한
+#     `CombatMath.MAX_FX_GHOST_MULT` 3.0)이라 광전사(1.8)에서 9장, 마무리는 아래 상수로 12.6장이
+#     된다. 웹 Compatibility에서 잔상 한 장 = Sprite2D 하나 = 드로우콜 하나다(rules §5).
+const GHOST_STEPS := 5
 # 🔴 **어깨에 걸치기 — 선딜에 칼을 젖히는 각의 배율** (2026-07-28 사용자 요구: *"검과 도끼는 어깨에
 #   걸치듯이 진행이 되어야 함"*). `_begin_swing`이 **시작각에만** 곱한다.
 # 왜 시작각만인가: 끝각(`_swing_to`)은 궤적 선단이 판정 부채꼴을 덮는다는 불변식(§3)이 걸려 있어
@@ -241,10 +275,12 @@ const COMBO_FINISH_KICK := 2.6  # 마무리 타의 카메라 반동 (연출)
 #   = "눈에 띄게"의 정반대(안 보이는 버프). 게다가 철 대검 2.9는 blind wedge가 13.8°뿐이라
 #   `asin(고블린 반경 10 ÷ 도달 42)` = 13.8°와 같아 **등 뒤 적이 이미 맞는다** — 07-28에 없앤 그 상태다.
 #   → 마무리를 "커 보이게" 하는 축은 **반경(위 LUNGE) · 몸 이동(`combo_dash`) · 아래 표시 강조** 셋이다.
-# 마무리 타 리본의 알파 상한 (평타 = `TRAIL_ALPHA_MAX` 0.72). 1.0은 잔상·칼과 겹쳐 하얗게 탄다.
-const COMBO_FINISH_TRAIL_ALPHA := 0.88
-# 마무리 타의 칼 잔상 장수 (평타 = `GHOST_STEPS` 4) — 호를 더 촘촘히 채워 "크게 휘둘렀다"가 읽힌다.
-const COMBO_FINISH_GHOSTS := 6
+# 마무리 타 리본의 알파 상한 (평타 = `TRAIL_ALPHA_MAX` 0.88). 🔴 **0.88 → 0.98** (2026-08-02 강렬화).
+# ⚠ 1.0을 쓰지 않는 이유는 그대로다 — 잔상·칼과 겹쳐 **하얗게 탄다**(색이 사라져 오히려 약해 보인다).
+const COMBO_FINISH_TRAIL_ALPHA := 0.98
+# 마무리 타의 칼 잔상 장수 (평타 = `GHOST_STEPS` 5) — 호를 더 촘촘히 채워 "크게 휘둘렀다"가 읽힌다.
+# ⚠ 6 → 7 (2026-08-02 강렬화). 드로우콜 경고는 `GHOST_STEPS` 주석이 정본이다.
+const COMBO_FINISH_GHOSTS := 7
 # 마무리 타의 벤 자국이 남아 있는 시간 배율 (평타 = `ATTACK_FX_TIME` 그대로).
 # ⚠ 페이드 정규화가 `_fx_total`을 지난다 — 여기만 키우고 나눗셈을 `ATTACK_FX_TIME`으로 두면 자국이
 #   1.0을 넘는 알파로 clamp돼 **앞부분이 통째로 안 흐려진다**(뚝 끊기는 것처럼 보인다).
@@ -309,6 +345,26 @@ const COMBO_FINISH_BITE_MULT := 1.6 # 마무리 타의 적중 박힘 배율 — 
 const NO_JOB_SWING_CD_S := 0.4
 const HIT_KICK := 1.7           # 근접 적중 시 때린 방향 반동 — 셰이크(무작위)와 달리 "밀어냈다"가 읽힌다
 const SHOOT_KICK := 1.5         # 발사 시 **반대** 방향 반동 (총·활의 반동)
+# --- 하위 직업 스킬 손맛 (연출값 = 스크립트 const, rules §0 예외. 🔴 판정에 한 픽셀도 안 닿는다) ---
+const SKILL_WINDUP_PITCH := 0.72  # 시전 시작음 = 무기 스윙음을 낮춰 재활용(새 에셋 0) — 낮을수록 "모은다"로 들린다
+const SKILL_SHAKE_MULT := 1.8     # 적중 셰이크 = 평타 대비. 쿨 8~9초짜리 한 방이라 평타보다 크게
+const SKILL_KICK_MULT := 1.6      # 적중 카메라 킥 = 평타 대비 (셰이크와 **다른 축** — 방향이 읽힌다)
+# --- beam 스킬의 반달 연타 (2026-08-02 「환영검무」 — 사용자: *"검을 와다다다 하는 느낌"*) ---
+# 🔴 **여기 넷 중 도달 거리를 만드는 값은 하나도 없다.** 반달의 바깥 끝은 판정 캡슐의 끝
+#   (`length + radius`)에서 유도되고(`_spawn_skill_slash`), 아래는 그 위의 형태·리듬뿐이다.
+const SKILL_SLASH_HALF_ANGLE := 1.45   # 반달 반각(rad ≈ 83°) — 판정 캡슐의 옆폭을 덮는 각(함수 주석에 유도)
+const SKILL_SLASH_TILT := 0.34         # 타마다 좌우로 틀어 넣는 각(rad ≈ 19.5°) — "와다다다"의 정체가 이 교대다
+# 🔴 두께 배율 — 평타 검기(1.0)보다 **훨씬 두껍다**. 판정이 「테두리」가 아니라 **채워진 캡슐**이라
+#   얇은 초승달이면 안쪽이 통째로 빈다(함수 주석의 덮임 유도가 정본). 상한은 `SlashFx._thick_ratio`의
+#   **호 길이 항**이 여전히 쥔다 = 덩어리가 되지 않는다(실측: 두께 96.5 < 반호 길이 128.6).
+# ⚠ 이 값에서는 근접 4종이 **전부 그 상한에 포화한다** = 스킬 반달의 두께가 무기로 안 갈린다.
+#   의도다(그 축의 주인은 하위 직업 틴트이고, 무게는 `sharpness`(끝 모양)로만 남는다).
+const SKILL_SLASH_THICK_SCALE := 5.6
+# 앞으로 나가는 속도(px/s) — 평타 검기는 330으로 **날아간다**. 스킬 반달은 "시전자 앞에서 터진다"라
+#   거의 제자리여야 평타 검기와 구분된다(0이 아닌 이유 = 완전 정지는 도장 찍은 것처럼 굳어 보인다).
+const SKILL_SLASH_SPEED := 45.0
+const SKILL_SLASH_GHOSTS := 2          # 타마다 남기는 칼 잔상 장수(×`_subjob_fx_ghost`) — "잔상이 남을 만큼 빠르게"
+const SKILL_SLASH_GHOST_SPAN := 0.55   # 잔상을 뿌리는 각 폭 / 반달 반각
 # 🔴🔴 **공격 선입력 버퍼** (2026-08-01) — 쿨다운·구르기 때문에 지금 못 내는 클릭을 이 시간만큼 들고
 #   있다가 조건이 열리는 **첫 프레임에** 발동한다.
 #   왜 필요했나: 전에는 `_local_combat`이 `_attack_queued`를 **무조건** 비워서, 사람이 스윙을 보며
@@ -337,9 +393,20 @@ const ATTACK_BUFFER_S := 0.25
 
 var peer_id: int = 0
 var is_local: bool = false
-const SlashFx := preload("res://src/feel/slash_fx.gd")   # 검성 검격 노드(표시 전용)
-var _slash_frames_cache: Array = [null, null, null, null]  # 타수별(1~3) + 롤-어택 4번(소용돌이) 슬래시 지연 로드 캐시
-var _roll_at_msec: int = -100000  # 마지막 구르기 시각 — 이후 0.5초 내 공격이면 4번 소용돌이(롤-어택)
+const SlashFx := preload("res://src/feel/slash_fx.gd")     # 검성 검기 반달(셰이더, 표시 전용)
+const SkillFx := preload("res://src/feel/skill_fx.gd")     # 하위 직업 스킬 원/띠(셰이더, 표시 전용)
+
+# 🔴 **호스트가 자기 스킬을 아는 유일한 입구** (2026-08-02). Net에 루프백이 없어 호스트는 자기
+#   `G_SKILL`을 **받지 않으므로**, 게스트와 같은 `_on_net_msg` 경로로는 자기 발동이 영영 안 온다
+#   (2026-07-25 「호스트 자기 공속」 Critical과 같은 함정 — `_on_player_shoot`이 `EventBus.player_shoot`로
+#   같은 구멍을 메운 그 자리다). `CombatAuthority`가 로컬 아바타의 이 시그널에 붙는다.
+# ⚠ EventBus가 아니라 노드 시그널인 것은 **core 시그널 추가가 리드 몫**이기 때문이다(rules §0) —
+#   `combat_authority.gd`는 이미 `player.gd`를 preload하고 `melee_combo_mult()` 같은 메서드를 직접
+#   부르므로 결합도가 새로 생기지는 않는다. 🔴 리드 판단 대기: `EventBus.player_skill`로 올리는 것이
+#   `player_shoot` 선례와 일관된다(보고서에 올렸다).
+# 🔴 **발동 순간에 정확히 한 번** emit한다 — 선딜이 끝나 `G_SKILL`을 보내는 그 프레임이다.
+#   그래야 호스트 자기 판정과 화면 FX가 **같은 순간**에 정렬된다(§3 근접 「선딜+스윕 끝 = 판정」 미러).
+signal skill_cast(dir: Vector2)
 var scene_id: String = ""  # 소속 씬 (net_schema SCENE_*) — G_POS에 실어 다른 씬 피어의 유령 스폰 방지
 # 모닥불 앉기 — 이동·구르기·공격 입력이 들어오면 스스로 풀린다. 공지(G_SIT)는 campfire가 상태 변화를
 # 보고 송신. 🔴 **쓰기는 반드시 `set_seated()`를 지난다**(그 함수 주석이 근거 — 선입력 버퍼 회귀).
@@ -582,6 +649,41 @@ var _last_atk_fx_msec: int = -1000000000
 var _swamp_factors: Array[float] = []  # 현재 겹친 늪들의 이동 배율 (SwampZone enter/exit로 추가·제거). 걷기 속도에 min 적용, 구르기 예외
 
 var _prev_hp: int = 0  # 피격 손맛(combat_impact 감소량) 계산용 — hp_changed 표시 경로 추적
+
+# --- 하위 직업 스킬 (Q, 2026-08-02) — 메인 자리 하나당 하나(GDD §3 조작 · §11 「직업별 스킬 구성」) ---
+# 🔴 **로컬 쿨다운 앵커 = `G_SKILL`을 실제로 보낸 시각**이다(누른 시각이 아니다). 호스트는 자기
+#   **수신 시각**으로 재므로(`is_skill_ready`), 앵커를 「누름」에 두면 선딜 길이만큼 두 시계가
+#   체계적으로 어긋난다. 보낸 시각에 두면 두 간격이 「클라 간격 + (편도₂ − 편도₁)」로만 갈리고
+#   그 지터는 쿨다운 8~9s 대비 무시할 수준이다(근접 `melee_throttle_gap_s`가 필요했던 것은
+#   쿨다운이 0.4s이고 `t_hit`가 무기마다 달라서다 — 여기는 두 항 다 없다).
+# ⚠ 씬마다 리셋된다(아바타가 씬마다 새로 태어난다). 호스트 쪽 `_skill_msec`도 **씬 컴포넌트**라
+#   같이 리셋되므로 두 시계가 함께 열린다 = 스테이지 입장마다 스킬 1회가 즉시 준비된 상태다(의도).
+var _last_skill_msec: int = -1000000000
+# 선딜(`SkillDef.windup_s`) 잔여. > 0 = 시전 중 — 🔴 이 창에서 Q를 다시 눌러도 안 나간다(이중 발동 차단).
+var _skill_windup_left: float = 0.0
+# 🔴 **발동 순간에 고정된 방향** — 라이브 마우스(`_aim_angle`)를 쓰지 않는다. 검기가 `_swing_dir`을
+#   쓰는 것과 **같은 이유**이고(player.gd `_try_spawn_slash` 주석), beam은 **축이 곧 판정**이라
+#   더 세다: 선딜 동안 마우스가 돌면 화면의 띠와 호스트가 세우는 캡슐이 통째로 갈라진다.
+var _skill_dir: Vector2 = Vector2.RIGHT
+# 시전 중인 스킬 — 선딜이 끝나는 프레임에 FX·질의·`G_SKILL`이 **전부 이 한 값**에서 파생한다.
+# 🔴 발동 순간에 굳혀 둔다(선딜 중 하위 직업이 바뀌어도 그 시전은 처음 것으로 끝난다 —
+#   안 굳히면 "쿨다운은 A가 먹고 데미지는 B가 내는" 조합이 열린다).
+var _skill_pending: SkillDef = null
+# --- 다단 스킬의 남은 **표시** 타 (2026-08-02 「환영검무」) ---
+# 🔴 **로컬·원격이 같은 멤버를 쓴다** — `play_skill_fx`가 두 경로의 단일 지점이라(로컬 = `_fire_skill`
+#   / 원격 = `peer_sync`의 G_SKILL 중계) 반복도 거기서 걸리면 양쪽이 자동으로 같은 그림이 된다.
+# 🔴 **네트워크 메시지·필드 0.** 타수·간격은 각 클라가 자기 `SkillDef`에서 리졸브하므로(로컬 =
+#   `GameState.active_skill` · 원격 = `peer_sync.peer_skill`) 실을 것이 애초에 없다 — 호스트가
+#   `_skill_ticks`로 도는 것과 **같은 데이터·같은 clamp**라 타수가 갈라지지 않는다.
+# ⚠ 한 칸뿐이다 = 새 시전이 진행 중이던 반복을 **대체**한다(호스트 `_skill_ticks`와 같은 규약).
+var _skill_fx_def: SkillDef = null
+var _skill_fx_dir: Vector2 = Vector2.RIGHT
+var _skill_fx_left: int = 0
+var _skill_fx_timer: float = 0.0
+# 이번 시전에서 지금까지 그린 타 번호(0 = 첫 타) — 🔴 **반달 좌우 교대의 유일한 소스**다.
+# ⚠ 로컬·원격 공용이다(`play_skill_fx`가 0으로 되돌린다) — 두 화면의 교대 순서가 같아야
+#   "내 쪽은 오른쪽부터, 상대 쪽은 왼쪽부터"가 안 생긴다. 판정과는 무관하다(순수 표시).
+var _skill_fx_index: int = 0
 
 @onready var _sprite: AnimatedSprite2D = $Sprite
 @onready var _swing_trail: Polygon2D = $SwingTrail  # 칼날 폭 리본 궤적 — 표시 전용(판정 무관)
@@ -982,38 +1084,81 @@ func _is_swordmaster_active() -> bool:
 	return GameState.main_sub_job_id == "warrior_swordmaster"
 
 
-# 검성 검격 — 타수별 슬래시를 조준각으로 날린다(로컬·표시 전용). 시트가 없으면 조용히 넘어간다.
+# 검성 검격 — 타수별 반달 검기를 스윙 방향으로 날린다(로컬·표시 전용, 네트워크 0).
+# 🔴 **모든 타가 셰이더 반달이다 — 갈래가 하나뿐이다**(2026-08-02 사용자 확정).
+#   ⚠ 전에는 「구르기(Shift) 후 0.5초 내 공격 = 4번 소용돌이」라는 **롤-어택** 갈래가 있었고
+#   `AnimatedSprite2D` + `slash_4` 시트로 따로 살았다. 사용자 요청으로 **제거**했다 —
+#   되살리려면 갈래가 아니라 그 시절 커밋을 봐라(노드 타입부터 달라 한 파일에 안 들어간다).
 func _try_spawn_slash(index: int) -> void:
 	if not _is_swordmaster_active():
 		return
-	# 구르기(Shift) 후 0.5초 내 공격 = 4번 소용돌이(롤-어택 — 안 날아가고 주변을 휘두름). 아니면 타수(1~3, 앞으로 날아감).
-	var roll_attack := Time.get_ticks_msec() - _roll_at_msec < 500
-	var idx := 3 if roll_attack else clampi(index, 0, 2)
-	var frames := _slash_frames_for(idx)
-	if frames == null:
+	# 🔴 **막타(마무리 타)에만 날아간다** (사용자 확정 2026-08-02: *"초승달로 날아가는거 막타만"*).
+	#   그전에는 **매 타** 나갔고, 그래서 검기가 "늘 켜져 있는 배경"이 되어 콤보의 끝이 안 읽혔다.
+	# 🔴 판별은 `_is_combo_finish` **하나**를 지난다 — 판정 각·표시 각·자세가 전부 같은 함수를 쓰므로
+	#   "검기만 마무리, 판정은 평타" 같은 어긋남이 원리적으로 생기지 않는다(§3 단일 소스).
+	# ⚠ 가드를 **호출부가 아니라 여기**에 둔다 — 호출부(`_begin_swing`)에 두면 다음 사람이 다른
+	#   자리에서 이 함수를 부를 때 조용히 빠진다(`apply_job_loadout` 세 호출부가 밟은 그 함정).
+	# ⚠ 아래 램프 상수(`SLASH_ARC_RAMP_MIN`·`SLASH_RADIUS_RAMP_*`)는 타수별 점증용인데, 이제 막타
+	#   하나만 남으므로 **항상 램프 최댓값**이 걸린다. 상수를 지우지는 않았다 — 타수별로 되돌리는
+	#   결정이 오면 이 가드 한 줄만 빼면 되게 남겨 둔 것이다.
+	if not _is_combo_finish(index):
+		return
+	# 🔴 무장 해제면 검기가 없다 — `melee_show_half_angle(null)`이 **전방위(PI)**를 돌려주므로
+	#   가드 없이 통과시키면 반달이 아니라 **온전한 고리**가 뜬다(에러 없음, 화면만 이상하다).
+	# ⚠ `job` 가드도 같이 — `effective_attack_range`가 `job.attack_range`를 바로 읽는다
+	#   (`_combo_window_s`가 이미 같은 이유로 같은 가드를 갖고 있다).
+	if _weapon_override == null or job == null:
 		return
 	var sfx := SlashFx.new()
-	if roll_attack:
-		add_child(sfx)                       # 플레이어 자식 = 몸 따라 감쌈
-		sfx.position = Vector2(0, -8)        # 몸 중심에 소용돌이가 걸리게
-		sfx.scale = Vector2(1.35, 1.35)      # 캐릭터를 두를 만큼 크게
-		sfx.setup(frames, 0.0, Color(1, 1, 1, 1), false)   # 보텍스는 방사형 — 조준 회전 없음
-	else:
-		get_parent().add_child(sfx)          # 씬 루트 = 앞으로 날아감
-		sfx.global_position = _weapon_pivot.global_position
-		# 🔴 조준각(_aim_angle 라이브 마우스)이 아니라 스윙 개시 때 고정된 _swing_dir을 쓴다 —
-		#   무기·궤적(1576줄)과 같은 단일 소스. _aim_angle을 쓰면 스윙 중 마우스가 움직여 어긋난다.
-		sfx.setup(frames, _swing_dir.angle(), Color(1, 1, 1, 1), true)
+	get_parent().add_child(sfx)              # 씬 루트 = 앞으로 날아감
+	# 🔴 노드 원점 = 스윙 회전 중심 = 반달의 **곡률 중심**이다(`_weapon_point_global`과 같은 자리).
+	#   그래서 검기가 "방금 휘두른 호가 떨어져 나가" 앞으로 나가는 그림이 된다.
+	sfx.global_position = _weapon_pivot.global_position
+	# 🔴 조준각(_aim_angle 라이브 마우스)이 아니라 스윙 개시 때 고정된 _swing_dir을 쓴다 —
+	#   무기·궤적과 같은 단일 소스. _aim_angle을 쓰면 스윙 중 마우스가 움직여 어긋난다.
+	# 🔴 색은 `_fx_color(1.0)` — 리본·칼 잔상과 **같은 단일 소스**다. 전에는 `Color(1,1,1,1)`을
+	#   넘겨 틴트가 항등이었고 시트 자체가 노랑이라 **궤적만 하늘색이고 검기만 노랬다**.
+	# 🔴 넷째 인자 = **무기 무게**(2026-08-02). 그 전에는 검기가 무기에서 반경·반각만 받아
+	#   파쇄 도끼(무게 2.93)와 낡은 대검(0.67)이 화면에서 구분되지 않았다(사용자 신고).
+	#   출처는 `CombatMath.weapon_weight` 하나이고 — `_weapon_weight()`가 그 래퍼다 —
+	#   두께·뾰족함만 바뀐다(반경·반각은 판정 유도라 그대로, `slash_fx.gd` 상수 주석이 전문).
+	sfx.setup(_swing_dir.angle(), _fx_color(1.0),
+		_crescent_radius(index), _crescent_half_angle(index), _weapon_weight())
 
 
-# 타수 → 슬래시 시트. slash_1(1타=스파크)·slash_2(2타=링)·slash_3(3타=초승달). 지연 로드·캐시.
-func _slash_frames_for(index: int) -> SpriteFrames:
-	var i := clampi(index, 0, 3)
-	if _slash_frames_cache[i] == null:
-		var fp := "res://assets/sprites/fx/slash_%d_frames.tres" % (i + 1)
-		if ResourceLoader.exists(fp):
-			_slash_frames_cache[i] = load(fp) as SpriteFrames
-	return _slash_frames_cache[i] as SpriteFrames
+# 🔴 **검기 반달의 반각 — 출처는 그 스윙의 표시 반각 하나다.**
+#   `melee_show_half_angle`(§3 표시 전용 단일 소스)에 타수 램프를 곱한다. 상한이 1.0이라 검기는
+#   **그 스윙이 실제로 그린 각을 넘지 않는다** — "궤적은 안 지나갔는데 검기만 거기 있다"가 불가능.
+# 🔴 `melee_half_angle`(판정 각)을 직접 읽어 여유를 곱하지 마라 — 그게 §3이 금지한 「제3의 값」이다.
+# ⚠ 순서가 계약이다: **램프 → 포화**. 포화를 먼저 걸면 넓은 무기가 상한에 붙은 뒤에 램프가 곱해져
+#   1타가 필요 이상으로 좁아지고, 타수 간 간격이 무기마다 뒤죽박죽이 된다.
+func _crescent_half_angle(index: int) -> float:
+	var arc := CombatMath.melee_show_half_angle(_weapon_override, _is_combo_finish(index))
+	arc *= lerpf(SLASH_ARC_RAMP_MIN, 1.0, _combo_ramp_at(index))
+	# 「반달」 포화 — 상한에 점근만 하므로 순서가 엄밀히 보존된다(상수 주석이 근거).
+	return SLASH_MAX_HALF_ANGLE * tanh(arc / SLASH_MAX_HALF_ANGLE)
+
+
+# 🔴 **검기 반달의 반경 — 출처는 판정 도달 거리다.** `effective_attack_range`가 무기 `melee_range`·
+#   `reach` 특성·마무리 `combo_finish_range`를 전부 리졸브하는 단일 소스이므로, 무기를 바꾸거나
+#   특성이 켜지면 검기가 **저절로** 따라온다(연출 상수로 도달 거리를 만들어 내지 않는다).
+# ⚠ 램프는 그 위에 얹는 비율일 뿐이고 최댓값도 1.15배다 — 반경 축의 진실원은 여전히 하나다.
+func _crescent_radius(index: int) -> float:
+	var base := CombatMath.effective_attack_range(
+		job, trait_value("reach"), _weapon_override, _is_combo_finish(index))
+	return base * lerpf(SLASH_RADIUS_RAMP_MIN, SLASH_RADIUS_RAMP_MAX, _combo_ramp_at(index))
+
+
+# 🔴 **타별 감각 점증의 진행값(0 = 첫 타 · 1 = 마지막 타) — `_combo_ramp` 멤버와 같은 식이다.**
+#   `_begin_swing`이 그 멤버를 심기 **전에** 검기가 스폰되므로(스폰이 각·젖힘보다 앞이다) 멤버를
+#   그대로 읽으면 **직전 스윙의 값**을 쓴다. 사본을 두지 않으려고 함수 하나로 모았다.
+# ⚠ n = 1(콤보 없는 무기)이면 0이다 — `CombatMath.is_combo_finish`가 그 경우 마무리로 안 세는 것과
+#   같은 규약이라, 검기만 마무리 크기로 뜨는 갈라짐이 없다.
+func _combo_ramp_at(index: int) -> float:
+	var n := _combo_len()
+	if n <= 1:
+		return 0.0
+	return clampf(float(index) / float(n - 1), 0.0, 1.0)
 
 
 # 🔴 **그 타의 시작 각 오프셋(rad) — `_begin_swing`과 젖힘 목표가 같은 이 함수를 지난다.**
@@ -1144,8 +1289,11 @@ func confirm_hp_from_net(p_hp: int, dmg: int = 0) -> void:
 	# 구버전 호스트와 항등(ehp "d"와 같은 규약).
 	_health.set_hp_display(p_hp, false, dmg)
 	GameState.record_party_hp(peer_id, p_hp)  # 챕터 스테이지 간 이월 기록 — 확정 경로만 쓴다
-	EventBus.player_hp_confirmed.emit(peer_id, p_hp)
+	# 🔴 순서는 `_on_hp_confirmed`와 **같아야 한다**(그쪽 주석이 근거 정본) — 두 경로가 갈리면
+	#   "호스트에선 전멸이 나는데 게스트 화면만 안 난다" 같은 비대칭이 생기고, 그건 화면에 이유가
+	#   안 드러난다. 여기선 `_check_wipe`가 안 돌지만(호스트 전용) 규약을 하나로 유지한다.
 	_update_life_state(p_hp)
+	EventBus.player_hp_confirmed.emit(peer_id, p_hp)
 
 
 # 이 아바타가 마지막에 실제로 받은 데미지 — 호스트가 php "d"에 실어 보낼 때 읽는다(표시 전용).
@@ -1156,8 +1304,16 @@ func last_damage_taken() -> int:
 
 func _on_hp_confirmed(p_hp: int) -> void:
 	GameState.record_party_hp(peer_id, p_hp)  # 챕터 스테이지 간 이월 기록 — 확정 경로만 쓴다
-	EventBus.player_hp_confirmed.emit(peer_id, p_hp)
+	# 🔴🔴 **생사 갱신이 emit보다 **먼저**여야 한다 — 이 순서가 계약이다** (2026-08-02 실기에서 잡았다).
+	#   `_check_wipe`(CombatAuthority)는 이 시그널을 받아 **`is_alive()`로 생존자를 센다**. 그런데
+	#   `is_alive()`가 읽는 `_alive`는 `_update_life_state`에서만 갱신되므로, emit이 먼저면 방금 죽은
+	#   본인이 **아직 살아 있는 것으로 세어져** 전멸이 성립하지 않는다 — 그리고 `_check_wipe`는 다음
+	#   HP 확정이 올 때까지 다시 불리지 않으므로, **마지막 한 명이 죽으면 전멸이 영영 안 난다.**
+	#   증상: 솔로 사망 시 관전 고스트로 스테이지에 영구 잔류(마을 복귀 없음) — 100% 재현.
+	#   ⚠ 되돌리지 마라. `_update_life_state`는 `now_alive == _alive`면 early return이라 멱등이고,
+	#   순서를 바꿔도 이 함수 밖에서 관측되는 것은 「생사 → 통지」라는 자연스러운 방향뿐이다.
 	_update_life_state(p_hp)
+	EventBus.player_hp_confirmed.emit(peer_id, p_hp)
 
 
 # 표시 경로(모든 클라) 피격 손맛 — 이 인스턴스(로컬·원격 무관)의 HP가 실제로 감소했을 때.
@@ -1228,6 +1384,10 @@ func _physics_process(delta: float) -> void:
 	_tick_timers(delta)
 	if is_local:
 		_local_move(delta)
+		# 🔴 **`_local_move` 바로 뒤다** — 발동 프레임의 좌표가 그 프레임의 **최종** 위치여야 뒤따르는
+		#   `_send_pos`가 같은 좌표를 실어 보내고, 호스트가 판정에 쓰는 `net_anchor()`가 화면의 FX
+		#   원점으로 가장 빨리 수렴한다(G_SKILL은 원점을 안 싣는다 — 그게 곧 스푸핑 표면이라).
+		_tick_skill(delta)
 		_local_combat(delta)
 		_send_pos(delta)
 	else:
@@ -1235,6 +1395,11 @@ func _physics_process(delta: float) -> void:
 		global_position = global_position.lerp(_remote_target, minf(1.0, REMOTE_LERP_SPEED * delta))
 		# ⚠ flip_h는 여기서 안 건드린다 — 방향/뒤집기의 단일 소스는 _play_dir_anim이다(폴백 경로가
 		#   원격일 때 _remote_flip을 읽는다). 두 곳에서 대입하면 프레임마다 서로 덮어쓴다.
+	# 🔴 **분기 밖이다 — 로컬·원격 둘 다 다단을 그린다.** 안쪽에 두면 "내 화면의 상대만 한 번 번쩍"
+	#   이 되어 같은 스킬이 클라마다 다른 그림이 된다(호스트는 양쪽 다 N타를 확정한다).
+	# ⚠ `_physics_process`인 이유 = 로컬 손맛 질의(`_skill_feel`)가 `direct_space_state`를 판다
+	#   (`_try_cast_skill`이 입력 단계에서 `_fire_skill`을 부르지 않는 것과 같은 근거).
+	_tick_skill_fx(delta)
 	# 🔴 조준각 갱신이 **맨 앞**이다 — 방향 애니(_update_anim)와 무기 표시(_update_weapon)가 둘 다
 	#   _aim_angle에서 파생하므로, 뒤에서 갱신하면 몸 방향만 한 프레임 늦게 돌아 무기와 어긋난다.
 	_update_aim(delta)
@@ -1730,10 +1895,10 @@ func _local_move(delta: float) -> void:
 			_roll_dir = dir if dir != Vector2.ZERO else _aim_dir()
 			_roll_time_left = CombatMath.ROLL_TIME_S
 			_cancel_swing()  # 구르기는 선딜·스윕·후딜 어디서든 스윙을 끊는다 (근거 = _cancel_swing)
+			_cancel_skill()  # 스킬 선딜도 **같은 규약** — 아직 호스트로 나간 것이 0이라 대가 없이 뺀다
 			# 🔴 로컬 쿨과 호스트 그랜트 검증(is_roll_grant_ok)이 **같은 함수**를 지난다(§3) —
 			#   사본을 만들면 "굴러지는데 무적이 안 걸리는" 상태가 되고 화면에 이유가 안 드러난다.
 			_roll_cd_left = CombatMath.effective_roll_cooldown(trait_value("roll_cd"))
-			_roll_at_msec = Time.get_ticks_msec()  # 롤-어택 판정: 이후 0.5초 내 공격 = 4번 소용돌이
 			EventBus.player_roll.emit(global_position)  # 구르기 SFX (로컬)
 			_dash_burst(_roll_dir)  # 잔상 첫 장·먼지 버스트·진행 방향 카메라 반동 (표시 전용)
 			# 구르기 선언 — 호스트가 쿨다운 검증 후 i-frame 창 부여 (방향은 연출용)
@@ -1756,6 +1921,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		if job != null:
 			cap = minf(cap, CombatMath.effective_cooldown(job, _haste()))
 		_attack_buf_left = cap
+	# 🔴 하위 직업 스킬(Q) — **평타와 같은 입구다.** `_unhandled_input`이라 UI(Control)가 소비한
+	#   입력은 여기 안 온다 = 모달 규약을 새 조건 없이 그대로 물려받는다(rules §5 · `_local_combat`의
+	#   클릭 경로와 같은 근거). 나머지 게이트(사망·구르기·무장·쿨다운)는 `_try_cast_skill` 한 곳에 있다.
+	# ⚠ 버퍼(선입력)를 두지 않는다 — 쿨다운이 8~9s라 "쿨이 열리는 첫 프레임" 경합이 없고, 버퍼를 두면
+	#   구르기 중에 누른 Q가 구르기 직후 **의도치 않게** 나간다(평타와 달리 리듬 보정 대상이 아니다).
+	elif is_local and event.is_action_pressed("skill"):
+		_try_cast_skill()
 
 
 # 현재 착용 무기의 공격 모션 (EquipDef.motion_type) — 미착용/미지정이면 "swing" 폴백. _do_attack 분기의 단일 소스.
@@ -1777,6 +1949,7 @@ func _local_combat(delta: float) -> void:
 		_attack_buf_grace = 0.0
 		_cancel_charge()  # 사망 = 모으던 것 소멸 (고스트가 계속 모으지 않게)
 		_stop_auto_fire()  # 사망 = 홀드 연사도 소멸 (고스트가 계속 쏘지 않게 — 차지와 대칭)
+		_cancel_skill()  # 사망 = 시전 중이던 스킬도 소멸 (관전 고스트가 발동하지 않게 — 위 둘과 대칭)
 		return
 	# 무장 해제(무기 미착용) = 공격 불가 — 판정·궤적·소리 전부 안 나간다. 무기가 곧 공격 수단.
 	var motion := _weapon_motion()
@@ -2000,7 +2173,9 @@ func _begin_swing(combo: int, chain_from_previous: bool = false) -> void:
 	_combo_entry_lunge = _motion_lunge if _combo_entry_from_previous else 0.0
 	_combo_pose_active = n > 1
 	# 🔴 **타별 감각 점증의 단일 진행값**(멤버 주석이 정본). n = 1이면 0 = 도입 전과 항등.
-	_combo_ramp = (float(_combo_index) / float(n - 1)) if n > 1 else 0.0
+	#   ⚠ 식은 `_combo_ramp_at()`이 쥔다 — 검기 반달이 이 멤버가 심기기 **전에** 스폰되므로 같은
+	#     식을 거기서 한 번 더 쓰는데, 사본을 두면 두 램프가 갈라진다(2026-08-02).
+	_combo_ramp = _combo_ramp_at(_combo_index)
 	# 🔴 **어깨에 걸치기(시작각 젖힘)와 그 상한은 `_swing_entry_angle`이 쥔다** — 마무리 직전 타의
 	#   대기 자세(`_combo_hold_pose`)가 **같은 함수**로 "다음 타가 출발하는 각"을 물어야, 젖혔다가
 	#   다시 되돌아가는 구간이 원리적으로 안 생긴다(2026-08-01에 그 자리를 함수로 뺐다).
@@ -2251,6 +2426,343 @@ func _resolve_swing_hit() -> void:
 		# 호스트의 `last_confirm_msec` 로컬 미러 — 그쪽도 **확정 때만** 앵커를 옮기므로
 		# (헛치면 안 옮긴다) 여기도 `connected`일 때만 갱신한다. 자기 스로틀의 기준점이다.
 		_last_swing_hit_msec = Time.get_ticks_msec()
+
+
+# ============================================================================
+# 하위 직업 스킬 (Q) — 2026-08-02. 메인 자리 하위 직업 하나당 하나(GDD §3 조작 · §11 TBD의 첫 입주)
+# ============================================================================
+# 🔴 **네트워크로 나가는 것은 방향 두 칸뿐이다**(`G_SKILL {dx, dy}`) — 배율·반경·사거리·쿨다운은
+#   호스트가 그 피어의 공지 하위 직업 id로 **자기 data/skills**에서 리졸브한다(`SkillDef` 헤더 ·
+#   `peer_weapon_id`·`projectile_params`와 같은 철학, rules §3). 수치를 실으면 그게 곧 스푸핑 표면이다.
+# 🔴 **결과 메시지도 새로 안 만든다** — 데미지는 기존 `G_ENEMY_HP`로 흐른다(넉백이 `G_MOB_POS`에
+#   얹힌 것과 같은 형태).
+
+
+# 내 스킬 — 🔴 리졸브는 `GameState.active_skill()` **하나**다(= `main_slot_def` 게이트: 계열 일치 ·
+#   공유 하위 직업 배제). 사본 조건문을 만들면 "특성·색은 폐기됐는데 스킬만 켜진" 조합이 열린다.
+#   null = 스킬 없는 하위 직업(검사)·미장착 = 도입 전과 완전 항등. **HUD 슬롯도 이 함수를 읽는다.**
+func active_skill_def() -> SkillDef:
+	return GameState.active_skill() if is_local else null
+
+
+# 스킬 쿨 남은 비율 0.0~1.0 (1 = 방금 썼다, 0 = 지금 쓸 수 있다). **HUD 표시 전용 읽기 접근자.**
+# 🔴 분모는 `clamp_skill_cooldown`을 지난 값이다 — 데이터가 하한(`SKILL_COOLDOWN_MIN`)에 걸리면
+#   호스트는 잘린 값으로 재는데 바만 원본으로 그리면 "바는 안 찼는데 쓸 수 있다"가 된다(§3).
+func skill_cooldown_ratio() -> float:
+	var left := skill_cooldown_left()
+	if left <= 0.0:
+		return 0.0
+	var sk := active_skill_def()
+	if sk == null:
+		return 0.0
+	var total := CombatMath.clamp_skill_cooldown(sk.cooldown_s)
+	return 0.0 if total <= 0.0 else clampf(left / total, 0.0, 1.0)
+
+
+# 남은 쿨(초) — HUD 숫자 표기용. 🔴 **아래 `_try_cast_skill`과 같은 문턱에서 0이 되어야 한다**
+#   = `skill_cast_gap_s`(클라 게이트). 안 맞추면 "0초인데 안 나간다"(또는 그 반대)가 되고,
+#   표시와 발동이 갈라진 이유가 화면에 안 드러난다.
+# ⚠ **호스트 게이트(`is_skill_ready`)를 여기 쓰지 마라** — 그러면 게이지가 호스트 문턱에서 0을
+#   찍어 플레이어를 **여유 0인 경계로 유도한다**(그것이 netreview C-1의 증폭기였다).
+func skill_cooldown_left() -> float:
+	var sk := active_skill_def()
+	if sk == null:
+		return 0.0
+	var gate_s := CombatMath.skill_cast_gap_s(sk.cooldown_s)
+	var since := float(Time.get_ticks_msec() - _last_skill_msec) / 1000.0
+	return maxf(0.0, gate_s - since)
+
+
+# Q 입력 — 🔴 **게이트를 새로 발명하지 않는다.** 평타(`_local_combat`)가 보는 조건을 그대로 따라간다:
+#   ⑴ 모달 = `_unhandled_input`(UI가 소비한 입력은 안 온다) ⑵ 사망 ⑶ 구르기 중 ⑷ 무장 해제
+#   ⑸ 앉는 중(`seated` — 홀드 연사가 이미 같은 가드를 갖는다, GDD §5 "앉는 동안 무방비").
+# ⚠ ⑷ 무장 가드는 **호스트보다 엄격하지 않다** — 여기서 탈락하면 `G_SKILL` 자체가 안 나가므로
+#   "호스트 검증 이전에 타격이 사라지는" 그 결함(§3 「로컬 ≤ 호스트」)이 성립할 대상이 없다.
+#   그 계약이 겨누는 것은 **이미 발동한 공격의 대상 선별**이고, 여기는 발동 여부 자체다.
+func _try_cast_skill() -> void:
+	if not _alive or seated or bound or _roll_time_left > 0.0 or not _is_armed():
+		return
+	# 🔴 **시전 중 판별은 `_skill_pending`이 진다 — `_skill_windup_left > 0.0`이 아니다.**
+	#   선딜 0(즉발) 스킬이 들어오면 잔여가 처음부터 0이라 그 조건이 **한 프레임도 참이 아니고**,
+	#   그러면 같은 프레임에 Q를 두 번 받는 입력(연타·키 리피트 아닌 중복 이벤트)이 이중 발동한다.
+	if _skill_pending != null:
+		return  # 시전 중 재입력 = 무시. 쿨다운 앵커는 아직 안 섰다(취소해도 손해가 없는 이유).
+	var sk := active_skill_def()
+	if sk == null:
+		return  # 스킬 없는 하위 직업 = 도입 전과 완전 항등
+	# 🔴 **클라는 호스트 게이트(`is_skill_ready`)가 아니라 `skill_cast_gap_s`로 스스로 물러선다**
+	#   (netreview C-1 2026-08-02 — 그 함수 주석이 유도 전문). 같은 문턱을 쓰면 여유가 정확히 0이라
+	#   호스트 **수신 프레임 양자화**(±33ms)만으로 거부되고, 거부돼도 아래에서 앵커가 서기 때문에
+	#   **쿨다운 8~9초를 통째로 잃는다.** 두 값은 같은 `clamp_skill_cooldown`을 지나 갈라지지 않는다.
+	# ⚠ 부호가 반대인 게이트다 — 스로틀은 `+`(늦는 쪽이 안전: 반대면 정직한 발동이 삭제된다).
+	#   rules §3 「관통 규칙: 오차는 누가 대가를 치르는가로 기울인다」의 다섯 번째 사례.
+	if Time.get_ticks_msec() - _last_skill_msec < int(CombatMath.skill_cast_gap_s(sk.cooldown_s) * 1000.0):
+		return
+	_skill_pending = sk
+	_skill_dir = _aim_dir()          # 🔴 여기서 **한 번** 고정 (멤버 주석이 근거 — beam은 축이 곧 판정)
+	_skill_windup_left = maxf(sk.windup_s, 0.0)
+	# 시전 시작 신호 — 새 에셋 0. 무기 스윙음을 낮은 피치로 재활용해 "기를 모은다"로 들리게 한다
+	# (rules §2 손맛 계층: 새 훅을 파지 말고 있는 훅에 매단다. `player_swing` 소비자는 Audio뿐이다).
+	EventBus.player_swing.emit(global_position, _swing_sfx, SKILL_WINDUP_PITCH)
+	# 🔴🔴 **여기서 `_fire_skill()`을 부르지 마라 — 선딜 0이어도.** 이 함수는 `_unhandled_input`
+	#   (입력 단계)에서 오는데, 발동은 `direct_space_state` 물리 질의(`_skill_feel`)를 한다.
+	#   물리 질의는 `_physics_process` 밖에서 부르면 프레임에 따라 조용히 낡은 스냅샷을 읽거나
+	#   경고를 뱉는다 — 근접 판정(`_resolve_swing_hit`)이 물리 프레임 안에서만 도는 것과 같은 이유다.
+	#   선딜 0이면 다음 `_tick_skill`(같은 프레임의 `_physics_process`)이 즉시 발동한다 = 최대 1프레임.
+
+
+# 선딜 진행 — 🔴 **0 이하로 떨어지는 그 프레임에 발동**한다. 판정(호스트)·FX·`G_SKILL`이 전부
+#   `_fire_skill` 한 곳에서 같은 순간에 나가므로 「맞는 순간 = 보이는 순간」이 구조로 성립한다
+#   (근접이 「선딜+스윕 끝 = 판정」으로 만든 그 정렬의 미러, §3).
+# 🔴 **발동의 유일한 자리다** — `_physics_process` 안이라 물리 질의가 항상 물리 프레임에서 돈다.
+#   선딜 0(즉발)도 여기를 지난다: `0 - delta < 0`이라 첫 틱에 바로 나간다.
+func _tick_skill(delta: float) -> void:
+	if _skill_pending == null:
+		return
+	_skill_windup_left -= delta
+	if _skill_windup_left <= 0.0:
+		_skill_windup_left = 0.0
+		_fire_skill()
+
+
+# 시전 취소 — 구르기·사망. 🔴 **신뢰 경계 변화 0**: 아직 `G_SKILL`을 안 보냈고 쿨다운 앵커도 안 섰다
+#   (= 호스트로 나간 것이 0). `_cancel_swing`과 **같은 근거**이고, 그쪽이 "법사는 차지를 빼는데
+#   전사는 못 뺀다"를 피하려 만든 관용구를 여기서도 지킨다.
+# ⚠ 쿨다운을 소비하지 않으므로 취소가 손해가 아니다 = 남용 유인도 없다(취소해도 얻는 것이 없다).
+func _cancel_skill() -> void:
+	_skill_windup_left = 0.0
+	_skill_pending = null
+
+
+# 🔴 **발동 = 이 한 곳.** 여기서 나가는 셋(호스트 자기 판정 · 원격 통지 · 화면 FX)이 같은 프레임의
+#   같은 좌표·같은 방향·같은 `SkillDef`에서 파생한다 — 흩으면 "보이는 곳 ≠ 맞는 곳"이 열린다(§3).
+func _fire_skill() -> void:
+	var sk := _skill_pending
+	_skill_pending = null
+	if sk == null or not _alive:
+		return
+	var dir := _skill_dir
+	if not dir.is_finite() or dir.length_squared() <= 0.000001:
+		dir = Vector2.RIGHT
+	dir = dir.normalized()
+	# 🔴 쿨다운 앵커 = **보내는 시각**(멤버 주석이 근거 — 호스트는 자기 수신 시각으로 잰다).
+	_last_skill_msec = Time.get_ticks_msec()
+	# ⑴ 원격 통지 — 수치는 한 칸도 안 싣는다(NetSchema.G_SKILL 주석이 계약 전문).
+	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_SKILL, "dx": dir.x, "dy": dir.y})
+	# ⑵ 호스트 자기 판정 입구 — 🔴 Net 루프백이 없어 **이 시그널이 유일한 경로**다(멤버 주석).
+	#   게스트에서도 emit되지만 `CombatAuthority`가 `is_host()` 가드로 무시한다(권한은 호스트만, §1).
+	skill_cast.emit(dir)
+	# ⑶ 화면 — 로컬·원격이 **같은 함수**를 지난다(아래). 기하는 SkillDef 그대로다.
+	play_skill_fx(dir, sk)
+	# ⑷ 로컬 예측 손맛 — 🔴 **표시 전용 질의다. 여기서 `attack_hit`을 emit하지 마라.**
+	#   그 시그널은 근접 확정 경로(`_confirm_damage`)로 들어가 ⓐ 스킬 배율이 아니라 **콤보 배율**로
+	#   확정되고 ⓑ 근접 쿨다운 게이트(`is_hit_cooldown_ok`)를 먹어 방금 휘두른 평타 때문에 스킬이
+	#   조용히 거부되며 ⓒ 호스트에서 **이중 확정**이 된다(이미 skill_cast로 확정했다).
+	#   ⚠ 그래서 이 질의는 **어떤 타격도 만들거나 지우지 않는다** — 로컬이 놓쳐도 호스트 판정은 그대로다
+	#     (근접의 로컬 질의가 `G_HIT_REQ`를 게이트하던 것과 **다르다**. 그쪽이 「로컬 ≤ 호스트」를
+	#     요구한 이유가 여기엔 아예 없다).
+	_skill_feel(dir, sk)
+
+
+# 발동 순간의 로컬 타격 손맛 — 🔴 **표시 전용**(위 ⑷ 주석이 근거). 판정 기하는 호스트와 **같은
+#   `CombatMath.is_skill_hit`**을 지나므로, 화면 FX·이 손맛·호스트 확정 셋이 한 함수에서 나온다.
+# ⚠ `slack_px`를 넘기지 않는다(0) — 슬랙은 **호스트가 게스트의 낡은 몹 좌표를 보상하는** 값이라
+#   자기 화면 손맛에 쓰면 "안 맞았는데 소리가 난다"가 된다(관대한 방향이 여기선 거짓 신호다).
+func _skill_feel(dir: Vector2, sk: SkillDef) -> void:
+	var origin := global_position
+	var half_len := 0.0
+	if sk.is_beam():
+		half_len = CombatMath.clamp_skill_length(sk.length) * 0.5
+	var probe_r := half_len + CombatMath.clamp_skill_radius(sk.radius)
+	if probe_r <= 0.0:
+		return
+	# 🔴 **다단은 한 타의 몫만 흔든다 — 그 몫은 「그 타의 데미지 비중」에서 유도한다**(2026-08-02).
+	#   `damage_mult`가 **타당** 배율이고 총합 = `배율 × 타수`이므로(SkillDef 헤더) 한 타의 비중은
+	#   정확히 `1 / 타수`다 = 새 손맛 상수를 만들지 않고 데이터에서 나온다.
+	# 🔴 나누지 않으면 실제로 깨진다 — `camera_rig.add_shake`/`add_kick`이 **가산**이라(각각
+	#   `SHAKE_MAX`·`KICK_MAX`로 포화) 5타 × 1.8배는 0.4초 만에 상한을 치고 화면이 통째로 뭉갠다.
+	# ⚠ **소리는 안 나눈다** — `weapon_impact`가 sfx 이름을 따로 싣고 볼륨 인자가 없어서, 5타가
+	#   그대로 "다다다닥" 다섯 번 난다. 다단을 귀로 읽게 하는 것이 바로 그 축이다.
+	# ⚠ 단발(1타)이면 나눗셈이 1이라 **완전 항등**이다.
+	var share := 1.0 / float(CombatMath.clamp_skill_hit_count(sk.hit_count))
+	var shape := CircleShape2D.new()
+	shape.radius = probe_r
+	var params := PhysicsShapeQueryParameters2D.new()
+	params.shape = shape
+	params.transform = Transform2D(0.0, origin + dir * half_len)  # 캡슐을 감싸는 원(spin은 half_len = 0)
+	params.collision_mask = ENEMY_BODY_MASK
+	params.collide_with_bodies = true
+	# 상한 32 — 근접 질의와 같은 값(광역이라 원이 더 크다. 각 필터 대신 is_skill_hit이 거른다).
+	var hits := get_world_2d().direct_space_state.intersect_shape(params, 32)
+	for hit: Dictionary in hits:
+		var body := hit.get("collider") as Node
+		if body == null or not body.is_in_group("enemy"):
+			continue
+		var bdef := body.get("def") as EnemyDef
+		if not CombatMath.is_skill_hit(sk.shape, (body as Node2D).global_position, origin, dir,
+				sk.radius, sk.length, bdef.body_radius if bdef != null else 0.0):
+			continue
+		EventBus.weapon_impact.emit(origin, _hit_sfx, _hit_shake * SKILL_SHAKE_MULT * share)
+		EventBus.camera_kick.emit(dir, HIT_KICK * _weapon_weight() * SKILL_KICK_MULT * share)
+		return  # 발동 1회당 손맛 1회 (근접 스윙의 `connected` 규약과 같다 — 마릿수만큼 흔들지 않는다)
+
+
+# 스킬 FX — 🔴 **로컬·원격 공용 단일 지점.** 원격은 `peer_sync`가 `G_SKILL` 수신 시 그 피어의
+#   공지 하위 직업으로 리졸브한 `SkillDef`를 실어 부른다(수치는 여전히 무전송, `peer_main_fx` 미러).
+# 🔴 **크기는 `SkillDef` 그대로**다 — 연출 배율이 없다(§3 "맞는 곳 = 보이는 곳"). 색만
+#   `_fx_color`를 지나 하위 직업 틴트(검성 하늘 / 광전사 붉음)를 공짜로 받는다.
+# ⚠ 스킬이 null(미공지·계열 불일치·스킬 없음)이면 **아무것도 안 그린다** — 호스트도 그 경우 판정을
+#   안 하므로(`main_skill_of` 같은 게이트) 표시와 판정이 함께 없어진다 = 갈라지지 않는다.
+# 🔴🔴 **이 아바타의 「스킬 판정 원점」 — 호스트가 판정에 쓰는 그 점을 각 클라가 다시 유도한다**
+#   (netreview I-2 2026-08-02). FX를 `global_position`에서 띄우면 **판정과 표시가 다른 점에서 태어나**
+#   이동형 검기가 비행 내내(1.73초·520px) 그 오차를 평행 이동시킨다 — 관찰자 화면에서는
+#   `lead 전액 + lerp 지연`이라 지연 스파이크에서 **115px**(반경 46 원반 두 개 반)까지 벌어져
+#   "원반이 몹을 관통하는데 그 몹은 안 죽고 옆에 것이 죽는" 그림이 된다(에러 0).
+# ⚠ **로컬 아바타에서는 완전 항등이다** — `net_anchor_lead`가 `global_position`을 돌려준다.
+#   그래서 이 함수는 호스트 화면을 한 픽셀도 안 바꾸고, 그것이 이 결함이 안 보였던 이유이기도 하다.
+# ⚠ 화살(`G_SHOOT`)은 원점을 **메시지에 실어** 같은 문제를 푼다(`is_shot_origin_ok` 44px 검증).
+#   스킬은 원점을 안 실어 스푸핑 표면을 안 여는 대신, 각 클라가 **같은 함수로 다시 유도**한다.
+# 🔴 **매번 다시 판다** — 멤버에 얼려 두면 다단 반복 타가 발동 시각 좌표에 못 박히는데,
+#   호스트는 타마다 `net_anchor`를 다시 읽으므로 그 순간 두 축이 갈라진다.
+func skill_origin() -> Vector2:
+	return net_anchor_lead(Net.one_way_ms(peer_id))
+
+
+func play_skill_fx(dir: Vector2, sk: SkillDef) -> void:
+	if sk == null or not _alive:
+		return
+	var d := dir
+	if not d.is_finite() or d.length_squared() <= 0.000001:
+		d = Vector2.RIGHT
+	d = d.normalized()
+	_skill_fx_index = 0                        # 🔴 반달 좌우 교대의 기준점 — **스폰보다 먼저** 되돌린다
+	_spawn_skill_fx(d, sk)                     # ①타 — 발동 프레임에 즉시(호스트 `_resolve_skill` 미러)
+	# 🔴 **이동형은 반복이 없다** — 한 장이 날아가며 스스로 판정한다(`SkillDef.travel_speed` 계약:
+	#   `hit_count`·`hit_interval_s`는 이동형에서 무시된다). 호스트 `_resolve_skill`이 같은 자리에서
+	#   같은 판단을 하므로 화면 장수와 판정 모델이 갈라지지 않는다.
+	if sk.is_travel():
+		_skill_fx_def = null
+		_skill_fx_left = 0
+		return
+	# 🔴 남은 타 예약 — **타수·간격은 이 클라가 자기 `SkillDef`에서 읽는다**(네트워크 0).
+	#   단발이면 `left = 0` + `def = null`이라 이 축 도입 전과 **완전 항등**이고, 동시에 진행 중이던
+	#   반복이 새 시전으로 **대체**된다(호스트 `_skill_ticks`가 캐스터당 한 칸인 것과 같은 규약).
+	var hits := CombatMath.clamp_skill_hit_count(sk.hit_count)
+	_skill_fx_def = sk if hits > 1 else null
+	_skill_fx_dir = d
+	_skill_fx_left = hits - 1
+	_skill_fx_timer = CombatMath.clamp_skill_hit_interval(sk.hit_interval_s)
+
+
+# 다단 표시 진행 — 🔴 **호스트 `_step_skill_ticks`와 같은 따라잡기 규칙**(`while` + 간격 가산)이라
+#   프레임이 튀어도 화면 타수와 판정 타수가 갈라지지 않는다.
+# 🔴 사망에서 끊는다 — 호스트도 틱마다 `is_alive()`를 보고 끊으므로 **같은 조건**이다.
+#   ⚠ 구르기로는 안 끊는다(호스트도 안 끊는다) — 여기서만 끊으면 "안 보이는데 맞는다"가 된다.
+func _tick_skill_fx(delta: float) -> void:
+	if _skill_fx_def == null or _skill_fx_left <= 0:
+		return
+	if not _alive:
+		_skill_fx_def = null
+		_skill_fx_left = 0
+		return
+	var gap := CombatMath.clamp_skill_hit_interval(_skill_fx_def.hit_interval_s)
+	_skill_fx_timer -= delta
+	while _skill_fx_timer <= 0.0 and _skill_fx_left > 0:
+		_spawn_skill_fx(_skill_fx_dir, _skill_fx_def)
+		# 🔴 손맛은 **로컬 아바타에서만** — 원격 아바타가 emit하면 남의 스킬이 내 화면을 흔든다
+		#   (단발 시절 `_fire_skill`이 로컬에서만 `_skill_feel`을 부르던 것과 같은 경계).
+		if is_local:
+			_skill_feel(_skill_fx_dir, _skill_fx_def)
+		_skill_fx_left -= 1
+		_skill_fx_timer += gap
+	if _skill_fx_left <= 0:
+		_skill_fx_def = null
+
+
+# 한 타의 FX 한 장 — 🔴 **좌표를 여기서 읽는다**(`global_position`). 타마다 다시 읽으므로 시전자가
+#   걸으면 FX도 따라 나가고, 호스트가 타마다 `net_anchor()`를 다시 읽는 것과 **같은 규칙**이다.
+#   ⚠ 태어난 뒤에는 그 자리에 못 박힌다(씬 루트 자식 = 시전자를 안 따라간다, `skill_fx.gd` 헤더).
+#     이동형만 예외이고, 그때는 **판정도 같이 나아간다**(그 파일 헤더가 이유의 정본).
+# 🔴 **형태는 데이터가 고른다 — 새 필드 0개.** 갈래 셋이 전부 `SkillDef`에서 읽히므로 "이 스킬은
+#   무슨 그림인가"가 `.tres` 한 장에 닫힌다:
+#     ⑴ 이동형(`travel_speed > 0`) = **날아가는 검기**(`skill_fx` + travel — spin이면 회전 원반)
+#     ⑵ 제자리 beam(앞을 벤다)    = **반달 연타**(`slash_fx` — 아래 `_spawn_skill_slash`)
+#     ⑶ 그 밖(제자리 spin)        = 회전 광역 원(`skill_fx` — 도입 시점 그대로)
+# 🔴🔴 **분기 순서가 계약이다 — 이동형이 형태보다 먼저다.** 뒤집으면 「beam + 이동형」 스킬에서
+#   판정은 날아가는데(호스트 `_resolve_skill`도 이동형을 먼저 본다) 화면만 제자리 반달이 되어
+#   **"검기가 저기 있는데 여기서 맞는다"** 가 된다. 지금 데이터에 그런 조합이 없다는 것은 근거가
+#   못 된다 — `.tres` 두 칸이면 만들어지고, 그때 에러가 안 난다.
+func _spawn_skill_fx(dir: Vector2, sk: SkillDef) -> void:
+	var parent := get_parent()
+	if parent == null:
+		return
+	if sk.is_beam() and not sk.is_travel():
+		_spawn_skill_slash(dir, sk, parent)
+		_skill_fx_index += 1
+		return
+	var fx := SkillFx.new()
+	parent.add_child(fx)  # 씬 루트 자식 = 시전자를 따라가지 않는다(그 타의 좌표에 못 박힌다)
+	# 🔴 수명의 출처가 갈래마다 다르되 **둘 다 단일 소스 함수**다 — 사본을 만들지 마라:
+	#   이동형 = `skill_travel_lifetime_s`(호스트 판정 수명과 **같은 함수**) · 제자리 = 타 간격 유도.
+	var life := CombatMath.skill_travel_lifetime_s(sk.travel_speed, sk.travel_dist) if sk.is_travel() \
+		else SkillFx.multi_life_s(sk.hit_count, sk.hit_interval_s)
+	# 🔴 기하(반경·길이)·속도는 `SkillDef` 그대로다 — 연출 배율 0개(§3 "맞는 곳 = 보이는 곳").
+	# 🔴 원점 = `skill_origin()`(= 호스트 판정 원점 `net_anchor_lead`) — `global_position`이 아니다.
+	#   로컬 아바타에서는 두 값이 같고, 원격 아바타에서만 갈린다(그 함수 주석이 근거).
+	fx.setup(sk.shape, skill_origin(), dir.angle(), _fx_color(1.0), sk.radius, sk.length,
+		life, sk.travel_speed)
+	_skill_fx_index += 1
+
+
+# 🔴 **beam 스킬의 한 타 = 반달 한 장** (2026-08-02 사용자 확정: *"환영검무도 검을 와다다다 하는
+#   느낌이지 저런게 아님"*). 전에는 판정 캡슐을 그대로 그린 **띠**가 다섯 번 떴는데, 띠는 "여기가
+#   범위다"라는 **예고의 언어**라 「검을 매우 빠르게 여러 번 휘두른다」로 안 읽혔다.
+#
+# 🔴🔴 **덮임 유도 — 여기가 §3 「표시 ⊇ 판정」을 지키는 자리다.**
+#   판정 = 시전자에서 `dir`로 뻗은 **캡슐**(축 길이 `length` · 반폭 `radius`)이라 전방 도달이
+#   `length + radius`(환영검무 = 95 + 42 = **137px**)다. 그래서
+#     ⑴ **반달의 바깥 끝을 정확히 그 137px에 맞춘다** — `SlashFx.mid_r_for_outer`가 두께 유도의
+#        역함수라 `mid_r`을 손으로 정하지 않는다(정하는 순간 `.tres`의 `length`를 조여도 그림이
+#        안 따라오는 제2의 진실원이 된다).
+#     ⑵ **안쪽 변이 캡슐의 시작단 반구까지 내려온다** — 두께 배율(5.6)이 `SlashFx`의 호 길이 상한에
+#        포화해 `안쪽/바깥 = (1−x)/(1+x)`, `x = 1.0875/2`가 되므로 안쪽 변 = **40.5px** < `radius`(42).
+#        즉 반달의 반경 구간 [40.5, 137]이 판정 캡슐의 반경 구간 [0, 137] **중 42px 밖 전부**를 덮는다
+#        (42px 안쪽은 전 방향이 판정이라 아래 ⓐ).
+#     ⑶ **반각이 캡슐의 옆폭을 덮는다** — 반경 r(> 42)에서 캡슐의 각 반폭은 `asin(radius / r)`이고
+#        r이 작을수록 크다: r=48에서 61.0° · r=60에서 44.4° · r=137에서 17.8°.
+#        한 장이 덮는 각은 `1.45 − 0.34` = 1.11rad = **63.6°**(기울인 반대쪽은 102.6°)이므로
+#        r ≥ 48에서는 **한 장으로 충분**하다. 남는 것은 r ∈ [42, 48]의 한쪽 옆구리 5px 띠뿐이고,
+#        기울기가 **타마다 좌우로 뒤집히므로** 그 띠는 다음 타가 덮는다.
+#   ⚠ **덮이지 않고 남는 것 둘 — 리드 판단 대상으로 보고했다:**
+#     ⓐ 시전자 반경 40.5px 이내 = **리본 선례로 허용된 공동**(칼이 몸을 지나가는 것으로 읽힌다,
+#        `TRAIL_*` 상수 주석). 캡슐은 그 안을 **전 방향** 판정하므로 옛 띠 FX는 그렸다 = 이 축만
+#        표시가 줄었다. ⓑ 위 5px 띠의 한쪽(한 타 기준). 둘 다 전방 호로는 원리적으로 못 덮는다.
+func _spawn_skill_slash(dir: Vector2, sk: SkillDef, parent: Node) -> void:
+	# 🔴 도달의 출처 = **판정 캡슐 그 자체**(clamp도 호스트와 같은 함수를 지난다).
+	var reach := CombatMath.clamp_skill_length(sk.length) + CombatMath.clamp_skill_radius(sk.radius)
+	if reach <= 0.0:
+		return
+	var w := _weapon_weight()
+	var ha := SKILL_SLASH_HALF_ANGLE
+	# 🔴 타마다 좌우 교대 — 이 한 줄이 "와다다다"의 정체다(같은 각이면 한 장이 다섯 번 깜빡인다).
+	var side := 1.0 if (_skill_fx_index % 2) == 0 else -1.0
+	var angle := dir.angle() + side * SKILL_SLASH_TILT
+	var sfx := SlashFx.new()
+	parent.add_child(sfx)
+	sfx.global_position = skill_origin()  # 호의 곡률 중심 = 판정 캡슐 원점과 **같은 점**(I-2)
+	sfx.setup(angle, _fx_color(1.0),
+		SlashFx.mid_r_for_outer(reach, ha, w, SKILL_SLASH_THICK_SCALE),
+		ha, w, SKILL_SLASH_THICK_SCALE,
+		SlashFx.multi_life_s(sk.hit_count, sk.hit_interval_s), SKILL_SLASH_SPEED)
+	# 칼 잔상 — 데이터 설명(*"잔상이 남을 만큼 빠르게"*)을 화면에 실제로 만드는 겹.
+	# 🔴 장수 상한은 **평타 궤적과 같은 governance**를 지난다(`_subjob_fx_ghost`는 이미
+	#   `CombatMath.fx_ghost_mult`로 clamp된 값이다 — 드로우콜 = 웹 프레임 비용, rules §5).
+	# ⚠ 무장 해제·원격 미공지면 `spawn_weapon`이 스스로 조용히 빠진다(texture null 가드).
+	var ghosts := maxi(1, int(round(float(SKILL_SLASH_GHOSTS) * _subjob_fx_ghost)))
+	for i: int in range(ghosts):
+		var t := 0.0 if ghosts <= 1 else (float(i) / float(ghosts - 1)) * 2.0 - 1.0
+		AfterImage.spawn_weapon(_weapon, _weapon_pivot, self,
+			angle + t * ha * SKILL_SLASH_GHOST_SPAN, _fx_color(1.0))
 
 
 # 원거리 발사(shoot = 활 · charge = 지팡이) — 표시 투사체 스폰(로컬)·G_SHOOT 송신(원격 표시)·(호스트) 권한 투사체 등록.

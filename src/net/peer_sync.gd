@@ -104,6 +104,23 @@ func peer_main_fx(peer_id: int) -> Dictionary:
 	return GameState.main_fx_of(str(st.get("ms", "")), str(_peer_jobs.get(peer_id, "")))
 
 
+# 그 피어의 **하위 직업 스킬**(G_SKILL 확정용). 🔴 `peer_traits`/`peer_main_fx`의 정확한 미러다:
+#   같은 공지("ms") · 같은 계열 근거(G_JOB) · 같은 로컬 리졸브(`GameState.main_skill_of` =
+#   `main_slot_def` 게이트: 계열 일치 · 공유 하위 직업 배제 · 모르는 id 폐기).
+# 🔴 **그런데 이쪽은 표시가 아니라 판정이다** — 호스트가 이 결과로 데미지 배율·반경·사거리·쿨다운을
+#   정한다. 그래서 **메시지에는 수치가 한 칸도 안 실린다**(`peer_weapon_id` 철학, rules §3):
+#   "안 낀 스킬을 쏘는 것"과 "남의 계열 스킬을 주장하는 것"이 이 한 함수에서 함께 막힌다.
+# ⚠ 미공지·계열 미상(G_STATS가 G_JOB보다 먼저 도착한 창)이면 null = **발동이 조용히 거부**된다.
+#   관대한 쪽이 아니라 안전한 쪽으로 떨어지는 것이고, `peer_traits`가 그 창에서 특성을 0으로 두는 것과
+#   같은 방향이다. 창은 첫 G_POS 재공지(위 `_pos_seen`)·G_JOB 분기 재적용이 곧 닫는다.
+func peer_skill(peer_id: int) -> SkillDef:
+	var st_v: Variant = _peer_stats.get(peer_id)
+	if st_v == null:
+		return null
+	var st := st_v as Dictionary
+	return GameState.main_skill_of(str(st.get("ms", "")), str(_peer_jobs.get(peer_id, "")))
+
+
 func _spawn(peer_id: int, is_local: bool) -> void:
 	if peer_id == 0 or _players.has(peer_id):
 		return
@@ -312,6 +329,19 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			if _players.has(from_id):
 				_players[from_id].play_roll_fx(
 					Vector2(float(data.get("dx", 0.0)), float(data.get("dy", 0.0))))
+		NetSchema.G_SKILL:
+			# 원격 하위 직업 스킬 연출 — 표시 전용(G_ROLL·G_ATK 중계와 같은 규약). 데미지 확정은
+			# CombatAuthority(호스트)가 **같은 메시지를 따로 받아** 한다.
+			# 🔴 **기하는 그 피어의 공지 하위 직업에서 리졸브한다**(`peer_skill`) — 메시지에는 방향뿐이라
+			#   "남의 화면에 거대한 원을 그리는" 권한이 애초에 없다. 호스트 판정과 **같은 함수**를 지나므로
+			#   내 화면의 원/띠 크기가 곧 호스트가 세우는 판정 기하다(§3 "맞는 곳 = 보이는 곳").
+			# ⚠ null(미공지·계열 불일치·스킬 없음)이면 아무것도 안 그린다 — 호스트도 같은 게이트에서
+			#   판정을 거부하므로 **표시와 판정이 함께** 없어진다(한쪽만 새지 않는다).
+			if _players.has(from_id):
+				var kdir := Vector2(float(data.get("dx", 1.0)), float(data.get("dy", 0.0)))
+				_players[from_id].play_skill_fx(
+					kdir.normalized() if kdir.length() > 0.001 else Vector2.RIGHT,
+					peer_skill(from_id))
 
 
 # 🔴 원격 피어의 무기 겉모습 — **호스트 판정과 같은 필터를 지난다**(`can_job_equip`, 2026-07-28

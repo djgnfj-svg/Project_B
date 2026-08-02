@@ -110,6 +110,20 @@ func is_usable_by(series: String) -> bool:
 #   리졸브한다. 경로를 실으면 그게 곧 임의 load 표면이다(rules §3 씬 경로 원칙과 같은 근거).
 @export var body_frames: SpriteFrames = null
 
+# --- 스킬 (2026-08-02) — 🔴 **표시 축이 아니다. 판정에 닿는다.** ---
+# 하위 직업 하나당 스킬 하나(GDD §3이 조작을 확정해 둔 자리 · §11 「직업별 스킬 구성」 TBD의 첫 입주).
+# 🔴 **메인 자리 전용이다** — 서브까지 스킬을 내면 한 판에 스킬이 3개가 되어 화력 예산이
+#   슬롯 수만큼 곱해진다. 리졸브(`GameState.main_skill_of`)가 `fx_color`·`trait_at(true)`와
+#   **같은 게이트**(계열 일치 · 공유 하위 직업 배제)를 지난다 — 사본 조건문을 두지 마라.
+# 🔴 **네트워크로 오가는 것은 여전히 id뿐이다**(G_STATS "ms"). 스킬 수치는 각 클라·호스트가
+#   자기 data/subjobs → data/skills에서 리졸브한다(`SkillDef` 헤더가 근거). 배율을 실으면
+#   그게 곧 "내 스킬은 ×99"라고 주장하는 표면이다.
+# 🔒 위 「축 경계」의 예외다 — `fx_color`/`body_frames`가 표시 전용인 것과 달리 이 필드는
+#   **호스트 데미지 확정에 들어간다.** 그래서 상한을 데이터가 아니라 CombatMath가 쥔다
+#   (`clamp_skill_mult`·`clamp_skill_radius`·`clamp_skill_length`).
+# null = 스킬 없음 = 도입 전과 **완전 항등**(검사 등 아직 스킬이 없는 하위 직업).
+@export var skill: SkillDef = null
+
 
 # 자리별 특성 → {key, value, name}. 키가 비었으면 null(특성 없음 = 항등).
 # 🔴 **공유 하위 직업의 메인 특성은 여기서 막는다** — 데이터에 실수로 채워 넣어도 메인 자리에

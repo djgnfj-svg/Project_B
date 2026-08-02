@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="SkillDef" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://src/core/skill_def.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/subjobs/warrior_swordmaster.png" id="2"]
+
+[resource]
+script = ExtResource("1")
+id = "swordmaster_whirl"
+display_name = "월륜"
+description = "둥근 검기를 뽑아 앞으로 흘려보낸다. 시야 밖까지 나아가며 지나는 것을 모두 베고, 힘을 다하면 흩어진다."
+icon = ExtResource("2")
+shape = "spin"
+damage_mult = 2.2
+radius = 46.0
+length = 0.0
+cooldown_s = 8.0
+windup_s = 0.22
+hit_count = 1
+hit_interval_s = 0.08
+travel_speed = 300.0
+travel_dist = 520.0

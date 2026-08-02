@@ -1,9 +1,10 @@
-[gd_resource type="Resource" script_class="SubJobDef" load_steps=5 format=3]
+[gd_resource type="Resource" script_class="SubJobDef" load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://src/core/sub_job_def.gd" id="1"]
 [ext_resource type="Texture2D" path="res://assets/sprites/subjobs/warrior_swordmaster.png" id="2"]
 [ext_resource type="Texture2D" path="res://assets/sprites/fx/trail_edge.png" id="3"]
 [ext_resource type="SpriteFrames" path="res://assets/sprites/player/warrior_swordmaster_frames.tres" id="4"]
+[ext_resource type="Resource" path="res://data/skills/swordmaster_whirl.tres" id="5"]
 
 [resource]
 script = ExtResource("1")
@@ -30,3 +31,4 @@ fx_color = Color(0.51, 0.83, 1, 1)
 fx_ghost_mult = 1.3
 fx_trail_tex = ExtResource("3")
 body_frames = ExtResource("4")
+skill = ExtResource("5")

@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="SkillDef" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://src/core/skill_def.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/subjobs/warrior_berserker.png" id="2"]
+
+[resource]
+script = ExtResource("1")
+id = "berserker_phantom_dance"
+display_name = "환영검무"
+description = "잔상이 남을 만큼 빠르게 앞을 다섯 번 벤다. 한 놈을 물고 늘어질 때 가장 아프다."
+icon = ExtResource("2")
+shape = "beam"
+damage_mult = 0.5
+radius = 42.0
+length = 95.0
+cooldown_s = 9.0
+windup_s = 0.12
+hit_count = 5
+hit_interval_s = 0.08

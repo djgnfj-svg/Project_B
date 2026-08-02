@@ -5,6 +5,12 @@ extends Node
 
 const DEFAULT_JOB_ID := "warrior"
 const DEFAULT_CHAPTER_ID := "chapter1"  # 챕터 해금/선택 시스템 전까지의 출발 챕터 (GDD §6 — 방장 해금 기준은 후속)
+# 빌드 버전 — 🔴 **배포할 때마다 손으로 갱신한다.** 웹은 브라우저가 옛 빌드를 캐시해도 조용히 잘 돌기
+#   때문에, "고쳤는데 안 고쳐졌다"의 첫 번째 확인 수단이 이 문자열이다(ESC 메뉴에 표시).
+# ⚠ 2026-08-02에 `village.gd`에서 여기로 옮겼다 — 표시 자리가 마을 우상단 배지에서 **ESC 메뉴**로
+#   가면서(화면 글자 줄이기) 마을 전용이 아니게 됐고, `settings_panel`이 모듈 경계를 넘어 마을
+#   스크립트를 preload할 수는 없기 때문이다(rules §0: 모듈 간은 오토로드·core 스키마만).
+const BUILD_VERSION := "v0802a-forest"
 
 # 시작 시 선택, 이후 고정 (GDD §5). 로비에서 정하고 스테이지가 읽는다.
 # 🔴 setter로 **직업 귀속 재검증**을 건다 (revalidate_equipped) — `can_equip_job`은 equip() 시점에만
@@ -903,10 +909,8 @@ func active_traits() -> Dictionary:
 # 미상·불일치·미지정 = 항등(흰색 · 배율 1.0) = 도입 전과 완전히 같다.
 func main_fx_of(main_id: String, series_id: String) -> Dictionary:
 	var out := {"color": Color(1, 1, 1, 1), "ghost": 1.0, "tex": null, "frames": null}
-	if main_id.is_empty():
-		return out
-	var d := sub_job_def(main_id)
-	if d == null or d.is_shared() or not d.is_usable_by(series_id):
+	var d := main_slot_def(main_id, series_id)
+	if d == null:
 		return out
 	out["color"] = d.fx_color
 	out["ghost"] = CombatMath.fx_ghost_mult(d)  # 🔴 상한은 CombatMath 단일 소스(전수 트립와이어가 닿는 자리)
@@ -919,9 +923,41 @@ func main_fx_of(main_id: String, series_id: String) -> Dictionary:
 	return out
 
 
+# 🔴 **「메인 자리」 게이트 — 이 자리에서 나오는 모든 것이 여기 하나를 지난다** (2026-08-02).
+#   id allowlist 리졸브 · 공유 하위 직업 배제 · 계열 불일치 폐기. 통과 못 하면 null.
+# 왜 함수로 뽑았나: 소비자가 **셋**이 됐다 — 특성(`traits_of`) · 궤적 아이덴티티(`main_fx_of`) ·
+#   스킬(`main_skill_of`). 조건을 소비처마다 복제하면 넷째가 생길 때 하나를 빠뜨리고, 그 결함은
+#   "특성·색은 폐기됐는데 스킬만 켜진다"처럼 **한쪽만 새는** 형태로 나타나 화면에 이유가 안 드러난다.
+#   기존 두 소비자가 실제로 같은 3줄을 들고 있었고, 스킬이 판정에 닿는 축이라 여기서 닫았다.
+func main_slot_def(main_id: String, series_id: String) -> SubJobDef:
+	if main_id.is_empty():
+		return null
+	var d := sub_job_def(main_id)
+	if d == null or d.is_shared() or not d.is_usable_by(series_id):
+		return null
+	return d
+
+
+# 메인 하위 직업의 **스킬** — 🔴 표시 전용이 아니다. 호스트 데미지 확정이 이 결과를 쓴다.
+# 🔴 **`main_fx_of`와 같은 게이트를 지난다**(`main_slot_def`) — 공유 하위 직업을 메인으로 주장한
+#   공지가 "특성·색은 못 얻고 스킬만 얻는" 조합을 구조로 막는다. 사본 조건문을 두지 마라.
+# 🔴 **호스트도 이 함수를 지난다** — 게스트가 G_SKILL을 보내면 호스트가 그 피어의 공지 하위 직업
+#   id(G_STATS "ms")를 여기 넣어 스킬을 리졸브한다. 그래서 "안 낀 스킬을 쏘는 것"이 데이터 경로에서
+#   차단되고, 메시지에는 수치가 한 칸도 안 실린다(`peer_weapon_id`와 같은 철학, rules §3).
+# null = 스킬 없음 = 도입 전과 완전 항등(검사 등 아직 스킬이 없는 하위 직업 · 미지정 · 불일치).
+func main_skill_of(main_id: String, series_id: String) -> SkillDef:
+	var d := main_slot_def(main_id, series_id)
+	return null if d == null else d.skill
+
+
 # 내 궤적 아이덴티티 — 로컬 아바타 연출용. active_traits와 **같은 입력**(필터 통과분)을 쓴다.
 func active_main_fx() -> Dictionary:
 	return main_fx_of(announced_main_id(), selected_job_id)
+
+
+# 내 스킬 — 로컬 발동·HUD 슬롯용. active_traits·active_main_fx와 **같은 입력**을 쓴다.
+func active_skill() -> SkillDef:
+	return main_skill_of(announced_main_id(), selected_job_id)
 
 
 # 공지용 메인 id — 무효(타 계열 진행분·미보유)면 빈 문자열. 🔴 `main_sub_job_id` 원본을 그대로

@@ -378,8 +378,12 @@ static func is_hit_in_reach_lagged(anchor: Vector2, lead_pos: Vector2, enemy_pos
 #   파일을 근거로 상수를 조이지 않게 갱신했다. 여유는 20 → 16으로 줄었다.
 # 🔴 **왜 창에서만 문제가 되나**: 각 오차 = `asin(변위/거리)`인데 창은 반각이 17°로 좁고 사거리가
 #   80px로 길다. 14px 변위가 80px에서 10°를 만들어 예산(반각 17.2 + 몸통 슬랙 7.2 = 24.4°)의 40%를
-#   먹는다. 검(109~137°)·도끼(160°)는 각 예산이 커서 무해하고, 보스는 `body_radius` 42가
-#   `asin(42/80)` = 31.6° 슬랙을 주므로 이미 덮인다 — **창 × 잔몹**에서만 상시가 된다.
+#   먹는다. 검(109~137°)·도끼(160°)는 각 예산이 커서 무해하고, 보스는 **`body_radius`가 커서**
+#   그 자체로 큰 슬랙을 주므로 이미 덮인다 — **창 × 잔몹**에서만 상시가 된다.
+# ⚠ **여기 보스 반경 숫자를 박지 마라** (2026-08-02에 실제로 낡았다). 이 자리엔 오래 `42`가 적혀
+#   있었는데 실제 데이터는 63이었고, 같은 날 덩치를 줄이며 50이 됐다 — **셋이 전부 달랐다.**
+#   결론은 안 바뀐다(`asin(50/80)` = 38.7° > 예산 24.4°)지만, 데이터 값을 주석에 복제한 것이
+#   문제였다. 현재 값의 정본은 `data/enemies/*.tres`의 `body_radius`다.
 const MOB_LAG_SLACK_SPEED := 90.0  # 유도 상한(px/s) — 실측 최대 74 + 새 적 여지. 초과 시 트립와이어
 const MOB_POS_PERIOD_S := 0.1      # ⚠ `MobSync.SEND_RATE`(10Hz)와 **미러** — 그 값을 바꾸면 여기도 고친다
 
@@ -1654,3 +1658,192 @@ static func exp_progress(exp: int, curve: PackedInt32Array, max_level: int) -> D
 		return {"level": lv, "cur": 0, "need": 0}  # 만레벨 = 바 없음(잉여 EXP는 폐기, GDD §11)
 	var floor_exp := c[lv]
 	return {"level": lv, "cur": exp - floor_exp, "need": c[lv + 1] - floor_exp}
+
+
+# ============================================================================
+# 하위 직업 스킬 (2026-08-02 — GDD §3이 조작을 확정해 둔 자리 · §11 「직업별 스킬 구성」 TBD의 첫 입주)
+# ============================================================================
+# 🔴 **여기가 스킬의 단일 소스다 — 로컬 표시(FX 크기)와 호스트 판정이 같은 함수를 지난다**(§3).
+#   한쪽이 자기 계산을 갖는 순간 "맞는 곳 ≠ 보이는 곳"이 되고, 그건 에러 없이 손맛으로만 드러난다.
+# 🔴 **수치는 네트워크로 오지 않는다.** G_SKILL이 싣는 것은 방향뿐이고 배율·반경·사거리·쿨다운은
+#   호스트가 그 피어의 공지 하위 직업 id로 리졸브한다(`SkillDef` 헤더 · `peer_weapon_id` 철학).
+#   아래 clamp들은 **데이터가 깨졌을 때**의 안전망이자 공지 스푸핑의 절대 상한이다.
+
+# 데미지 배율 하드 상한. ⚠ 이것은 신뢰 경계용 절대 상한이고, **밸런스는 아래 DPS 트립와이어가 잡는다**
+#   — 상한 하나로 두 일을 시키면 "예산은 넘겼는데 clamp는 안 걸린" 값이 조용히 통과한다.
+const SKILL_DAMAGE_MULT_MAX := 3.0
+
+# spin(360°) 판정 반경 상한 = 근접 하드 상한과 **같은 값**이다.
+# 🔴 "스킬이니까 더 넓어도 된다"로 올리지 마라 — 평타 부채꼴은 각이 제한되지만 spin은 **전방위**라
+#   같은 반경에서도 면적이 몇 배다(대검 반각 109°면 3.3배 · 창 17°면 21배). 반경을 근접 상한에
+#   묶어 두는 것이 "근접이 원거리가 되면 직업 = 플레이 방식의 변환이 무너진다"(MAX_MELEE_RANGE의
+#   근거)를 스킬 축에서도 지키는 방법이다.
+const SKILL_RADIUS_MAX := MAX_MELEE_RANGE
+
+# beam(직선 관통) 사거리 상한.
+# 🔴🔴 **beam은 위 `SKILL_RADIUS_MAX`의 근접 상한 축 밖이다 — 그것이 이 스킬의 존재 이유다.**
+#   윗 줄만 읽고 "스킬은 근접 상한(130)에 묶여 있다"고 믿지 마라. 검성 비검은 220px를 뻗고,
+#   실효 도달은 최장 근접(창 80px · 특성 최대 120px)의 **2배가 넘는다**. 두 형태에 다른 축을 준
+#   것은 의도다 — spin은 "둘러싸였을 때 쓸어버린다"(전방위라 면적이 곧 위력)이고 beam은
+#   "닿지 않는 것을 벤다"(축이 곧 정보라 길이가 곧 위력)다. 같은 잣대를 대면 둘 중 하나가 죽는다.
+# ⚠ **유도를 원거리 무기에서 하지 마라** — 2026-08-02에 한 번 그렇게 적었다가 틀렸다: 근거로 든
+#   `iron_staff`(arrow_range 260)·`worn_bow`(150)는 **2026-08-01에 데이터가 전량 삭제됐다**
+#   (궁수·법사 폐기). 지금 `data/equipment`에 남은 것은 근접 4종뿐이라 그 유도는 존재하지 않는
+#   수를 인용한 것이었다. 살아 있는 근거는 **화면**이다: 줌 1.3에서 보이는 영역이 492×277px이라
+#   260은 가로 절반이 조금 넘는다 — "화면 안에서 끝나는 사거리"가 상한의 뜻이다.
+const SKILL_LENGTH_MAX := 260.0
+
+# 쿨다운 하한(초). 🔴 이것이 사실상의 화력 게이트다 — 배율이 아무리 clamp돼도 쿨다운이 0에
+#   가까우면 스킬이 곧 평타가 된다.
+const SKILL_COOLDOWN_MIN := 3.0
+
+# 🔴 **데이터 트립와이어용 — 스킬이 더하는 초당 배율 상한**(= damage_mult ÷ cooldown_s).
+#   전사 평타는 `attack_cooldown` 0.4s라 배율 기준 초당 2.5를 낸다. 0.30이면 스킬 기여가
+#   그 **12% 이내**로 묶인다 — "쿨마다 한 방이 시원하되 평타를 대체하지는 않는다"의 수치화다.
+#   ⚠ clamp가 아니라 **테스트가 `data/skills` 전수로 단정**한다(밸런스는 조용히 잘리면 안 된다 —
+#   잘리는 순간 데이터에 적은 값과 실제가 갈라지고, 그 갈라짐이 화면에 안 드러난다).
+const SKILL_DPS_ADD_MAX := 0.30
+
+# 다단 히트 상한 (2026-08-02). 🔴 타수는 **화력이 아니라 프레임 비용**의 축이기도 하다 —
+#   한 타마다 판정 질의 + `G_ENEMY_HP` 브로드캐스트가 나가므로, 웹 Compatibility에서 8타 × 다수 적은
+#   그 자체로 히치를 만든다. 화력은 `SKILL_DPS_ADD_MAX`가 이미 잡으므로 여기는 **비용 상한**이다.
+const SKILL_HIT_COUNT_MAX := 8
+# 타 간격(초) 하한 — 🔴 이보다 촘촘하면 웹 30fps에서 **여러 타가 한 프레임에 몰려** "다단"이 아니라
+#   그냥 큰 한 방이 되고, 적이 빠져나갈 틈이 사라진다(= 회피 불가능한 광역이 된다).
+const SKILL_HIT_INTERVAL_MIN := 0.05
+const SKILL_HIT_INTERVAL_MAX := 0.5
+
+
+# --- 이동형 스킬 (2026-08-02 — 검성 「월륜」) ---
+# 🔴 속도 상한 = **화살과 같은 선**(`ARROW_SPEED` 420). 검기가 화살보다 빠를 근거가 없고, 넘으면
+#   터널링을 화살과 같은 방식으로 다시 따져야 한다(프레임당 전진 < 최소 명중 지름).
+const SKILL_TRAVEL_SPEED_MAX := ARROW_SPEED
+# 🔴 사거리 상한 = **전투 칸 가로(1280px)의 절반**. 유도 근거 둘:
+#   ⑴ 화면 가로가 줌 1.3에서 492px이므로 640이면 **화면 밖으로 확실히 사라진다** = 사용자가 말한
+#      *"맵 끝까지 가면서 서서히 사라지는"* 그림이 성립한다.
+#   ⑵ 그런데도 맵 **반대편 끝까지는 못 간다** — 한 방으로 칸 전체를 훑으면 위치 선정이 무의미해진다.
+# ⚠ `SKILL_LENGTH_MAX`(beam 260)와 **다른 축이다**. 저쪽은 「제자리에서 뻗는 띠」라 즉시 판정이고,
+#   이쪽은 날아가는 데 시간이 걸려 적이 피할 수 있다 — 그래서 더 멀리 허용한다.
+const SKILL_TRAVEL_DIST_MAX := 640.0
+
+
+static func clamp_skill_travel_speed(v: float) -> float:
+	if not is_finite(v) or v <= 0.0:
+		return 0.0    # 0 = 제자리 = 이동형 도입 전과 항등
+	return minf(v, SKILL_TRAVEL_SPEED_MAX)
+
+
+static func clamp_skill_travel_dist(v: float) -> float:
+	if not is_finite(v) or v <= 0.0:
+		return 0.0
+	return minf(v, SKILL_TRAVEL_DIST_MAX)
+
+
+# 이동형 검기의 비행 시간(초) — 🔴 **표시(FX 수명)와 호스트 판정 수명이 같은 함수를 지난다**.
+#   사본을 두면 "검기는 아직 날아가는데 판정이 끝났다"(또는 그 반대)가 되고, 그건 화면에
+#   이유가 안 드러난다(`arrow_lifetime_s`와 같은 관용구·같은 이유).
+static func skill_travel_lifetime_s(speed: float, dist: float) -> float:
+	var v := clamp_skill_travel_speed(speed)
+	if v <= 0.0:
+		return 0.0
+	return clamp_skill_travel_dist(dist) / v
+
+
+static func clamp_skill_hit_count(n: int) -> int:
+	return clampi(n, 1, SKILL_HIT_COUNT_MAX)   # 0·음수 = 1(단발) = 이 축 도입 전과 항등
+
+
+static func clamp_skill_hit_interval(s: float) -> float:
+	if not is_finite(s):
+		return SKILL_HIT_INTERVAL_MIN
+	return clampf(s, SKILL_HIT_INTERVAL_MIN, SKILL_HIT_INTERVAL_MAX)
+
+
+# 🔴 **그 스킬이 한 사이클에 내는 총 배율** — 예산 트립와이어와 밸런스 판단이 **같은 이 함수**를
+#   지나야 한다. `damage_mult`만 보면 다단 스킬의 화력을 타수만큼 과소평가하고, 그 오차는
+#   "데이터에 적은 값"과 "실제로 나가는 값"이 갈라진 형태라 화면에 안 드러난다.
+static func skill_total_mult(sk: SkillDef) -> float:
+	if sk == null:
+		return 0.0
+	return clamp_skill_mult(sk.damage_mult) * float(clamp_skill_hit_count(sk.hit_count))
+
+
+static func clamp_skill_mult(m: float) -> float:
+	if not is_finite(m) or m <= 0.0:
+		return 1.0    # "비었다"와 "깨졌다"를 같은 항등값으로 (clamp_combo_mult와 같은 관용구)
+	return minf(m, SKILL_DAMAGE_MULT_MAX)
+
+
+static func clamp_skill_radius(r: float) -> float:
+	if not is_finite(r) or r <= 0.0:
+		return 0.0    # 0 = 아무도 안 맞는다(안전한 폴백 — 넓어지는 쪽으로 틀리지 않는다)
+	return minf(r, SKILL_RADIUS_MAX)
+
+
+static func clamp_skill_length(l: float) -> float:
+	if not is_finite(l) or l <= 0.0:
+		return 0.0
+	return minf(l, SKILL_LENGTH_MAX)
+
+
+static func clamp_skill_cooldown(c: float) -> float:
+	if not is_finite(c) or c <= 0.0:
+		return SKILL_COOLDOWN_MIN
+	return maxf(c, SKILL_COOLDOWN_MIN)
+
+
+# 스킬 발동 가능한가 — 🔴 로컬 쿨다운(HUD 게이지)과 호스트 검증이 **같은 함수**를 지난다.
+#   `is_fire_rate_ok`와 같은 규약: 호스트는 클라 주장이 아니라 **자기 수신 시각**으로 재고,
+#   `FIRE_RATE_SLACK`만큼 관대하게 잡는다(네트워크가 삼킬 수 있다고 이미 인정한 몫 —
+#   조이면 정직한 발동이 무음 거부되고 그 증상이 지연 결함과 구분되지 않는다).
+static func is_skill_ready(last_msec: int, now_msec: int, cooldown_s: float) -> bool:
+	return now_msec - last_msec >= int(clamp_skill_cooldown(cooldown_s) * FIRE_RATE_SLACK * 1000.0)
+
+
+# 🔴 **클라가 스스로 물러서는 간격(초) — 호스트 게이트에 딱 붙이지 마라** (netreview C-1 2026-08-02).
+#
+# 왜 `is_skill_ready`를 클라가 그대로 쓰면 안 되나:
+#   호스트가 재는 것은 클라의 입력 간격이 아니라 **자기 수신 프레임 간격**이다.
+#     호스트 델타 = 클라 델타 + (편도₂ − 편도₁) + 수신 프레임 양자화(웹 30fps = ±33.3ms)
+#   클라가 같은 문턱(`cd × FIRE_RATE_SLACK`)을 쓰면 여유가 **정확히 0**이라, 위 두 항 중 하나만
+#   음수여도 거부된다. 그리고 HUD 게이지가 그 문턱에서 0을 찍어 **플레이어를 그 경계로 유도한다.**
+# 🔴 대가가 근접·발사보다 훨씬 크다: 거부돼도 클라는 앵커를 갱신하므로 **쿨다운 8~9초를 통째로
+#   잃는다**(근접은 400ms 뒤 다시 친다). 게다가 호스트 자신은 동기 호출이라 **영향이 0**이라,
+#   "호스트 화면에서는 완벽한 버그"가 된다 — 이 프로젝트가 가장 경계하는 형태다.
+# 증상은 무증상에 가깝다: 선딜·FX·타격음·카메라 킥이 전부 정상이고 **적 HP만 안 깎인다.**
+#
+# 🔴 첫 항이 `cd`이지 `cd / FIRE_RATE_SLACK`이 아니다 — `auto_fire_gap_s`와 갈리는 유일한 자리다.
+#   거긴 쿨다운이 0.15~0.4s라 나눗셈이 40ms를 더할 뿐이지만, 스킬은 8~9s라 **1초를 더 기다리게**
+#   된다. `cd`만으로 여유가 이미 `cd × (1 − FIRE_RATE_SLACK)` = 300ms(하한 3s)~900ms이고,
+#   이는 편도 변동 최악(`LAG_MAX_ONE_WAY_MS` 200ms) + 프레임 양자화(33ms)를 덮는다.
+# ⚠ 두 번째 항은 짧은 쿨다운에서 첫 항을 넘길 때를 위한 안전망이다(현행 하한 3s에서는 안 걸린다).
+#   `SKILL_COOLDOWN_MIN`을 0.4s 아래로 내리면 그때부터 이 항이 지배한다.
+# 🔴 **HUD 남은 시간도 이 함수를 지나야 한다** — 안 그러면 "0초인데 안 나간다"가 된다.
+static func skill_cast_gap_s(cooldown_s: float) -> float:
+	var cd := clamp_skill_cooldown(cooldown_s)
+	return maxf(cd, cd * FIRE_RATE_SLACK + AUTO_FIRE_HOST_FRAME_S)
+
+
+# 스킬 명중 판정 — 🔴 **단일 소스**(로컬 표시 · 호스트 확정이 같이 부른다).
+#   spin = 시전자 중심 원        ≡ is_strike_hit          (보스 원형 패턴과 같은 함수)
+#   beam = 시전자에서 dir 방향 띠 ≡ capsule_depth >= 0     (보스 횡단 돌진과 같은 함수)
+# 🔴 **새 기하를 만들지 않았다** — 두 형태 모두 이 파일이 이미 쥔 판정을 재사용한다.
+#   그래서 "예고 셰이더가 그리는 도형"도 그대로 재사용할 수 있다(boss_telegraph의 원/캡슐 분기).
+# slack_px = 대상(잔몹) 좌표가 낡은 만큼의 여유. 🔴 **호스트만 `mob_lag_slack_px`를 넘긴다** —
+#   G_MOB_POS가 10Hz·외삽 없음이라 게스트 화면의 적은 호스트보다 낡았고, 그 차이만큼 정직한
+#   발동이 거부되면 증상이 "스킬은 나갔는데 적 HP만 안 깎인다"가 되어 §3 근접 지연 결함과
+#   **구분되지 않는다**. 관대해지는 대상이 NPC라 「방어자 우대」와 이해가 충돌하지 않는다
+#   (근접 각 슬랙과 같은 판단 — rules §3).
+# ⚠ 모르는 shape는 **false**로 떨어진다(안 맞는 쪽 = 안전한 폴백, 보스 `shape` 규약 미러).
+static func is_skill_hit(shape: String, enemy_pos: Vector2, caster_pos: Vector2, dir: Vector2,
+		radius: float, length: float, enemy_radius: float = 0.0, slack_px: float = 0.0) -> bool:
+	var r := clamp_skill_radius(radius) + maxf(enemy_radius, 0.0) + maxf(slack_px, 0.0)
+	if shape == SkillDef.SHAPE_SPIN:
+		return is_strike_hit(enemy_pos, caster_pos, r)
+	if shape == SkillDef.SHAPE_BEAM:
+		var d := dir.normalized()
+		if d == Vector2.ZERO:
+			return false   # 방향 없는 beam은 띠가 정의되지 않는다(길이 0 캡슐 = 원이 되면 안 된다)
+		var tip := caster_pos + d * clamp_skill_length(length)
+		return capsule_depth(enemy_pos, caster_pos, tip, r) >= 0.0
+	return false
