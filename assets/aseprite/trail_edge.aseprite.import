@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://x6frja8rjnx1"
+path="res://.godot/imported/trail_edge.aseprite-54524275f06ce1446e11879e51aa984c.res"
+
+[deps]
+
+source_file="res://assets/aseprite/trail_edge.aseprite"
+dest_files=["res://.godot/imported/trail_edge.aseprite-54524275f06ce1446e11879e51aa984c.res"]
+
+[params]
+

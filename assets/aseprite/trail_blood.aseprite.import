@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://2n7aodsun1po"
+path="res://.godot/imported/trail_blood.aseprite-bdf6313cf01ea2d06184962ddceefb2d.res"
+
+[deps]
+
+source_file="res://assets/aseprite/trail_blood.aseprite"
+dest_files=["res://.godot/imported/trail_blood.aseprite-bdf6313cf01ea2d06184962ddceefb2d.res"]
+
+[params]
+
