@@ -59,7 +59,13 @@ count_in() {
 #   변경된 `.gd`만 훑으므로 1파일 ≈ 1초다. git이 없거나 변경이 없으면 조용히 건너뛴다.
 run_parse_check() {
 	local files f out real n=0 bad=0 autos
-	files=$(git diff --name-only HEAD -- '*.gd' 2>/dev/null)
+	# 🔴 **추적 전(untracked) 신규 파일도 반드시 포함한다** (2026-08-02 발견). `git diff --name-only HEAD`는
+	#   `git add` 전의 새 `.gd`를 **통째로 빠뜨린다** — 그런데 **새 씬 글루 파일이야말로 가장 위험한 경우**다:
+	#   스위트가 preload를 못 하니 파스 체크가 유일한 방어인데, 정확히 그 순간 그 방어가 꺼져 있었다.
+	#   `-m`(수정) + `-o`(미추적) + `--exclude-standard`(.gitignore 존중)로 둘 다 본다.
+	#   ⚠ 둘을 **합친다** — `git diff HEAD`는 스테이징된 변경까지 보고, `ls-files -o`는 미추적을 본다.
+	#   `ls-files -m`만 쓰면 반대로 **이미 `git add`한 수정**을 놓친다(커밋 직전이 그 상태다).
+	files=$( { git diff --name-only HEAD -- '*.gd'; git ls-files -o --exclude-standard -- '*.gd'; } 2>/dev/null | sort -u)
 	[ -n "$files" ] || return 0
 	# 🔴 오토로드 전역 이름은 `--check-only`에서도 **정상적으로** 미해결이다 (rules §5).
 	#   실게임 전용 씬 스크립트(player/stage/ui/main)는 `EventBus`·`Net`을 그대로 쓰는 것이 규약이라
