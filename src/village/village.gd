@@ -4,7 +4,6 @@ extends Node2D
 # 자식 SceneFlow가 G_SCENE 브로드캐스트 + 수신 검증을 담당 (rules §2 — 복사 금지, 스테이지와 공용).
 # 피어 동기화는 자식 PeerSync가 담당 — 여기서 스폰/G_POS를 다루지 않는다.
 
-const NetSchema := preload("res://src/core/net_schema.gd")
 const PlayerActor := preload("res://src/player/player.gd")
 const SceneFlowNode := preload("res://src/net/scene_flow.gd")
 const UiTheme := preload("res://src/ui/ui_theme.gd")  # UI 톤 단일 소스 (HUD·패널과 같은 테마)
@@ -22,12 +21,6 @@ var _local_in_train: bool = false  # 로컬 플레이어가 훈련소 영역 안
 # ⚠ 에디터에서 바닥을 넓히면 여기도 같이 늘려야 카메라가 새 영역을 보여준다. 안 늘리면
 #   에러 없이 "걸어갔는데 화면이 안 따라오는" 상태가 된다.
 const MAP_RECT := Rect2(0, 0, 960, 576)
-
-# 빌드 버전 — 배포할 때마다 갱신. 마을 우상단에 표시(캐시=구버전 판별 + 인원수 체크용)
-const BUILD_VERSION := "v0731a-forest"
-
-var _info_label: Label = null
-var _info_left: float = 0.0
 
 @onready var _gate: Area2D = $Gate
 @onready var _hint: Label = $Gate/Hint
@@ -56,7 +49,10 @@ func _ready() -> void:
 	_apply_train_texture()
 	set_meta("map_rect", MAP_RECT)  # 카메라 맵 클램프 — camera_rig가 스폰 시 읽는다
 	_style_world_hints()
-	_build_info_overlay()
+	# 🔴 **우상단 버전·인원 배지는 2026-08-02에 화면에서 뺐다** — ESC 메뉴로 갔다(사용자 요구:
+	#   *"ui 줄이기(너무 많음 ESC에 다 들어가게 하자), 글자를 줄이고"*). 잃은 것은 없다:
+	#   빌드 버전은 `SettingsPanel`이 `BUILD_VERSION`을 읽어 띄우고, 인원은 방 줄에 `n/m명`으로 붙는다.
+	#   ⚠ **상수는 여기 남겨 둔다** — 배포할 때마다 갱신하는 값이고, 그 절차가 이 파일에 묶여 있다.
 
 
 # 월드 위에 떠 있는 안내 라벨(게이트·제작대·훈련소) 정리.
@@ -68,40 +64,6 @@ func _style_world_hints() -> void:
 		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		lbl.theme = UiTheme.get_theme()  # 월드 라벨은 Control 조상이 없어 상속이 안 온다
 		lbl.theme_type_variation = &"HudLabel"
-
-
-# 버전·인원 표시 (캐시 판별 + 2인 접속 확인). 표시 전용 오버레이.
-# ⚠ **우상단**이다 — 좌상단은 HUD 방 코드 줄(핑·경로·fps) 자리라, 여기 있던 시절엔 마을에서 두 줄이
-#   같은 픽셀에 겹쳐 찍혔다(이 오버레이가 layer 9 = HUD보다 위). 겹치는 코너를 나눠 갖는다.
-func _build_info_overlay() -> void:
-	var layer := CanvasLayer.new()
-	layer.layer = 9
-	add_child(layer)
-	_info_label = Label.new()
-	_info_label.theme = UiTheme.get_theme()
-	_info_label.theme_type_variation = &"HudLabel"
-	_info_label.mouse_filter = Control.MOUSE_FILTER_IGNORE  # 장식 — 아래 게임 클릭을 먹지 않게(§5)
-	_info_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_info_label.offset_left = -240.0
-	_info_label.offset_top = 4.0
-	_info_label.offset_right = -6.0
-	_info_label.offset_bottom = 20.0
-	_info_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	layer.add_child(_info_label)
-	_refresh_info()
-
-
-func _refresh_info() -> void:
-	if _info_label != null:
-		_info_label.text = "%s · 인원 %d/%d" % [BUILD_VERSION, Net.peer_ids.size() + 1, NetSchema.MAX_ROOM_PEERS]
-
-
-func _process(delta: float) -> void:
-	# 인원수는 피어 합류/이탈로 변하므로 주기적 갱신 (1초)
-	_info_left -= delta
-	if _info_left <= 0.0:
-		_info_left = 1.0
-		_refresh_info()
 
 
 # 훈련소 텍스처 — 전용 아트가 임포트돼 있으면 쓰고, 없으면 씬의 폴백을 유지한다.

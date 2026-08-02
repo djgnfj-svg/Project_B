@@ -37,8 +37,46 @@ theme_override_constants/separation = 8
 [node name="Title" type="Label" parent="Center/Dialog/Margin/VBox"]
 layout_mode = 2
 theme_type_variation = &"TitleLabel"
-text = "설정"
+text = "메뉴"
 horizontal_alignment = 1
+
+[node name="Info" type="PanelContainer" parent="Center/Dialog/Margin/VBox"]
+layout_mode = 2
+theme_type_variation = &"InnerPanel"
+
+[node name="InfoBox" type="VBoxContainer" parent="Center/Dialog/Margin/VBox/Info"]
+layout_mode = 2
+
+[node name="RoomLabel" type="Label" parent="Center/Dialog/Margin/VBox/Info/InfoBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"InfoLabel"
+text = "방 —"
+
+[node name="NetLabel" type="Label" parent="Center/Dialog/Margin/VBox/Info/InfoBox"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"InfoLabel"
+text = "0fps"
+
+[node name="ProgressLabel" type="Label" parent="Center/Dialog/Margin/VBox/Info/InfoBox"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_type_variation = &"InfoLabel"
+
+[node name="GrowthLabel" type="Label" parent="Center/Dialog/Margin/VBox/Info/InfoBox"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_type_variation = &"InfoLabel"
+
+[node name="InviteBtn" type="Button" parent="Center/Dialog/Margin/VBox"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 28)
+layout_mode = 2
+focus_mode = 0
+text = "초대 코드 복사"
 
 [node name="VolumeRow" type="HBoxContainer" parent="Center/Dialog/Margin/VBox"]
 layout_mode = 2

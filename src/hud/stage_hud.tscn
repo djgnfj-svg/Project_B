@@ -6,42 +6,64 @@
 [node name="StageHUD" type="CanvasLayer"]
 script = ExtResource("1")
 
-[node name="RoomCode" type="Label" parent="."]
+[node name="HpBar" type="ProgressBar" parent="."]
+anchor_top = 1.0
+anchor_bottom = 1.0
 offset_left = 6.0
-offset_top = 4.0
-offset_right = 340.0
-offset_bottom = 20.0
+offset_top = -34.0
+offset_right = 126.0
+offset_bottom = -20.0
 mouse_filter = 2
-theme_type_variation = &"HudLabel"
+show_percentage = false
+max_value = 100.0
+value = 100.0
 
-[node name="Progress" type="Label" parent="."]
-anchor_left = 0.5
-anchor_right = 0.5
-offset_left = -160.0
-offset_top = 4.0
-offset_right = 160.0
-offset_bottom = 20.0
+[node name="HpNum" type="Label" parent="HpBar"]
+anchor_right = 1.0
+anchor_bottom = 1.0
 mouse_filter = 2
-theme_type_variation = &"HudLabel"
+theme_type_variation = &"HudSmallLabel"
 horizontal_alignment = 1
+vertical_alignment = 1
+text = "100"
 
-[node name="InviteBtn" type="Button" parent="."]
+[node name="RollBar" type="ProgressBar" parent="."]
+visible = false
+anchor_top = 1.0
+anchor_bottom = 1.0
 offset_left = 6.0
-offset_top = 22.0
-offset_right = 118.0
-offset_bottom = 42.0
-focus_mode = 0
-theme_type_variation = &"SmallButton"
-text = "초대 코드 복사"
+offset_top = -18.0
+offset_right = 126.0
+offset_bottom = -14.0
+mouse_filter = 2
+show_percentage = false
+max_value = 1.0
+step = 0.001
+value = 1.0
 
-[node name="SettingsBtn" type="Button" parent="."]
-offset_left = 122.0
-offset_top = 22.0
-offset_right = 170.0
-offset_bottom = 42.0
-focus_mode = 0
-theme_type_variation = &"SmallButton"
-text = "설정"
+[node name="PartnerBar" type="ProgressBar" parent="."]
+visible = false
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 6.0
+offset_top = -12.0
+offset_right = 126.0
+offset_bottom = -9.0
+mouse_filter = 2
+show_percentage = false
+max_value = 100.0
+value = 100.0
+
+[node name="ExpBar" type="ProgressBar" parent="."]
+visible = false
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -5.0
+mouse_filter = 2
+show_percentage = false
+max_value = 100.0
+value = 0.0
 
 [node name="GoldBar" type="HBoxContainer" parent="."]
 anchor_left = 1.0
@@ -49,92 +71,24 @@ anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = -140.0
-offset_top = -24.0
+offset_top = -26.0
 offset_right = -6.0
-offset_bottom = -6.0
+offset_bottom = -10.0
 mouse_filter = 2
 alignment = 2
-theme_override_constants/separation = 3
 
-[node name="HpBar" type="ProgressBar" parent="."]
-anchor_top = 1.0
-anchor_bottom = 1.0
-offset_left = 6.0
-offset_top = -24.0
-offset_right = 166.0
-offset_bottom = -6.0
-mouse_filter = 2
-show_percentage = false
-max_value = 100.0
-value = 100.0
-
-[node name="HpLabel" type="Label" parent="HpBar"]
-anchor_right = 1.0
-anchor_bottom = 1.0
-mouse_filter = 2
-theme_type_variation = &"HudLabel"
-horizontal_alignment = 1
-vertical_alignment = 1
-text = "HP 100"
-
-[node name="RollBar" type="ProgressBar" parent="."]
+[node name="SkillBar" type="HBoxContainer" parent="."]
 visible = false
+anchor_left = 0.5
 anchor_top = 1.0
+anchor_right = 0.5
 anchor_bottom = 1.0
-offset_left = 172.0
-offset_top = -24.0
-offset_right = 262.0
-offset_bottom = -6.0
+offset_top = -66.0
+offset_bottom = -14.0
+grow_horizontal = 2
+grow_vertical = 0
 mouse_filter = 2
-show_percentage = false
-max_value = 1.0
-step = 0.001
-value = 1.0
-
-[node name="RollLabel" type="Label" parent="RollBar"]
-anchor_right = 1.0
-anchor_bottom = 1.0
-mouse_filter = 2
-theme_type_variation = &"HudLabel"
-horizontal_alignment = 1
-vertical_alignment = 1
-text = "구르기"
-
-[node name="PartnerHp" type="Label" parent="."]
-anchor_top = 1.0
-anchor_bottom = 1.0
-offset_left = 6.0
-offset_top = -42.0
-offset_right = 220.0
-offset_bottom = -26.0
-mouse_filter = 2
-theme_type_variation = &"HudLabel"
-
-[node name="Growth" type="Control" parent="."]
-visible = false
-anchor_top = 1.0
-anchor_bottom = 1.0
-offset_left = 6.0
-offset_top = -68.0
-offset_right = 166.0
-offset_bottom = -44.0
-mouse_filter = 2
-
-[node name="LevelLabel" type="Label" parent="Growth"]
-anchor_right = 1.0
-offset_bottom = 16.0
-mouse_filter = 2
-theme_type_variation = &"HudLabel"
-vertical_alignment = 1
-
-[node name="ExpBar" type="ProgressBar" parent="Growth"]
-anchor_right = 1.0
-offset_top = 18.0
-offset_bottom = 24.0
-mouse_filter = 2
-show_percentage = false
-max_value = 100.0
-value = 0.0
+alignment = 1
 
 [node name="Banner" type="Label" parent="."]
 visible = false
@@ -146,14 +100,33 @@ theme_type_variation = &"BannerLabel"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="Toast" type="Label" parent="."]
+[node name="Toast" type="Control" parent="."]
 visible = false
 anchor_right = 1.0
 offset_top = 104.0
-offset_bottom = 128.0
+offset_bottom = 132.0
+mouse_filter = 2
+
+[node name="Row" type="HBoxContainer" parent="Toast"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+alignment = 1
+
+[node name="Icon" type="TextureRect" parent="Toast/Row"]
+visible = false
+texture_filter = 1
+custom_minimum_size = Vector2(20, 20)
+layout_mode = 2
+size_flags_vertical = 4
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Text" type="Label" parent="Toast/Row"]
+layout_mode = 2
 mouse_filter = 2
 theme_type_variation = &"ToastLabel"
-horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="EnemyPointers" type="Control" parent="."]

@@ -68,6 +68,9 @@ const ROLL_FILL := Color(0.549, 0.580, 0.565, 1.0) # 구르기 쿨 = 회청 #8C9
 const BAR_BG := Color(0.102, 0.063, 0.031, 0.80)   # 바 바탕 (게임 화면이 살짝 비치게 반투명)
 const OUTLINE := Color(0.043, 0.024, 0.008, 0.9)   # HUD 글자 외곽선 — 밝은 지형 위에서도 읽히게
 const OUTLINE_SIZE := 3
+# 🔴 10px 글자에 외곽선 3을 씌우면 획이 먹혀 숫자가 뭉갠다(HP 바 안 숫자가 그 자리다).
+#   크기를 줄이는 배리에이션을 늘릴 땐 외곽선도 같이 줄여야 하므로 등급을 하나 더 둔다.
+const OUTLINE_SIZE_SMALL := 2
 
 # --- 팔레트 (어두운 참나무 + 황동) ---
 # 텍스처에서 실측한 색이라 프레임과 색면이 이어진다. 폴백 StyleBoxFlat도 같은 값을 쓴다.
@@ -233,8 +236,13 @@ static func get_theme() -> Theme:
 	_label_variation(t, "GoldLabel", FS_BODY, GOLD, false)         # 골드 수치(패널 안)
 	_label_variation(t, "HudLabel", FS_BODY, Color(1, 1, 1, 1), true)  # HUD — 지형 위라 외곽선
 	_label_variation(t, "HudGoldLabel", FS_BODY, GOLD, true)
+	# HUD 안에 겹쳐 찍는 숫자(HP 바 안) — 바 높이가 14px라 본문 12는 프레임에 닿는다.
+	_label_variation(t, "HudSmallLabel", FS_SMALL, Color(1, 1, 1, 1), true, OUTLINE_SIZE_SMALL)
 	_label_variation(t, "BannerLabel", FS_BANNER, Color(1, 1, 1, 1), true)
 	_label_variation(t, "ToastLabel", FS_TITLE, GOLD, true)  # 색은 종류별로 코드가 덮는다(해금 금색/레벨 연두)
+	# 🔴 토스트가 두 등급이다 — 큰 쪽(ToastLabel) = **획득**(장비·도면·희귀 재료), 작은 쪽 = 성장(레벨업·해금).
+	#   같은 크기로 두면 흔한 소식이 드문 소식을 덮어 "좋은 걸 먹었는지 모르겠다"가 된다(사용자 신고 2026-08-02).
+	_label_variation(t, "ToastSmallLabel", FS_BODY, Color(1, 1, 1, 1), true)
 	# 작은 버튼(보관/꺼내기 같은 인라인 액션)
 	t.set_type_variation("SmallButton", "Button")
 	t.set_font_size("font_size", "SmallButton", FS_SMALL)
@@ -281,14 +289,15 @@ static func apply_to_children(root: Node) -> void:
 
 
 static func _label_variation(
-	t: Theme, name: String, size: int, color: Color, outline: bool
+	t: Theme, name: String, size: int, color: Color, outline: bool,
+	outline_size: int = OUTLINE_SIZE
 ) -> void:
 	t.set_type_variation(name, "Label")
 	t.set_font_size("font_size", name, size)
 	t.set_color("font_color", name, color)
 	if outline:
 		t.set_color("font_outline_color", name, OUTLINE)
-		t.set_constant("outline_size", name, OUTLINE_SIZE)
+		t.set_constant("outline_size", name, outline_size)
 
 
 # --- 슬롯 셀 스타일박스 (slot_cell이 상태별로 부른다) ---
