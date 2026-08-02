@@ -681,6 +681,7 @@ func _initialize() -> void:
 
 	_check_all_data_loads()
 	_check_content_reachability()
+	_check_subjob_body_frames(gs)
 
 	gs.free()
 	if _fails == 0:
@@ -795,6 +796,59 @@ func _check_content_reachability() -> void:
 			unreachable += 1
 	_check("레시피 참조 전수 실재 (오류 %d건)" % recipe_bad, recipe_bad == 0)
 	_check("🔴 레시피 도달성 전수: 모든 도면에 드랍원이 있다 (고아 %d건)" % unreachable, unreachable == 0)
+
+
+# 🔴 **하위 직업 몸 시트 트립와이어** (2026-08-02 신설 — `SubJobDef.body_frames`).
+# 사용자 확정이 **"옷 색만 갈아입힌다"** 이므로 이 시트는 직업 기본 시트의 **색 치환본**이어야 한다.
+# 여기서 보는 것은 전부 **에러 없이 조용히 깨지는** 부류다:
+#   ⑴ **애니 이름 집합이 다르면** `_play_dir_anim`이 클립을 못 찾아 2방향으로 폴백하거나 아무것도
+#      재생하지 않는다(rules §5 4방향 함정). 화면엔 "가만히 서 있는 캐릭터"로만 보인다.
+#   ⑵ **프레임 수가 다르면** `_anim_speed_scale_for`가 유도하는 배율이 어긋난다 — 공격 애니가
+#      스윙 창과 안 맞아 "칼이 아직 안 나갔는데 적이 죽는" 그 부류로 돌아간다.
+#   ⑶ **loop 플래그가 다르면** 공격·구르기 애니가 무한 반복되고 `_anim_scale` 복귀가 굳는다
+#      (rules §2: 코드가 `loop = false`에 **의존한다**).
+# ⚠ 색은 검사하지 않는다 — 그건 화면 몫이고 헤드리스가 구조적으로 못 본다(`projectb-verify`).
+func _check_subjob_body_frames(gs: Node) -> void:
+	var bad := 0
+	var checked := 0
+	for sid: String in _data_ids("res://data/subjobs").keys():
+		var d: SubJobDef = gs.sub_job_def(sid)
+		if d == null or d.body_frames == null:
+			continue   # 미지정 = 직업 기본 시트 = 도입 전과 항등
+		checked += 1
+		# 🔒 공유 하위 직업은 **메인 자리에 못 낀다** → `main_fx_of`가 시트를 폐기한다.
+		#   지정돼 있으면 영원히 화면에 안 나오는 죽은 데이터다(rules §4 "미사용 에셋 남기지 마라").
+		if d.is_shared():
+			_check("🔴 공유 하위 직업에 body_frames: %s — 메인 자리 전용이라 영원히 안 쓰인다" % sid, false)
+			bad += 1
+			continue
+		var j: JobDef = gs.job_def(d.series_id)
+		if j == null or j.frames == null:
+			_check("하위 직업 %s의 계열(%s) 기본 시트 없음" % [sid, d.series_id], false)
+			bad += 1
+			continue
+		var base: SpriteFrames = j.frames
+		var mine: SpriteFrames = d.body_frames
+		var base_names := base.get_animation_names()
+		var mine_names := mine.get_animation_names()
+		base_names.sort()
+		mine_names.sort()
+		if base_names != mine_names:
+			_check("🔴 %s: 애니 이름 집합이 계열 기본과 다르다 (기본 %d종 ↔ 이 시트 %d종) — 조용히 폴백한다"
+				% [sid, base_names.size(), mine_names.size()], false)
+			bad += 1
+			continue
+		for anim: String in base_names:
+			if base.get_frame_count(anim) != mine.get_frame_count(anim):
+				_check("🔴 %s/%s: 프레임 수가 다르다 (%d ↔ %d) — 애니 배율 유도가 어긋난다"
+					% [sid, anim, base.get_frame_count(anim), mine.get_frame_count(anim)], false)
+				bad += 1
+			if base.get_animation_loop(anim) != mine.get_animation_loop(anim):
+				_check("🔴 %s/%s: loop 플래그가 다르다 — 코드가 loop=false에 의존한다(rules §2)"
+					% [sid, anim], false)
+				bad += 1
+	_check("🔴 하위 직업 몸 시트 전수: 계열 기본과 이름·프레임수·loop 일치 (검사 %d장 · 오류 %d건)"
+		% [checked, bad], bad == 0)
 
 
 # 폴더의 .tres 파일명(확장자 제거) 집합 — id = 파일명 관례(rules §4)에 기댄다.

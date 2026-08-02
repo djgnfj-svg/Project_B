@@ -902,7 +902,7 @@ func active_traits() -> Dictionary:
 #   특성은 못 얻고 색만 얻는다.
 # 미상·불일치·미지정 = 항등(흰색 · 배율 1.0) = 도입 전과 완전히 같다.
 func main_fx_of(main_id: String, series_id: String) -> Dictionary:
-	var out := {"color": Color(1, 1, 1, 1), "ghost": 1.0, "tex": null}
+	var out := {"color": Color(1, 1, 1, 1), "ghost": 1.0, "tex": null, "frames": null}
 	if main_id.is_empty():
 		return out
 	var d := sub_job_def(main_id)
@@ -913,6 +913,9 @@ func main_fx_of(main_id: String, series_id: String) -> Dictionary:
 	# 🔴 질감도 **같은 게이트 안에서** 나온다 — 위 세 폐기 조건 중 하나라도 걸리면 null(단색)이다.
 	#   밖에서 따로 읽으면 "색은 폐기됐는데 질감만 남는" 조합이 생긴다.
 	out["tex"] = d.fx_trail_tex
+	# 🔴 몸 시트도 **같은 게이트 안에서** 나온다(2026-08-02) — 같은 근거다. 밖에서 읽으면
+	#   "곡예사를 메인으로 주장한 공지가 특성·색은 못 얻고 겉모습만 얻는" 조합이 열린다.
+	out["frames"] = d.body_frames
 	return out
 
 

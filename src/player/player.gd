@@ -362,6 +362,10 @@ var _kill_move_left: float = 0.0  # 「광란」(kill_move) 남은 지속 — �
 var _subjob_fx_color: Color = Color(1, 1, 1, 1)
 var _subjob_fx_ghost: float = 1.0
 var _subjob_fx_tex: Texture2D = null  # 리본 질감(null = 단색 = 도입 전 항등)
+# 하위 직업 몸 시트(2026-08-02, 옷 색 치환본) — null = 직업 기본(`job.frames`) = 도입 전 항등.
+# 🔴 `_weapon_override`와 **같은 이유로 멤버에 보관한다**: `set_job`이 재공지·재합류로 다시 불려도
+#   겉모습이 유지돼야 한다. 저쪽 주석이 이미 그 함정을 적어 뒀고 여기가 두 번째 사례다.
+var _subjob_frames: SpriteFrames = null
 
 # 무기 겉모습 — 착용 무기(EquipDef.weapon_texture)에서 그린다. 미착용이면 직업 기본 무기로 폴백.
 # _weapon_grip은 _update_weapon이 매 프레임 참조 → 착용/직업에 따라 바뀌므로 멤버로 보관(job.weapon_grip 직참 금지).
@@ -627,19 +631,7 @@ func set_job(j: JobDef) -> void:
 	if j == null:
 		return
 	job = j
-	if j.frames != null:
-		_sprite.sprite_frames = j.frames
-		# 🔴 **`play("idle")` 직접 호출 금지 — 방향 시트엔 무접미사 `idle`이 없다**(2026-08-01).
-		#   새 전사 시트는 `idle_e`/`_s`/`_n`뿐이라 그대로 두면 **한 프레임짜리 에러 로그**가 났다.
-		#   다음 프레임에 `_update_anim`이 회복시켜 **화면은 멀쩡하므로 더 안 보인다.**
-		#   `_play_dir_anim`을 지나면 조회 규칙이 한 곳으로 모이고 무접미사 폴백도 그 안에 있다.
-		# ⚠ `_aim_angle`은 이 시점에 유효하다 — 기본값 0.0이 곧 동쪽이고(`_facing_index(0)` = 0),
-		#   `setup()`이 `set_job`을 부른 다음 프레임부터 `_update_aim`이 실값을 넣는다.
-		_play_dir_anim(&"idle")
-		# 시트가 바뀌면 이전 시트에 걸려 있던 배율도 초기화한다 — 안 하면 새 시트 idle이
-		# 옛 공격 배율로 돈다(`speed_scale`은 클립이 아니라 **노드** 속성이다).
-		_anim_scale = 1.0
-		_apply_anim_scale()
+	_apply_body_frames()
 	# 무기 겉모습은 착용 무기(EquipDef)에서만 그린다(무기 = 장비). 직업 재공지/재합류로 set_job이
 	# 다시 불려도 override(마지막 착용) 재적용해 겉모습 유지. 미착용이면 무장 해제(무기 미표시).
 	set_weapon_visual(_weapon_override)
@@ -694,6 +686,39 @@ func set_subjob_fx(fx: Dictionary) -> void:
 	_subjob_fx_ghost = float(fx.get("ghost", 1.0))
 	var t: Variant = fx.get("tex")
 	_subjob_fx_tex = (t as Texture2D) if t is Texture2D else null
+	var f: Variant = fx.get("frames")
+	_subjob_frames = (f as SpriteFrames) if f is SpriteFrames else null
+	_apply_body_frames()
+
+
+# 몸 시트 **단일 대입 지점** — 하위 직업 시트가 있으면 그것, 없으면 직업 기본(항등).
+# 🔴 `set_job`과 `set_subjob_fx` **둘 다** 여기를 지난다. 각자 대입하면 호출 순서에 따라
+#   하위 직업 겉모습이 직업 기본으로 조용히 덮인다 — 두 함수는 peer_sync가 공지마다 부르므로
+#   순서가 고정돼 있지 않다. 관용구는 `_apply_anim_scale()`과 같다(rules §2: 소유자가 자기
+#   의도를 유일한 대입 지점에 모은다).
+# 🔴 **같은 시트면 아무것도 하지 않는다 — 이 가드가 계약이다.** 없으면 `set_subjob_fx`가
+#   G_STATS 공지마다 불리면서 원격 아바타의 애니를 **매번 idle로 리셋**한다(달리다 말고 멈춘 것처럼
+#   보이는데 에러는 없다). `sprite_frames`는 대입만으로 재생 상태를 날리므로 비교가 먼저다.
+func _apply_body_frames() -> void:
+	if _sprite == null:   # @onready — setup()이 _ready보다 먼저 오는 경로 대비(항등)
+		return
+	var want: SpriteFrames = _subjob_frames
+	if want == null and job != null:
+		want = job.frames
+	if want == null or _sprite.sprite_frames == want:
+		return
+	_sprite.sprite_frames = want
+	# 🔴 **`play("idle")` 직접 호출 금지 — 방향 시트엔 무접미사 `idle`이 없다**(2026-08-01).
+	#   새 전사 시트는 `idle_e`/`_s`/`_n`뿐이라 그대로 두면 **한 프레임짜리 에러 로그**가 났다.
+	#   다음 프레임에 `_update_anim`이 회복시켜 **화면은 멀쩡하므로 더 안 보인다.**
+	#   `_play_dir_anim`을 지나면 조회 규칙이 한 곳으로 모이고 무접미사 폴백도 그 안에 있다.
+	# ⚠ `_aim_angle`은 이 시점에 유효하다 — 기본값 0.0이 곧 동쪽이고(`_facing_index(0)` = 0),
+	#   `setup()`이 `set_job`을 부른 다음 프레임부터 `_update_aim`이 실값을 넣는다.
+	_play_dir_anim(&"idle")
+	# 시트가 바뀌면 이전 시트에 걸려 있던 배율도 초기화한다 — 안 하면 새 시트 idle이
+	# 옛 공격 배율로 돈다(`speed_scale`은 클립이 아니라 **노드** 속성이다).
+	_anim_scale = 1.0
+	_apply_anim_scale()
 
 
 # 이 아바타의 특성값 — 모르는 키/미설정은 0(항등).
