@@ -189,6 +189,11 @@ var _hitfall_active: bool = false          # 충돌/그로기 클립 재생 중 
 var _spin_anim_active: bool = false        # 제자리 회오리(pat_spin=F7) 클립 재생 중 — RECOVER 끝에 방향 시트 복귀
 var _c1_active: bool = false           # C1 클립 재생 중 — 생명감 눕기 포즈를 건너뛴다(클립이 곧 포즈)
 var coop_locked: bool = false          # C1 결박 중 — 패턴 AI 정지(외부=coop_authority가 설정). 페이즈2 자동 늪도 멈춤(설계 §9)
+# 보스방 진입 게이트가 아직 안 닫혔다 — 파티가 복도를 걸어오는 동안 AI 정지(외부=boss_gate가 설정).
+# 🔴 **기본값 false = 도입 전과 완전 항등** — `BossGate`가 없는 씬(시험장·테스트 랩·하네스)은
+#   한 픽셀도 안 바뀐다. 🔴 `aggro_range`를 건드려 같은 효과를 내지 마라 — 그 값은 추격·리시
+#   (`LEASH_MULT`) 판정의 단일 소스다(설계 2026-08-02-boss-gate.md §4).
+var gate_dormant: bool = false
 # --- 넉백 (2026-08-02) — `mob_melee`와 **같은 계약·같은 함수**(사본이 아니라 같은 규칙이다) ---
 # 🔵 보스는 사실상 안 밀린다 — 저항이 `body_radius`(63)에서 유도돼 0.036이라 최대 0.44px다.
 #   **플래그 없이 데이터가 거른다**(설계 A-5). 그래도 상태 게이트(`can_knock`)는 필요하다:
@@ -656,6 +661,13 @@ func _host_ai(delta: float) -> void:
 	#   없다 — 즉 **예고·돌진 진행 중에도 결박이 걸린다.** 그래서 이 return이 그 상태를 정리하지
 	#   않고 나가면 남는다. 🔴 광역 시야는 그 경로도 `_set_wide(false)`를 지나야 한다(출구 ④).
 	if coop_locked:
+		velocity = Vector2.ZERO
+		return
+	# 보스방 게이트가 안 닫혔다 — 파티가 아직 진입 복도에 있다. 서서 기다린다.
+	# 🔴 **`coop_locked`와 같은 자리인 것이 요점이다** — 패턴 선택·추격·페이즈2 자동 늪이
+	#   여기 아래에 전부 있어서 하나만 재우는 실수를 할 수 없다(그 가드가 이미 증명한 위치다).
+	# ⚠ 게스트는 이 함수 자체를 안 탄다(보스 AI = 호스트 전용) → 표시 축 네트워크 0.
+	if gate_dormant:
 		velocity = Vector2.ZERO
 		return
 	# 페이즈2 = 안 때려도 바닥 잠식. 상태 무관하게 주기적으로 늪 생성(솔로면 간격↑, _auto_swamp_interval).

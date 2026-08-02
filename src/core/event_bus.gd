@@ -48,7 +48,11 @@ signal swamp_spawn_local(swamps: Array)  # 호스트 보스 → SwampField 로�
 #   부서진 바위가 남아 길을 막는다(netreview I-1). 배선도 같은 형태로 유지해라: 보스는 emit만 하고
 #   `Net.send_game`은 RockField가 부른다(호스트 루프백 없음 = 보스가 직접 보내면 자기 화면만 안 바뀐다).
 signal rock_break_local(rid: String)
-signal rock_spawn_local(rocks: Array)# 호스트 보스(낙석 P4 STRIKE) → RockField 로컬 스폰 + G_ROCK 브로드캐스트 (swamp_spawn_local 미러). rocks=[[rid,x,y,r,ttl], …] 착탄점에 바위 지형(돌진 유도용)이 남는다
+# ⚠ **발신자가 둘이다**(2026-08-02) — 보스 낙석 P4(`_fire_strike`)와 **보스방 진입 게이트**.
+#   둘 다 호스트 확정 지형이고 페이로드 형식·수신 경로(`RockField` → `G_ROCK`)가 완전히 같아서
+#   **새 시그널도 새 kind도 만들지 않았다.** rid 접두로 구분한다(`boss1:rock:N` ↔ `gate:N`).
+#   🔴 세 번째 발신자를 붙일 때 이 형식을 바꾸지 마라 — 바꾸면 두 발신자가 조용히 갈라진다.
+signal rock_spawn_local(rocks: Array)  # 호스트 보스(낙석 P4 STRIKE) → RockField 로컬 스폰 + G_ROCK 브로드캐스트 (swamp_spawn_local 미러). rocks=[[rid,x,y,r,ttl], …] 착탄점에 바위 지형(돌진 유도용)이 남는다
 signal boss_spray(eid: String, pattern_id: String, centers: Array, angle: float)  # 호스트 emit(보스 물뿌리기 WINDUP) — MobSync가 G_BOSS_SPRAY 브로드캐스트. 각 클라가 centers마다 원 텔레그래프 표시(N개). 판정은 호스트가 STRIKE 시 boss_strike를 착탄점마다 재사용
 signal boss_phase_changed(phase: int)  # 호스트 emit(보스 페이즈 전이) — MobSync가 G_BOSS_PHASE 브로드캐스트, HUD가 배너. 게스트는 G_BOSS_PHASE 수신 시 로컬 emit(mob_telegraph→matk 미러)
 # 호스트 emit(광역 시야 패턴 시작/종료) — MobSync가 G_BOSS_VIEW 브로드캐스트, camera_rig가 줌.

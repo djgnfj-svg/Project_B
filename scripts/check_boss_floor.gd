@@ -27,6 +27,11 @@ const CELL := 32
 const OK := "TEST_OK"
 
 var _fail := 0
+# 셀 좌표 -> 그 셀의 콜리전 폴리곤들(타일 로컬, 중심 원점). 진입 복도 도보 검산에 쓴다.
+# 🔴 **셀 단위 «막힘/열림»으로 근사하지 않는다** — 이 타일셋의 콜리전은 **코너 단위**(16px 사분면)라
+#   한 칸에 폴리곤이 하나만 있어도 나머지 3/4는 걸어 다닐 수 있다. 셀로 판정하면 멀쩡한 복도를
+#   «막혔다»고 부르는 거짓 실패가 난다.
+var _cells: Dictionary = {}
 
 
 func _check(cond: bool, msg: String) -> void:
@@ -126,6 +131,10 @@ func _init() -> void:
 		var polys := 0 if td == null else td.get_collision_polygons_count(0)
 		if polys > 0:
 			solid_cells += 1
+		var cp: Array[PackedVector2Array] = []
+		for pi: int in polys:
+			cp.append(td.get_collision_polygon_points(0, pi))
+		_cells[Vector2i(cx, cy)] = cp
 		# 이 셀이 아레나(+보스 반경)와 겹치는가
 		if arena.intersects(Rect2(cx * CELL, cy * CELL, CELL, CELL)):
 			if polys > 0:
@@ -152,4 +161,83 @@ func _init() -> void:
 	_check(world.has_point(spawn), "스폰 %s 이 바닥 위" % spawn)
 	print("[bossfloor] 셀 %d · 바닥 %s · 콜리전 칸 %d" % [cells, world, solid_cells])
 
+	_gate_and_corridor(props, world, spawn, boss_pos)
 	quit(1 if _fail > 0 else 0)
+
+
+# 월드 한 점이 실제로 막혀 있는가 — 엔진이 들고 있는 **콜리전 폴리곤**으로 직접 묻는다.
+# 🔴 생성기(파이썬)의 정점 격자 모델을 복제하지 않는 것이 이 스크립트의 존재 이유다
+#    (rules §3 「코드와 테스트가 같은 모델을 공유하면 검출력은 0」).
+func _blocked(w: Vector2) -> bool:
+	var c := Vector2i(floori(w.x / float(CELL)), floori(w.y / float(CELL)))
+	if not _cells.has(c):
+		return true   # 타일 자체가 없다 = 바닥 밖 = 못 간다
+	var local := w - (Vector2(c) * float(CELL) + Vector2(CELL, CELL) * 0.5)
+	for poly: PackedVector2Array in (_cells[c] as Array[PackedVector2Array]):
+		if Geometry2D.is_point_in_polygon(local, poly):
+			return true
+	return false
+
+
+# --- 진입 복도·게이트 (2026-08-02 · docs/plans/active/2026-08-02-boss-gate.md) ---
+#
+# 🔴 헤드리스가 잡을 수 있는 유일한 축이다 — 복도가 안 뚫려 있으면 파티가 **스폰 자리에서 한 걸음도
+#    못 나가고**, 게이트 라인 단면이 씬 값과 다르면 낙석이 벽 안에 박히거나 틈이 남는다.
+#    둘 다 에러가 없고 스위트도 못 본다(스위트는 씬을 텍스트로만 읽는다).
+func _gate_and_corridor(props: Dictionary, world: Rect2, spawn: Vector2, boss_pos: Vector2) -> void:
+	# 🔴 먼저 **판정 기계 자체**를 증명한다 — 좌표 변환이 틀리면 아래 단정이 전부 거짓 통과한다.
+	_check(not _blocked(boss_pos), "질의 검산: 보스 자리 %s 는 통행 가능" % boss_pos)
+	_check(_blocked(world.position + Vector2(4, 4)), "질의 검산: 맵 좌상단 모서리는 통행 불가")
+
+	var g := props.get("BossGate", {}) as Dictionary
+	_check(not g.is_empty(), "노드 생존: BossGate")
+	if g.is_empty():
+		return
+	var gx := float(g.get("gate_x", 0.0))
+	var tx := float(g.get("trigger_x", 0.0))
+	var y0 := float(g.get("gate_y0", 0.0))
+	var y1 := float(g.get("gate_y1", 0.0))
+	# 플레이어 몸 반폭 — 씬에서 읽는다(여기 숫자를 적으면 몸이 커졌을 때 조용히 갈라진다).
+	# ⚠ `load()`가 아니라 **텍스트**로 읽는다 — `player.tscn`을 로드하면 씬 글루가 딸려 와
+	#   `SCRIPT ERROR` 소음만 늘고, 필요한 것은 숫자 하나뿐이다(`gen_stage.py`와 같은 관용구).
+	var half := 6.0
+	var pf := FileAccess.open("res://src/player/player.tscn", FileAccess.READ)
+	if pf != null:
+		for line: String in pf.get_as_text().split("\n"):
+			if line.begins_with("size = Vector2("):
+				half = float(line.substr(15).get_slice(",", 0)) * 0.5
+				break
+
+	# ⑴ 스폰 → 트리거선까지 **실제로 걸어갈 수 있는가** (몸 폭까지 훑는다)
+	var hit := Vector2.INF
+	var x := spawn.x
+	while x <= tx and hit == Vector2.INF:
+		for dy: float in [-half, 0.0, half]:
+			if _blocked(Vector2(x, spawn.y + dy)):
+				hit = Vector2(x, spawn.y + dy)
+				break
+		x += 8.0
+	_check(hit == Vector2.INF, "★진입 복도 도보: 스폰 x=%.0f → 트리거 x=%.0f 막힘 없음%s"
+		% [spawn.x, tx, "" if hit == Vector2.INF else (" (막힌 곳 %s)" % hit)])
+
+	# ⑵ 게이트 라인의 통행 단면이 씬에 찍힌 값과 일치하는가 (16px = 코너 콜리전 격자 해상도)
+	# 🔴 **사분면 «중심»을 찍는다(+8), 경계선을 찍지 마라** — 경계 위의 점은 이웃 사분면의 콜리전
+	#    폴리곤 **테두리**에도 걸려 `is_point_in_polygon`이 true를 준다. 실제로 이 스크립트가
+	#    「272 vs 288」로 파이썬 모델과 어긋났고, 원인은 지형이 아니라 표본 위치였다.
+	var step := float(CELL) * 0.5
+	var top := -1.0
+	var bot := -1.0
+	var yy := world.position.y
+	while yy < world.end.y:
+		if not _blocked(Vector2(gx, yy + step * 0.5)):
+			if top < 0.0:
+				top = yy
+			bot = yy + step
+		elif top >= 0.0:
+			break
+		yy += step
+	_check(is_equal_approx(top, y0) and is_equal_approx(bot, y1),
+		"★게이트 라인(x=%.0f) 복도 단면 %.0f~%.0f = 씬 값 %.0f~%.0f" % [gx, top, bot, y0, y1])
+
+	# ⑶ 트리거선 자리는 통행 가능해야 한다 (거기 못 서면 게이트가 영원히 안 닫힌다)
+	_check(not _blocked(Vector2(tx, spawn.y)), "트리거선 (%.0f,%.0f) 통행 가능" % [tx, spawn.y])

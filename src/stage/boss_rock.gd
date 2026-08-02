@@ -26,6 +26,14 @@ var _gone: bool = false      # shatter/despawn 진행 중 — 이중 호출·ttl
 @onready var _collision: CollisionShape2D = $Collision
 
 
+# 🔴 **`ttl`이 두 가지를 동시에 정한다 — 수명과 「돌진 표적인가」.** 갈래가 하나뿐인 것이 요점이다:
+#   별도 플래그를 두면 `G_ROCK` 페이로드에 필드가 하나 늘고(= 신뢰 표면), 두 값이 어긋난 조합
+#   ("영구인데 부술 수 있다")이 생겨 다음 사람이 어느 쪽이 옳은지 모른다.
+#   낙석(P4)은 10.0을 넘기므로 두 축 모두 **완전 항등**이다.
+static func is_dash_target(ttl: float) -> bool:
+	return ttl > 0.0
+
+
 func setup(p_rid: String, p_world_pos: Vector2, p_radius: float, p_ttl: float, field: Node) -> void:
 	rid = p_rid
 	_world_pos = p_world_pos
@@ -35,7 +43,17 @@ func setup(p_rid: String, p_world_pos: Vector2, p_radius: float, p_ttl: float, f
 
 
 func _ready() -> void:
-	add_to_group("boss_rock")  # 돌진 충돌 감지 키 (boss.gd _dash_rock_collision)
+	# 돌진 충돌 감지 키 (boss.gd _dash_rock_collision).
+	# 🔴 **영구 바위(= 보스방 진입 게이트)는 넣지 않는다 — 지형이지 돌진 표적이 아니다.**
+	#   넣으면 P3 돌진(`breaks_rock = false`)이 박는 순간 `_enter_charge_hit` → `_break_rock`으로
+	#   **게이트 한 칸이 부서진다.** 5개 중 하나가 빠지면 이웃 간격이 32 → 64px가 되어 겹침이
+	#   사라지고 **16px 틈**이 열린다 → 플레이어는 빠져나가는데 보스(반경 63)는 못 따라가
+	#   싸움이 성립하지 않는다. 도달 경로도 평범하다: 게이트 앞에 선 플레이어를 P3가 쫓아온다
+	#   (`use_max_dist` 420 · `charge_travel_max` 260).
+	#   ⚠ 그룹에 없으면 `_dash_rock_collision`이 null을 돌려 **벽과 똑같이** 취급된다 —
+	#     그게 게이트에 옳은 의미다(그 함수 주석: "벽은 무시 → 헛참으로 처리").
+	if is_dash_target(_ttl):
+		add_to_group("boss_rock")
 	global_position = _world_pos
 	# 판정 반경 = _radius. shape 리소스는 인스턴스 간 공유라 복제 후 적용 (SwampZone 미러, rules §5)
 	var shape := _collision.shape.duplicate() as CircleShape2D
@@ -69,7 +87,10 @@ func _process(delta: float) -> void:
 	if _gone:
 		return
 	_age += delta
-	if _age >= _ttl:
+	# 🔴 `ttl <= 0` = **영구**(보스방 진입 게이트). 낙석(P4)은 10.0을 넘기므로 **완전 항등**이고,
+	#   0 이하를 넘기는 호출부는 게이트가 유일하다. ⚠ 거대한 ttl(1e9)로 우회하지 마라 —
+	#   데이터에 거짓말을 심으면 다음 사람이 "왜 10초가 아니지"를 두 번 묻는다.
+	if _ttl > 0.0 and _age >= _ttl:
 		_despawn()
 
 

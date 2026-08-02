@@ -90,6 +90,12 @@ var _mech_desc: String = ""
 
 var _active: bool = false
 var debug_hold: bool = false  # 테스트 랩 — true면 자동 순환 안 함(버튼으로만 발동). TestMode 게이트, 외부 설정.
+# 파훼 순환을 돌려도 되는가 — 외부(`boss_gate`)가 보스방 진입 전까지 false로 재운다.
+# 🔴 **기본값 true = 도입 전과 완전 항등**(BossGate가 없는 씬은 무영향).
+# 🔴 이걸 안 재우면 조용히 죽는다: `FIRST_DELAY_S`(3.0s)가 진입 복도 도보 시간(4.8s)보다 짧아
+#   **복도 한가운데서 「별의 낙하」가 터지고**, 안전지대가 아레나 안에 찍히면 도달 자체가 불가능해
+#   전원 즉사한다(설계 2026-08-02-boss-gate.md §4).
+var armed: bool = true
 var _window_left: float = 0.0
 var _window_max: float = 8.0
 var _next_left: float = FIRST_DELAY_S
@@ -177,7 +183,9 @@ func _process(delta: float) -> void:
 	if _log_left <= 0.0:
 		_log_left = 1.0
 		print("[coop] host=%s players=%d boss=%s next=%.1f" % [str(Net.is_host()), _alive_peer_ids().size(), str(_boss_alive()), _next_left])
-	if not Net.is_host() or _alive_peer_ids().is_empty():
+	# ⚠ `armed`는 호스트 갈래에만 붙는다 — 카운트다운 자체가 이미 호스트 전용이라
+	#   게스트 코드는 한 줄도 안 바뀐다(= 네트워크 표면 0).
+	if not armed or not Net.is_host() or _alive_peer_ids().is_empty():
 		return
 	_next_left -= delta
 	if _next_left <= 0.0:
@@ -192,7 +200,15 @@ func _update_status() -> void:
 	var state := ("ACTIVE:%s" % _mech) if _active else ("host next %.0fs" % _next_left if Net.is_host() else "guest")
 	_status.text = "coop %s · boss:%s · 인원:%d · %s" % [BUILD_TAG, boss, alive, state]
 	# 3·2·1 카운트다운 + 다음 패턴 이름·설명 (호스트, 3초 이내)
-	var show_count := Net.is_host() and not _active and not debug_hold and not _alive_peer_ids().is_empty() and _next_left <= 3.0 and _next_left > 0.0
+	# 🔴 **`armed`도 여기 있어야 한다**(netreview M-1). `_next_left`를 얼리는 플래그는 카운트다운
+	#   게이트뿐 아니라 **표시 게이트도** 지나야 한다 — 안 그러면 `FIRST_DELAY_S`(3.0) 초기값이
+	#   `_next_left <= 3.0`을 **첫 프레임부터** 만족해, 보스방 복도를 걷는 내내 "3"이 **얼어붙은 채**
+	#   호스트 화면에만 뜬다(게스트는 `Net.is_host()` 때문에 안 뜬다 = 두 화면 갈라짐, 에러 0).
+	#   덤으로 보스 기믹 이름을 싸우기도 전에 스포일한다.
+	# 🔵 **바로 옆 `debug_hold`가 그 근거다** — 같은 성질(카운트다운을 얼린다)이라 이미 여기 있다.
+	#   `armed`만 `:188` 게이트에 붙고 여기 빠져 비대칭이 생겼던 것이다. `armed = true`인 기존
+	#   씬(시험장·랩)에는 완전 항등이다.
+	var show_count := Net.is_host() and armed and not _active and not debug_hold and not _alive_peer_ids().is_empty() and _next_left <= 3.0 and _next_left > 0.0
 	_count_label.visible = show_count
 	_name_label.visible = show_count
 	_desc_label.visible = show_count

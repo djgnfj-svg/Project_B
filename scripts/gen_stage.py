@@ -103,25 +103,35 @@ def dims(spec):
 
 
 def edges(spec):
-    """(가로 테두리 셀, 세로 테두리 셀). int 하나면 두 축 같은 두께."""
+    """(좌, 상, 우, 하) 테두리 셀 두께. int 하나면 네 변 같은 두께 · 2-튜플이면 (가로, 세로).
+    ⚠ 4-튜플은 **비대칭 테두리**다 — 보스방이 서쪽에만 진입 복도만큼 두께를 더하려고 쓴다."""
     e = spec["edge"]
-    return e if isinstance(e, tuple) else (e, e)
+    if not isinstance(e, tuple):
+        return (e, e, e, e)
+    return e if len(e) == 4 else (e[0], e[1], e[0], e[1])
 
 
 def vertex_grid(spec):
     """정점 격자 (cols+1)×(rows+1). True = 통행 불가(lower). Wang은 정점이 지형을 정한다."""
     cols, rows, _, _ = dims(spec)
-    ex, ey = edges(spec)
+    el, et, er, eb = edges(spec)
     v = [[False] * (cols + 1) for _ in range(rows + 1)]
     for y in range(rows + 1):
         for x in range(cols + 1):
-            if x < ex or y < ey or x > cols - ex or y > rows - ey:
+            if x < el or y < et or x > cols - er or y > rows - eb:
                 v[y][x] = True
     for cx, cy, r in spec["patches"]:
         for y in range(rows + 1):
             for x in range(cols + 1):
                 if math.hypot(x - cx, y - cy) <= r:
                     v[y][x] = True
+    # 🔴 **맨 마지막**에 뚫는다 — 테두리·패치를 관통하는 진입 복도(보스방)를 만드는 유일한 수단이고,
+    #   순서가 계약이다(앞에 두면 테두리가 도로 덮는다). 정점 인덱스 사각 (x0, x1, y0, y1), 끝 포함.
+    #   ⚠ 이 키가 없는 스펙(물가·낭떠러지)에는 루프가 0회라 **완전 항등**이다.
+    for x0, x1, y0, y1 in spec.get("open", []):
+        for y in range(y0, y1 + 1):
+            for x in range(x0, x1 + 1):
+                v[y][x] = False
     return v
 
 
@@ -336,19 +346,35 @@ def build(kind, spec):
 #   쥐고 있어 깔면 자동으로 막히는데(전투 칸에선 장점), 보스는 `collision_mask = 1`이라 여기서는
 #   그것이 곧 결함이다 — 돌진(`boss.gd` CHARGE_DASH)이 이동 거리로 종료를 판정하므로 중간에
 #   끼면 헛돈다. 가장자리만 닫고 내부는 전부 통행 가능하다.
+#
+# 🔴 **진입 복도** (2026-08-02 · docs/plans/active/2026-08-02-boss-gate.md) — "걸어 들어가야
+#   보스방이 된다". 맵을 서쪽으로 **12칸(384px) 통째로 밀고** 그 두꺼워진 테두리를 `open`으로
+#   뚫었다. **맵과 통행 가능을 같은 양만큼 밀었기 때문에 카메라 공허 여유가 한 픽셀도 안 변하고**
+#   (verify_boss ⑶이 검산한다) **동·북·남 경계와 아레나는 무접촉**이다 = 횡단 돌진 기하 불변.
+#   ⚠ 복도 길이를 바꾸려면 `size`·`origin`·`edge`·`open`·`spawn`을 **한 묶음으로** 옮겨라 —
+#     하나만 고치면 공허가 보이거나(⑶이 잡는다) 스폰이 낭떠러지에 박힌다(⑴이 잡는다).
 BOSS = {
     "out": "src/stage/stage_boss.tscn",
     "meta": "assets/sprites/stage/ground/cliff_tiles_meta.json",
     # 낭떠러지(lower = "deep rocky chasm in shadow") 고리 + 흙바닥(upper) 아레나.
     # 챕터1 순서가 물가 → 낭떠러지 → 보스라 마지막 칸이 낭떠러지에서 이어진다.
     "tileset": "res://assets/tilesets/stage_cliff.tres",
-    "size": (60, 36),        # 1920 × 1152 px
-    "origin": (-12, -8),     # 좌상단 셀 → 월드 (-384, -256) · 우하단 (1536, 896) · 중심 (576, 320)
+    "size": (72, 36),        # 2304 × 1152 px  (60 → 72: 서쪽 진입 복도 12칸)
+    "origin": (-24, -8),     # 좌상단 셀 → 월드 (-768, -256) · 우하단 (1536, 896)
     # 테두리 두께 = **카메라 공허 여유에서 유도**했다(verify_boss ⑶이 검산한다 — 눈으로 맞춘 값이
     # 아니다). 가로가 두꺼운 것은 화면이 가로로 넓기 때문(640×360)이다.
-    "edge": (15, 9),         # 통행 가능 = 월드 (80, 16) ~ (1072, 624) — 아레나(192,116~960,532)를 감싼다
+    # 🔴 좌(27)만 우(15)보다 12칸 두껍다 = 복도가 지나갈 자리. 아레나 쪽 통행 경계는 **불변**이다.
+    "edge": (27, 9, 15, 9),  # (좌, 상, 우, 하) — 아레나 통행 가능 = 월드 (80, 16) ~ (1072, 624)
     "patches": [],           # 🔴 내부는 전부 통행 가능 — 아레나 안에 장애물을 넣지 마라(위 ⚠).
+    # 진입 복도 = 정점 인덱스 사각 (x0, x1, y0, y1). → 월드 x [-304, 80] · y [272, 400] (높이 128px).
+    "open": [(15, 27, 17, 20)],
     "ground_z": -11,         # 🔴 현행 유지 — `BossArena`(z=-10)가 바닥 위·늪(z=-9) 아래에 남아야 한다
+    # 스폰 = 복도 서쪽 끝. `PeerSync.spawn_base`에 **생성기가 찍는다**(씬에 손으로 적지 마라).
+    # 걷는 거리 = 여기 → trigger_x = 480px ≈ 4.8초(전사 이속 100). docs/TUNING.md 대상.
+    "spawn": (-256.0, 340.0),
+    # 게이트(낙석 벽) 중심 x · 트리거선 x. y·개수는 **복도 단면을 재서** 유도한다(gate_geometry).
+    "gate_x": 60.0,
+    "trigger_x": 224.0,      # 아레나 표지 서단(192)에서 32px 안쪽
 }
 
 
@@ -409,6 +435,25 @@ def prop(block, key, default=None):
     return default
 
 
+def set_prop(block, key, value):
+    """노드 블록의 프로퍼티 한 줄을 덮어쓴다(없으면 끝에 추가). 나머지 줄은 글자 그대로 남는다
+    — 그래야 재실행 diff가 «생성기가 소유한 값»에만 뜬다(build_boss 머리말의 멱등 규약)."""
+    if block is None:
+        sys.exit("ERROR: set_prop 대상 노드가 없다 (%s)" % key)
+    line = "%s = %s" % (key, value)
+    for i, existing in enumerate(block[1]):
+        if existing.startswith(key + " "):
+            block[1][i] = line
+            return
+    block[1].append(line)
+
+
+def fnum(x):
+    """Godot이 float export를 직렬화하는 모양(`224.0`)으로 찍는다 — 정수처럼 찍으면 재저장 때
+    에디터가 형식을 되돌려 diff가 계속 튄다."""
+    return repr(float(x))
+
+
 def vec2(text):
     m = re.match(r"Vector2\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)", text or "")
     if m is None:
@@ -416,7 +461,70 @@ def vec2(text):
     return float(m.group(1)), float(m.group(2))
 
 
-def verify_boss(v, spec, blocks):
+def corridor_span(v, spec, px):
+    """월드 x = px 에서 통행 가능한 **첫** y 구간 (y0, y1). 못 찾으면 (None, None).
+    🔴 게이트 길이를 스펙에 두 번 적는 대신 격자에서 **잰다** — 복도를 옮기면 게이트가 저절로
+    따라온다(사람이 맞춰 드는 미러가 아예 안 생긴다)."""
+    _, rows, _, oy = dims(spec)
+    step = CELL / 2.0
+    y = float(oy * CELL)
+    top = bot = None
+    while y < (oy + rows) * CELL:
+        if not solid_at(v, spec, px, y):
+            if top is None:
+                top = y
+            bot = y + step
+        elif top is not None:
+            break
+        y += step
+    return top, bot
+
+
+def max_player_speed():
+    """플레이어가 낼 수 있는 최대 속도(px/s). 유도식은 `player._max_roll_speed()`와 같고
+    항(項)은 전부 원본에서 읽는다 — 여기 숫자를 적으면 튜닝 때 조용히 갈라진다."""
+    mult = float(grep1("src/core/combat_math.gd",
+                       r"const ROLL_SPEED_MULT := ([\d.]+)", "ROLL_SPEED_MULT"))
+    move_max = float(grep1("src/core/combat_math.gd",
+                           r"LEVEL_STAT_MAX: Dictionary = \{[^}]*\"move\":\s*([\d.]+)",
+                           "LEVEL_STAT_MAX[move]"))
+    roll_dist = float(grep1("src/core/combat_math.gd",
+                            r"TRAIT_MAX: Dictionary = \{[^}]*\"roll_dist\":\s*([\d.]+)",
+                            "TRAIT_MAX[roll_dist]"))
+    base = 0.0
+    jobs = os.path.join(ROOT, "data", "jobs")
+    for name in sorted(os.listdir(jobs)):
+        if not name.endswith(".tres"):
+            continue
+        for line in open(os.path.join(jobs, name), encoding="utf-8"):
+            if line.startswith("move_speed"):
+                base = max(base, float(line.split("=", 1)[1]))
+    if base <= 0.0:
+        sys.exit("ERROR: data/jobs에서 move_speed를 못 읽었다")
+    return base * mult * (1.0 + move_max) * (1.0 + roll_dist)
+
+
+def gate_geometry(v, spec):
+    """게이트 낙석 배치 {y0, y1, n, r, step, band, need}.
+    🔴 **개수를 손으로 세지 않는다** — "틈 없이 막는다"는 부등식에서 유도한다. 인접한 두 원
+    (중심거리 s, 반경 r)이 만드는 **최소 띠 두께** = 2·√(r² − (s/2)²) 가 필요치 이상이어야 한다.
+    필요치 = 플레이어 몸 폭 + 2 × 최대 프레임 변위. 그래서 s ≤ 2·√(r² − (필요치/2)²)."""
+    y0, y1 = corridor_span(v, spec, spec["gate_x"])
+    if y0 is None:
+        sys.exit("ERROR: 게이트 x=%g 에 통행 가능한 복도가 없다" % spec["gate_x"])
+    r = float(grep1("src/stage/boss_rock.tscn", r"radius = ([\d.]+)", "바위 콜리전 반경"))
+    pw = float(grep1("src/player/player.tscn", r"size = Vector2\(([\d.]+),", "플레이어 몸 폭"))
+    need = pw + 2.0 * (max_player_speed() / 60.0)
+    if need >= 2.0 * r:
+        sys.exit("ERROR: 바위 반경 %g로는 어떤 간격으로도 못 막는다 (필요 두께 %.1f)" % (r, need))
+    s_max = 2.0 * math.sqrt(r * r - (need / 2.0) ** 2)
+    n = max(2, int(math.ceil((y1 - y0) / s_max)) + 1)
+    step = (y1 - y0) / float(n - 1)
+    band = 2.0 * math.sqrt(max(0.0, r * r - (step / 2.0) ** 2))
+    return {"y0": y0, "y1": y1, "n": n, "r": r, "step": step, "band": band, "need": need}
+
+
+def verify_boss(v, spec, blocks, gate):
     """🔴 헤드리스 스위트가 못 잡는 것을 여기서 막는다 — 전부 에러 없이 조용히 나빠지는 종류다.
     앵커 값은 씬·데이터 원본에서 읽는다(여기 숫자로 복제하면 그게 곧 갈라질 미러다)."""
     bad = []
@@ -428,8 +536,16 @@ def verify_boss(v, spec, blocks):
     if boss_node is None or peer is None:
         sys.exit("ERROR: Boss / PeerSync 노드가 없다 — 씬이 이미 망가졌다")
     boss_pos = vec2(prop(boss_node, "position"))
-    spawn = vec2(prop(peer, "spawn_base"))
-    bad += clear_check(v, spec, [("보스", boss_pos, boss_r), ("스폰", spawn, 22.0)])
+    # 🔴 스폰은 **스펙**이 정본이다(build_boss가 씬에 찍는다) — 씬 값을 읽으면 「쓰기 전」 값을
+    #   검사하게 되어 트립와이어가 한 세대 늦는다.
+    spawn = spec["spawn"]
+    # 🔵 P2 스폰도 검사한다 — `peer_sync`가 `spawn_base + (spawn_gap × 순번, 0)`으로 스폰하는데
+    #   지금까지 아무도 안 봤다(선재 사각: 두 번째 피어가 낭떠러지에서 태어나도 에러가 안 난다).
+    gap_txt = prop(peer, "spawn_gap")
+    gap = float(gap_txt) if gap_txt is not None else float(
+        grep1("src/net/peer_sync.gd", r"spawn_gap: float = ([\d.]+)", "spawn_gap 기본값"))
+    bad += clear_check(v, spec, [("보스", boss_pos, boss_r), ("스폰P1", spawn, 22.0),
+                                 ("스폰P2", (spawn[0] + gap, spawn[1]), 22.0)])
 
     # ⑵ 🔴 아레나 표지 위는 **전부** 통행 가능해야 하고, 보스가 그 위 어디에도 설 수 있어야 한다
     #    (= 아레나를 보스 반경만큼 부풀린 영역이 통행 가능). 안 그러면 횡단 돌진이 안 보이는 벽에
@@ -473,6 +589,53 @@ def verify_boss(v, spec, blocks):
                                      ("동", map_r[2] >= need[2]), ("남", map_r[3] >= need[3]))):
         if not ok:
             bad.append("%s쪽 공허 — 바닥 %g, 화면이 닿는 곳 %g" % (label, map_r[i], need[i]))
+
+    # --- 진입 게이트 (2026-08-02 · docs/plans/active/2026-08-02-boss-gate.md) ---
+    # 🔴 아래 넷은 전부 **에러 없이 조용히 나빠지는** 종류다: 틈이 열리면 파티가 보스방을 빠져나가고,
+    #    여유가 모자라면 닫히는 순간 게이트 위에 선 피어가 생기며, 트리거선이 잘못 놓이면
+    #    게이트가 화면 밖에서 닫힌다. 어느 것도 헤드리스 스위트가 못 잡는다.
+    gx, tx = spec["gate_x"], spec["trigger_x"]
+
+    # ⑷ 게이트가 복도 단면을 **틈 없이** 막는가 (유도는 gate_geometry 머리말).
+    if gate["band"] < gate["need"]:
+        bad.append("게이트 띠 두께 %.1f < 필요 %.1f (바위 %d개·간격 %.1f·반경 %g)"
+                   % (gate["band"], gate["need"], gate["n"], gate["step"], gate["r"]))
+
+    # ⑸ 트리거선 ↔ 게이트 여유 ≥ 외삽 상한. 호스트는 낡은 좌표(net_anchor)로 판정하므로,
+    #    앵커가 트리거선에 닿은 순간의 실제 위치는 최악 이만큼 서쪽일 수 있다.
+    lead = float(grep1("src/core/combat_math.gd",
+                       r"const LAG_MAX_LEAD_DIST := ([\d.]+)", "LAG_MAX_LEAD_DIST"))
+    slack_px = tx - (gx + gate["r"])
+    if slack_px < lead:
+        bad.append("트리거 여유 %.0fpx < LAG_MAX_LEAD_DIST %.0f — 닫히는 순간 게이트 위에 설 수 있다"
+                   % (slack_px, lead))
+
+    # ⑹ **아레나에 묶인** 돌진이 게이트에 닿을 수 없는가 — 그런 패턴의 돌진선은 `_cross_segment`가
+    #    아레나 안에서만 잡고 보스 몸의 서쪽 끝은 `arena.x`다(중심 = arena.x + body_radius).
+    #    ⚠ **지금 그런 패턴은 없다** — 유일했던 횡단 돌진(`cross`)이 2026-08-02 `07b5b8c`에서 빠졌다.
+    #      앞으로를 위한 가드로 남긴다(아레나 경계에서 유도하므로 데이터가 다시 생겨도 따라온다).
+    # 🔴 **지금 실제로 게이트를 지키는 것은 이 부등식이 아니다.** 살아 있는 `charge`(P3)는
+    #    **플레이어를 향해** 돌진하므로(`use_max_dist` 420) 게이트 앞까지 온다 — 그쪽은
+    #    `boss_rock.gd`가 영구 바위를 "boss_rock" 그룹에서 빼는 것으로 막는다(거기 주석이 정본).
+    arena_x0 = ax - aw / 2.0
+    if arena_x0 <= gx + gate["r"]:
+        bad.append("횡단 돌진 서단 %.0f ≤ 게이트 동쪽끝 %.0f" % (arena_x0, gx + gate["r"]))
+
+    # ⑺ 배치 순서: 스폰 < 게이트 < 트리거선 ≤ 아레나 안. 그리고 게이트·트리거선 둘 다 통행 가능 위.
+    if not (spawn[0] < gx < tx):
+        bad.append("배치 순서 어긋남 — 스폰 %.0f < 게이트 %.0f < 트리거 %.0f 여야 한다"
+                   % (spawn[0], gx, tx))
+    if tx < arena_x0:
+        bad.append("트리거선 %.0f 이 아레나 서단 %.0f 밖 — 「아레나에 들어섰다」가 성립 안 한다" % (tx, arena_x0))
+    if solid_at(v, spec, tx, spawn[1]):
+        bad.append("트리거선 (%.0f,%.0f) 이 통행 불가 위" % (tx, spawn[1]))
+
+    # ⑻ 닫히는 게이트가 **화면 안에서 보이는가** — 평상시 줌 기준. 안 보이면 연출이 성립 안 한다.
+    zoom_base = float(grep1("src/feel/camera_rig.gd", r"const ZOOM := ([\d.]+)", "ZOOM"))
+    if tx - gx > vw / 2.0 / zoom_base:
+        bad.append("트리거선에서 게이트까지 %.0fpx > 화면 반폭 %.0f — 닫히는 게 안 보인다"
+                   % (tx - gx, vw / 2.0 / zoom_base))
+
     return bad, (px0, py0, px1, py1), map_r
 
 
@@ -482,9 +645,22 @@ def build_boss(spec):
     path = os.path.join(ROOT, spec["out"])
     blocks = parse_scene(open(path, encoding="utf-8").read())
 
-    bad, pb, map_r = verify_boss(v, spec, blocks)
+    gate = gate_geometry(v, spec)
+    bad, pb, map_r = verify_boss(v, spec, blocks, gate)
     if bad:
         sys.exit("ERROR: 보스방 배치가 성립하지 않는다 — " + ", ".join(bad))
+
+    # 🔴 진입 기하는 **생성기가 씬에 찍는다** — 스폰·게이트·트리거선을 씬에서 손으로 들면 복도를
+    #   옮길 때 반드시 갈라진다(rules 「미러를 만들지 마라」). 값의 정본은 위 BOSS 스펙 + 격자 실측.
+    peer_node = find_node(blocks, "PeerSync")
+    set_prop(peer_node, "spawn_base", "Vector2(%g, %g)" % spec["spawn"])
+    bg = find_node(blocks, "BossGate")
+    if bg is None:
+        sys.exit("ERROR: BossGate 노드가 없다 — 씬에 한 번 넣어 두면 이후는 생성기가 값을 소유한다")
+    for key, val in (("trigger_x", fnum(spec["trigger_x"])), ("gate_x", fnum(spec["gate_x"])),
+                     ("gate_y0", fnum(gate["y0"])), ("gate_y1", fnum(gate["y1"])),
+                     ("gate_count", "%d" % gate["n"]), ("gate_radius", fnum(gate["r"]))):
+        set_prop(bg, key, val)
 
     ground = find_node(blocks, "Ground")
     if ground is None:
@@ -531,6 +707,11 @@ def build_boss(spec):
           % (spec["out"], cols, rows, map_r[0], map_r[1], map_r[2], map_r[3],
              pb[0], pb[1], pb[2], pb[3],
              (" · 뗀 ext " + ", ".join(dropped)) if dropped else ""))
+    print("           게이트 x=%g y=%g~%g · 바위 %d개(반경 %g·간격 %.1f·띠 %.1f≥%.1f) · 트리거 x=%g"
+          " · 스폰 (%g,%g) → 도보 %.0fpx"
+          % (spec["gate_x"], gate["y0"], gate["y1"], gate["n"], gate["r"], gate["step"],
+             gate["band"], gate["need"], spec["trigger_x"],
+             spec["spawn"][0], spec["spawn"][1], spec["trigger_x"] - spec["spawn"][0]))
 
 
 if __name__ == "__main__":
