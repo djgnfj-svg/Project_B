@@ -23,10 +23,11 @@ const HitStop := preload("res://src/feel/hit_stop.gd")
 const HitFlash := preload("res://src/feel/hit_flash.gd")
 const Flinch := preload("res://src/feel/flinch.gd")
 const NavGrid := preload("res://src/enemies/nav_grid.gd")
+const TelegraphFx := preload("res://src/feel/telegraph_fx.gd")
+const MobStrikeFx := preload("res://src/feel/mob_strike_fx.gd")
 
 # 연출값 (rules §0 예외)
 const REMOTE_LERP_SPEED := 12.0
-const TELEGRAPH_TEX_SIZE := 32.0  # telegraph.png 지름(px) — strike_radius 스케일 기준
 # attack 애니 선행 재생(초) — 예비 프레임(f6, 120ms)이 끝나는 순간 = 텔레그래프 만료 = mob_strike.
 # frames.tres의 attack 첫 프레임 duration과 미러 (rules §3 "보이는 휘두름 = 맞는 타이밍").
 const ATTACK_ANIM_LEAD_S := 0.12
@@ -58,10 +59,56 @@ const MUZZLE_PAD := 4.0
 const MIN_ANIM_SPEED_SCALE := 0.05
 # 접지 그림자 (사용자 요청 2026-07-26: "그림자가 잘 붙게해주면 됨" — 잔몹엔 아예 없었다).
 # 🔴 텍스처 크기 미러 상수를 새로 만들지 않는다 — shadow.png·몹 시트를 다시 그려도 자동으로 맞게
-#   런타임에 읽는다(TELEGRAPH_TEX_SIZE 같은 "텍스처를 고치면 상수도 고쳐야 하는" 함정을 안 늘린다).
+#   런타임에 읽는다("텍스처를 고치면 상수도 고쳐야 하는" 함정을 안 늘린다 — 예고 장판의
+#   `TELEGRAPH_TEX_SIZE`가 정확히 그 함정이었고 2026-08-02에 셰이더 전환으로 없앴다).
 const SHADOW_WIDTH_MULT := 2.3   # 그림자 폭 = def.body_radius × 이 배수 (몸보다 살짝 넓어야 접지로 읽힌다)
 const SHADOW_ALPHA := 0.5
 const SHADOW_FOOT_INSET := 2.0   # 스프라이트 하단에서 이만큼 올려 둔다(발이 그림자를 밟고 선 모습)
+# --- 예고 장판 (2026-08-02: 텍스처 → **보스와 같은 셰이더**) ---
+#
+# 왜 옮겼나: 옛 방식은 `telegraph.png`(정적인 원)를 스케일한 것뿐이라 **차오름이 없었다** —
+#   "언제 때리는지"가 화면에서 안 읽혔다(사용자 신고). 셰이더로 오면 차오름·선단 파면·마지막
+#   번쩍이 공짜로 따라오고, 덤으로 `TELEGRAPH_TEX_SIZE`(= telegraph.png 지름 32.0) **미러가 사라진다**
+#   (그 PNG를 다시 그리면 반경이 조용히 갈라지던 자리다 — blast.png `TEX_RADIUS`와 같은 부류).
+#
+# 🔴 아래 상수에 **각·반지름이 없다 — 그게 설계다.** 표시 반경은 언제나 `def.strike_radius`
+#   (= `CombatMath.is_strike_hit`의 판정 반경, §3) 하나에서 오고, 여기 있는 것은 전부
+#   **시간·두께·색**이다. 예고를 "조금 더 크게" 만들려고 여기 숫자를 늘리지 마라 — 그 순간
+#   "보이는 곳 ≠ 맞는 곳"이 된다. 범위를 바꾸려면 `data/enemies/*.tres` = 밸런스 변경이다.
+#
+# 색 선정 근거(시인성): 바닥이 **흙 갈색 · 잔디 초록 · 물 파랑** 셋이라 단색으로는 한 배경에서
+#   반드시 묻힌다. 그래서 세 축을 겹쳐 쌓았다 — ⑴ 대각 해칭의 **어두운 줄**(밝은 바닥용 대비)
+#   ⑵ 밝은 **황금 테두리**(어두운 바닥·물용 대비, 세 바닥 어디에도 없는 색상) ⑶ 차오름/번쩍의
+#   **명도 변화**(색맹·저대비 모니터에서도 읽힌다). 전부 연출값 → docs/TUNING.md 대상.
+# ⚠ 잔몹 반경은 22~28px로 보스(range 130 등)보다 훨씬 작다 — 그래서 알파를 보스보다 올리고
+#   테두리·선단을 **반경 대비 두껍게** 잡았다(보스 값을 그대로 베끼면 작아서 안 보인다).
+const TELEGRAPH_AA_PX := 1.0            # 경계 소프트 폭(월드 px) — 🔴 **바깥으로만** 퍼진다(= 항상 과예고)
+const TELEGRAPH_QUAD_MARGIN_PX := 1.0   # 쿼드 여유 — 화면 픽셀 중심이 쿼드 밖으로 나가는 것 방지
+const TELEGRAPH_BORDER_PX := 2.5        # 테두리 두께(경계 안쪽) — 반경 22에서 11%라 작아도 읽힌다
+const TELEGRAPH_FILL := Color(0.847, 0.176, 0.141, 0.40)
+const TELEGRAPH_BORDER := Color(1.000, 0.827, 0.353, 0.90)   # 황금 테두리 = 주 시인성 레버
+const TELEGRAPH_STRIPE_DARK := Color(0.212, 0.043, 0.055, 0.52)
+const TELEGRAPH_FILL_FADE := 0.20
+const TELEGRAPH_PULSE_AMP := 0.12
+const TELEGRAPH_PULSE_HZ := 2.6         # 보스(2.2)보다 조금 빠르게 — 잔몹 예고가 더 짧다
+const TELEGRAPH_STRIPE_PERIOD := 9.0    # 반경 22 → 지름 44에 약 5줄
+const TELEGRAPH_STRIPE_SPEED := 0.8
+const TELEGRAPH_STRIPE_DUTY := 0.55
+const TELEGRAPH_CHARGE := Color(1.000, 0.404, 0.129, 0.72)   # 다 찬 구역 — 더 뜨겁게
+const TELEGRAPH_LEAD_PX := 4.0          # 차오름 선단 두께(보스 7.0을 반경비로 줄인 값)
+const TELEGRAPH_FLASH := Color(1.000, 0.949, 0.784, 0.94)    # 마지막 순간 번쩍
+const TELEGRAPH_FLASH_START := 0.82     # 이 진행도부터 번쩍이 올라온다
+
+# --- 타격 순간 내지르기 (2026-08-02) ---
+# 예고가 다 찬 그 프레임에 몸이 앞으로 툭 나간다 — 충격파(MobStrikeFx)와 같이 "지금 때렸다"를 읽힌다.
+# 🔴 채널은 `_sprite.offset` **하나뿐**이고 손맛 계층 넷과 안 겹친다:
+#   위치 = `Flinch`(sprite.position) · 스케일 = `HitStop` · 머티리얼 = `HitFlash` ·
+#   speed_scale = `_apply_anim_scale`. 🔴 **몸(CharacterBody2D) 좌표는 절대 건드리지 마라** —
+#   그건 판정 좌표라 `G_MOB_POS`·길찾기·`is_strike_hit`로 새어 나간다(표시가 판정을 움직인다).
+const LUNGE_PX := 3.0     # 내지르는 거리(스프라이트 로컬 px — `sprite_scale`이 곱해져 화면엔 조금 더 크다)
+const LUNGE_OUT := 0.05   # 나가는 시간
+const LUNGE_BACK := 0.13  # 돌아오는 시간
+
 # 원거리 조준선 — 연출값 (rules §0 예외)
 const AIM_LINE_WIDTH := 1.0
 const AIM_LINE_COLOR := Color(0.749, 0.247, 0.180, 0.5)  # #bf3f2e — 40색 팔레트의 경고 붉은
@@ -124,6 +171,13 @@ var _knock_show_px: float = -1.0   # 다음 `_on_hp_changed`가 소비할 층①
 #     호스트에서도 그 경로를 연다(WINDUP 중에 밀린다) — 타격점 `_strike_center`는 고정인데 표시만
 #     따라가면 「보이는 예고 ≠ 맞는 자리」다(§3).
 var _telegraph_center := Vector2.ZERO
+# 🔴 이번 예고의 **총 길이** = 차오름(progress)의 분모. `show_telegraph`가 확정한 `dur` 그 자체다 —
+#   식을 여기서 다시 쓰지 마라(보스 `_telegraph_total_s` 판례: "예고는 끝났는데 차오름은 70%"처럼
+#   표시끼리 갈라진다). 호스트는 지연 보상분이 더해진 값, 게스트는 자기 `def.telegraph_s`이므로
+#   **각 클라가 자기 창으로 리졸브**해도 "다 찼다 = 지금 맞는다"가 양쪽에서 동시에 성립한다(§3).
+var _telegraph_total_s: float = 0.0
+# 매 프레임 progress를 심을 대상(캐시 — 재조회 비용 제거). 반경이 고정이라 `_ready`에서 한 번 세운다.
+var _telegraph_mat: ShaderMaterial = null
 
 @onready var _sprite: AnimatedSprite2D = $Sprite
 @onready var _collision: CollisionShape2D = $Collision
@@ -160,6 +214,47 @@ func _fit_shadow() -> void:
 		_shadow.position = Vector2(0.0, maxf(0.0, float(ft.get_height()) * 0.5 - SHADOW_FOOT_INSET))
 
 
+# 예고 장판의 기하·색을 **한 번** 심는다 (2026-08-02: 텍스처 → 셰이더).
+#
+# 🔴 표시 반경 = `def.strike_radius` = **판정 반경**(`CombatMath.is_strike_hit`) — 한 값에서만 온다(§3).
+#   셰이더가 그리는 도형이 `length(p) <= radius_px`라 판정식 그 자체다(보스 판례와 같은 근거:
+#   각·반지름이 텍스처 픽셀에 박혀 있으면 데이터를 튜닝하는 순간 에러 없이 갈라진다).
+#
+# ⚠ 보스처럼 예고마다 uniform을 전량 재설정하지 않는 이유: 잔몹은 패턴이 하나뿐이라 **반경이 절대
+#   안 변한다**(보스 Telegraph 노드는 원/콘/캡슐을 오가며 재사용돼 낡은 값 잔류 경로가 있다).
+#   🔴 다만 회차마다 바뀌는 `progress`만은 예외라 `show_telegraph`가 **매번 0으로 되심는다** —
+#   안 심으면 다음 예고가 **이전 회차의 다 찬 상태로 시작**한다(에러 없음, 임박 신호만 거짓).
+#   ⚠ 나중에 잔몹에 두 번째 패턴(반경이 다른 공격)이 생기면 이 함수를 `show_telegraph`로 옮기고
+#     보스처럼 전량 재설정해라 — 안 그러면 두 번째 패턴이 첫 패턴의 반경으로 그려진다.
+#
+# 🔴 **머티리얼을 안 뗀다 — `hit_flash`의 "끝나면 material = null" 규율(rules §5)의 명시적 예외다.**
+#   그 규율의 근거는 *"평상시에도 그려지는 스프라이트에 셰이더가 남으면 웹 Compatibility에서
+#   amount=0이 항등이 아닐 수 있다"*인데, 이 노드는 예고 밖에서 `visible = false`라 **아예 안 그려진다**
+#   (항등을 물을 off 상태가 없다). 반대로 떼면 남는 것이 흰 쿼드라 `visible`이 한 프레임이라도
+#   살아 있으면 **거대한 흰 사각**이 뜬다 — 붙여 두는 쪽이 안전한 방향이다. 판단 기준은
+#   "효과가 끝났는가"가 아니라 **"평상시에도 렌더되는가"**이고, 보스 텔레그래프가 같은 판례다.
+func _setup_telegraph() -> void:
+	if def == null:
+		return
+	_telegraph_mat = TelegraphFx.apply_circle(
+		_telegraph, def.strike_radius, TELEGRAPH_AA_PX, TELEGRAPH_QUAD_MARGIN_PX)
+	# 아래는 전부 **연출값**이다(색·두께·주기) — 기하는 위 한 줄이 이미 전부 정했다.
+	_telegraph_mat.set_shader_parameter(&"border_px", TELEGRAPH_BORDER_PX)
+	_telegraph_mat.set_shader_parameter(&"fill_color", TELEGRAPH_FILL)
+	_telegraph_mat.set_shader_parameter(&"border_color", TELEGRAPH_BORDER)
+	_telegraph_mat.set_shader_parameter(&"stripe_dark", TELEGRAPH_STRIPE_DARK)
+	_telegraph_mat.set_shader_parameter(&"fill_fade", TELEGRAPH_FILL_FADE)
+	_telegraph_mat.set_shader_parameter(&"pulse_amp", TELEGRAPH_PULSE_AMP)
+	_telegraph_mat.set_shader_parameter(&"pulse_hz", TELEGRAPH_PULSE_HZ)
+	_telegraph_mat.set_shader_parameter(&"stripe_period", TELEGRAPH_STRIPE_PERIOD)
+	_telegraph_mat.set_shader_parameter(&"stripe_speed", TELEGRAPH_STRIPE_SPEED)
+	_telegraph_mat.set_shader_parameter(&"duty", TELEGRAPH_STRIPE_DUTY)
+	_telegraph_mat.set_shader_parameter(&"charge_color", TELEGRAPH_CHARGE)
+	_telegraph_mat.set_shader_parameter(&"lead_px", TELEGRAPH_LEAD_PX)
+	_telegraph_mat.set_shader_parameter(&"flash_color", TELEGRAPH_FLASH)
+	_telegraph_mat.set_shader_parameter(&"flash_start", TELEGRAPH_FLASH_START)
+
+
 func _ready() -> void:
 	add_to_group("enemy")
 	add_to_group("mob")
@@ -193,8 +288,7 @@ func _ready() -> void:
 			_collision.shape = shape
 		_health.setup(def.max_hp, def.respawns, def.respawn_delay)
 		_prev_hp = def.max_hp
-		# 텔레그래프 표시 반경 = 판정 반경(def.strike_radius) — "맞는 곳=보이는 곳" (rules §3)
-		_telegraph.scale = Vector2.ONE * (def.strike_radius * 2.0 / TELEGRAPH_TEX_SIZE)
+		_setup_telegraph()
 		_fit_shadow()
 	_health.hp_changed.connect(_on_hp_changed)
 	# 권한 경로(호스트 apply_damage)에서만 발화 — CombatAuthority가 ehp 브로드캐스트 + 클리어 판정.
@@ -349,7 +443,23 @@ func _physics_process(delta: float) -> void:
 		#   `speed_scale`을 유도한다(고정 lead는 RTT 가변인 조준 창에 못 맞춘다).
 		elif before > ATTACK_ANIM_LEAD_S and _telegraph_left <= ATTACK_ANIM_LEAD_S:
 			_play(&"attack")
+		# 차오름(임박도) — 🔴 **`TIME`이 아니라 자기 예고 창에서 유도한다**(보스 판례 · §3 지연 보상).
+		#   호스트 창은 `strike_delay_s`만큼 길어 남은 시간이 클라마다 다르다. TIME으로 만들면
+		#   게스트가 **틀린 임박 신호**를 읽고, 그건 지연 보상이 없애려던 손해 그 자체다.
+		# ⚠ 판정 형태는 안 건드린다 — 셰이더는 이 값으로 **색만** 바꾼다(반경은 그대로).
+		if not _is_ranged and _telegraph_total_s > 0.0:
+			TelegraphFx.set_progress(_telegraph_mat, 1.0 - _telegraph_left / _telegraph_total_s)
 		if _telegraph_left <= 0.0:
+			# 🔴 **타격 순간 FX는 여기서 난다 — `EventBus.mob_strike`가 아니다.** 그 시그널은
+			#   **호스트 전용 emit**이라(event_bus.gd) 매달면 게스트 화면엔 아무것도 안 뜬다.
+			#   각 클라의 예고 카운트다운이 0이 되는 순간이 그 화면의 "지금 맞는다"이고, 호스트가
+			#   지연 보상으로 타격을 늦춰 둔 덕에 그 순간이 실제 확정과 정렬된다(§3).
+			#   ⇒ 표시 전용 · **네트워크 메시지 0개**(rules §2 손맛 계층).
+			# ⚠ `visible` 게이트 = 사망 취소분이다. `_on_hp_changed`가 죽을 때 예고를 끄므로
+			#   시체가 안 하는 타격의 충격파가 남지 않는다(호스트도 그때 STRIKE를 안 낸다 — 사망이
+			#   `_state`를 IDLE로 돌린다). ⚠ `_telegraph.visible = false`보다 **먼저** 봐야 한다.
+			if not _is_ranged and _telegraph.visible:
+				_play_strike_fx()
 			_telegraph.visible = false
 			_hide_aim_line()
 	_shadow.visible = not _health.is_dead()  # 시체·부활 대기 중엔 그림자도 없앤다(플레이어 고스트와 같은 규칙)
@@ -643,6 +753,12 @@ func show_telegraph(center: Vector2, duration: float = -1.0) -> void:
 	_telegraph.global_position = center
 	_telegraph.visible = true
 	_telegraph_left = dur
+	# 차오름 분모 = 표시 지속과 **문자 그대로 같은 값**이라 "다 찼다 = 사라진다 = 맞는다"가 세 축에서
+	# 동시에 성립한다(보스 `_telegraph_duration` 판례, §3). 식을 다시 쓰면 표시끼리 갈라진다.
+	_telegraph_total_s = dur
+	# 🔴 0으로 되심는 것이 계약이다 — Telegraph 노드는 공격마다 재사용되므로 안 심으면 다음 예고가
+	#   **이전 회차의 다 찬 상태로 시작**한다(에러 없음, 임박 신호만 거짓).
+	TelegraphFx.set_progress(_telegraph_mat, 0.0)
 
 
 # 🔴 예고는 **뜬 자리에 못 박혀 있어야 한다** — `$Telegraph`가 이 몸의 자식이라 몸이 움직이면
@@ -652,6 +768,47 @@ func show_telegraph(center: Vector2, duration: float = -1.0) -> void:
 func _reassert_telegraph_pos() -> void:
 	if _telegraph.visible:
 		_telegraph.global_position = _telegraph_center
+
+
+# --- 타격 순간 (2026-08-02) — "언제 때리는지"의 나머지 절반 ---
+#
+# 예고가 차오르는 것이 「곧 온다」라면, 여기가 「지금 왔다」다. 도입 전에는 예고 원이 그냥 **사라지기만**
+# 해서 타격 프레임이 화면에서 아무 신호도 안 냈다(사용자 신고).
+#
+# 🔴 **표시 전용이다.** 판정·데미지 확정은 `EventBus.mob_strike` → `CombatAuthority`가 **따로** 하고
+#   여기서는 아무 상태도 안 건드린다(rules §2: 판정 코드에 연출을 섞지 마라 — 그 반대편도 같다).
+# 🔴 좌표는 `_telegraph_center`(= WINDUP에 고정된 타격점)다. `global_position`을 쓰면 넉백·추격으로
+#   몸이 움직인 만큼 어긋나 「보이는 충격 ≠ 맞은 자리」가 된다 — `_reassert_telegraph_pos`가 예고에
+#   대해 막고 있는 것과 **정확히 같은 함정**이다.
+# 🔴 반경은 `def.strike_radius` 그대로 넘긴다 — 충격파를 "조금 더 크게" 만들지 마라(§3).
+func _play_strike_fx() -> void:
+	if def == null:
+		return
+	# 스테이지 루트에 붙인다 — 몹의 자식이면 충격파가 몸을 따라 끌려가고, 몹이 그 프레임에 죽으면
+	# 같이 사라진다(런타임 add_child라 `_ready` "Parent node is busy" 함정과 무관, rules §5).
+	MobStrikeFx.burst(get_parent(), _telegraph_center, def.strike_radius)
+	_lunge(_telegraph_center)
+
+
+# 타격 순간 몸이 앞으로 툭 내지른다 — 충격파와 함께 "이 몹이 때렸다"를 개체 단위로 읽힌다.
+# 🔴 채널 = `_sprite.offset` **하나뿐**이고 손맛 계층 넷과 안 겹친다(선언부 `LUNGE_PX` 주석이 정본).
+#   🔴 몸(CharacterBody2D) 좌표는 절대 안 건드린다 — 그건 판정 좌표다.
+# ⚠ 직전 트윈을 죽이고 offset을 0으로 되돌린 뒤 시작한다(`Flinch`와 같은 관용구) — 안 그러면
+#   연타 시 이전 트윈의 복귀 구간이 겹쳐 스프라이트가 **어긋난 offset에 굳는다**(에러 없음).
+func _lunge(target: Vector2) -> void:
+	var d := target - global_position
+	if d.length() < 0.01:
+		return
+	var prev: Variant = _sprite.get_meta(&"lunge_tween", null)
+	if prev is Tween and (prev as Tween).is_valid():
+		(prev as Tween).kill()
+	_sprite.offset = Vector2.ZERO
+	var tw := _sprite.create_tween()
+	_sprite.set_meta(&"lunge_tween", tw)
+	tw.tween_property(_sprite, "offset", d.normalized() * LUNGE_PX, LUNGE_OUT) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(_sprite, "offset", Vector2.ZERO, LUNGE_BACK) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 
 # 🔴 게스트 전용 진입점 — MobSync가 G_MOB_SHOOT 수신 시 부른다(`show_telegraph`의 미러).
