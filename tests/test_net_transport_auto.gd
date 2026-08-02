@@ -43,6 +43,22 @@ func _init() -> void:
 	failures += _check(not fast.has(NetSchema.G_PING) and not fast.has(NetSchema.G_PONG),
 		"fast 분류: ping/pong 제외(측정 채널 = 예고 채널, §3 지연 보상 입력)")
 
+	# --- ⑴-b 순서 가드가 실제로 일하는 구간인가 (netreview 2026-08-02 M-1) ---
+	# 🔴 fast 채널은 `maxPacketLifeTime = RTC_FAST_LIFETIME_MS`(60ms)라 그보다 오래 걸리는
+	#   재전송은 **폐기된다**. 그래서 송신 간격이 그 수명보다 길면 뒤바뀔 패킷이 애초에 도착하지
+	#   못해 순서 가드가 사실상 no-op이 된다 — 지금 G_MOB_POS(10Hz = 100ms > 60ms)가 그 상태다.
+	#   ⚠ **결함이 아니라 현재의 사실**이다. 기록해 두는 이유는 둘: ⑴ 송신율을 올리면(넉백처럼
+	#   위치가 급변하는 기능이 요구할 수 있다) 그 순간 가드가 load-bearing이 되므로 그때 이 줄이
+	#   빨개져 **왜 필요한지 읽게 된다** ⑵ 반대로 "지금 안 걸리니 가드를 빼자"는 판단을 막는다
+	#   (씬 에폭 결함 = netreview I-1은 송신율과 무관하게 실재한다).
+	var mob_gap_ms := 1000.0 / 10.0    # MobSync.SEND_RATE 미러 — 씬 글루라 preload가 안 된다
+	var pos_gap_ms := 1000.0 / 30.0    # PeerSync 위치 송신율 미러
+	var life_ms := float(NetScript.RTC_FAST_LIFETIME_MS)
+	failures += _check(mob_gap_ms > life_ms,
+		"G_MOB_POS 간격 %.1fms > 패킷 수명 %.0fms — 순서 가드는 현재 미래 대비다(이 줄이 빨개지면 load-bearing이 된 것)" % [mob_gap_ms, life_ms])
+	failures += _check(pos_gap_ms < life_ms,
+		"G_POS 간격 %.1fms < 패킷 수명 %.0fms — 이쪽 순서 가드는 실제로 일한다" % [pos_gap_ms, life_ms])
+
 	# --- ⑵ Net이 소비하는 kind의 유일성 (rules §5) ---
 	# Net이 가로채는 이름이 게임 kind와 겹치면 그 게임 기능이 조용히 죽는다. 스키마 상수 전체를 훑어
 	# 값 중복이 하나도 없음을 단정한다 — 새 kind를 추가할 때 grep을 잊어도 여기서 걸린다.

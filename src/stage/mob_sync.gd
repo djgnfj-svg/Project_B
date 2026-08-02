@@ -9,6 +9,23 @@ const SEND_RATE := 10.0  # Hz — 배치 1건으로 묶어 릴레이 메시지 2
 
 var _mobs: Dictionary = {}  # eid -> mob (그룹 "mob" 씬 배치 스캔 — 동적 스폰 없음)
 var _send_accum: float = 0.0
+# 🔴 배치 시퀀스 — G_POS의 `n`과 **같은 목적·같은 판정 함수**(CombatMath.is_pos_seq_fresh).
+#   G_MOB_POS는 `Net.RTC_FAST_KINDS`라 P2P 직결에서 **unordered**다. 뒤바뀐 배치를 적용하면
+#   게스트의 `_remote_target`이 송신 주기 하나만큼(100ms) **과거로 되돌아가고**, 그 좌표는
+#   표시로 안 끝난다 — `player.gd`가 `intersect_shape` 결과의 `global_position`을
+#   `is_melee_in_cone`에 넣으므로 **게스트의 로컬 근접 질의가 낡은 자리로 각을 잰다.**
+#   증상은 "스윙·궤적·소리는 다 나는데 적 HP만 안 깎인다" = §3 「각 축 지연 보상」 결함과
+#   **구분되지 않아 서로를 가린다.** ⚠ 직결에서만·게스트에서만 난다(릴레이는 TCP라 구조적으로
+#   불가능) → `dev_local.sh`로도 배포 릴레이로도 재현이 안 되고 **P2P가 붙은 배포본에서만** 드러난다.
+# ⚠ 씬 컴포넌트라 씬마다 새로 태어난다 = 씬 전환 시 리셋이 공짜다(peer_sync `_melee_combo`와 같다).
+var _mpos_seq: int = 0        # 호스트: 다음 배치에 실을 번호
+var _last_mpos_seq: int = 0   # 게스트: 마지막으로 적용한 번호
+# 씬 에폭 판정 문턱 — 번호가 이보다 크게 **뒤로** 점프하면 "새 씬이 1부터 다시 센다"로 본다.
+# 🔴 진짜 순서 뒤바뀜과 구별되어야 하므로 그 최대 거리보다 넉넉히 커야 한다: fast 채널 패킷은
+#   `Net.RTC_FAST_LIFETIME_MS`(60ms)를 넘기면 폐기되고 송신 간격이 100ms(SEND_RATE 10Hz)라
+#   **재전송으로 뒤바뀔 수 있는 거리가 1을 못 넘는다.** 10이면 1초분 = 두 자릿수 여유다.
+# ⚠ `SEND_RATE`를 올리면 이 여유가 줄어든다 — 부등식은 `test_net_transport_auto`가 지킨다.
+const EPOCH_GAP := 10
 
 
 func _ready() -> void:
@@ -66,7 +83,11 @@ func _physics_process(delta: float) -> void:
 			continue  # 사망(숨김) 잔몹 제외 — 사망 전파는 ehp가 담당
 		batch.append(mob.call("get_sync_state"))
 	if not batch.is_empty():
-		Net.send_game({NetSchema.KEY_KIND: NetSchema.G_MOB_POS, "m": batch})
+		# 🔴 번호는 **보내는 배치마다** 오른다 — 빈 배치를 건너뛰는 위 가드 때문에 번호에 구멍이
+		#   생기지만, 수신 판정이 `>`(단조 증가)라 구멍은 무해하다. 반대로 여기서 올리지 않으면
+		#   같은 번호가 두 번 나가 뒤 배치가 통째로 폐기된다.
+		_mpos_seq += 1
+		Net.send_game({NetSchema.KEY_KIND: NetSchema.G_MOB_POS, "n": _mpos_seq, "m": batch})
 
 
 # 호스트 전용 수신 경로 — 잔몹 AI가 알린 텔레그래프를 전원에 중계 (게스트는 emit하지 않는다)
@@ -122,14 +143,41 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 		return  # 잔몹 상태는 호스트 발신만 신뢰 (rules §3). 미등록 eid = 자연 드랍
 	match str(data.get(NetSchema.KEY_KIND, "")):
 		NetSchema.G_MOB_POS:
-			for entry: Variant in (data.get("m", []) as Array):
-				if not (entry is Array) or (entry as Array).size() < 4:
-					continue
-				var arr := entry as Array
-				var mob: Node = _mobs.get(str(arr[0]))
-				if mob != null:
-					mob.call("apply_remote_pos",
-						Vector2(float(arr[1]), float(arr[2])), bool(arr[3]))
+			# 🔴 순서 가드 — 판정은 `CombatMath.is_pos_seq_fresh`를 **G_POS와 공유**한다(사본 금지:
+			#   한쪽만 고치면 두 위치 스트림의 신선도 규칙이 갈라진다). 미부착(0)은 항등 통과라
+			#   구버전 호스트·릴레이 경로와 완전히 같은 동작이다. 상세 = 위 `_mpos_seq` 주석.
+			var mseq := int(data.get("n", 0))
+			# 🔴🔴 **씬 에폭 리셋 — 이 가드가 없으면 결함이 「일시」에서 「사실상 영구」로 커진다**
+			#   (netreview 2026-08-02 I-1). 이 노드는 씬마다 새로 태어나 `_last`가 0이지만,
+			#   **직전 씬의 배치가 지연 도착하면** 그 큰 번호(수천)가 0을 이겨 그대로 박힌다.
+			#   새 씬 호스트는 1부터 세므로 **이후 전량 폐기** = 번호/10초, 즉 직전 씬에 5분
+			#   머물렀으면 **약 300초 동안 게스트 잔몹이 스폰 지점에 얼어붙는다.** 에러 0.
+			#   ⚠ 도입 전에는 같은 패킷이 낡은 좌표를 **한 번** 쓰고 다음 배치가 덮었다(자기 치유)
+			#     — 즉 순서 가드는 이 한 방향으로만 피해를 **키운다.** 그래서 짝으로 넣는다.
+			#   🔴 지금 이게 안 터지는 이유는 **둘 다 우연이고 계약이 아니다**: ⑴ 마을엔 MobSync가
+			#     없다 ⑵ stage→stage 전환은 클리어 뒤라 몹이 전부 `visible=false` → 배치가 빈 채로
+			#     `NEXT_DELAY_S`(3초)를 보낸다. **동적 스폰(웨이브)이나 클리어 없는 전환이 생기면
+			#     그 즉시 실체화한다** — rules §2 「적 동적 스폰」 게이트와 같은 자리다.
+			#   ⚠ G_POS는 이 문제가 **구조적으로** 없다 — `peer_sync`가 씬 id(`"s"`)를 먼저 보고
+			#     다른 씬이면 `_last_pos_seq`를 **건드리기 전에** return한다. 함수를 공유한 것과
+			#     안전성을 공유한 것은 다르다. 여기선 배치에 씬 토큰이 없어 **뒤로 큰 점프 = 새 에폭**
+			#     으로 판정한다(재합류·미래 동적 스폰까지 같이 덮는 값싼 처방).
+			if mseq > 0 and mseq < _last_mpos_seq - EPOCH_GAP:
+				_last_mpos_seq = 0
+			if CombatMath.is_pos_seq_fresh(mseq, _last_mpos_seq):
+				# ⚠ 갱신은 **fresh일 때만** 한다 — 무조건 `maxi`로 바꾸면 게스트가 아직 이전 씬에
+				#   있을 때 도착한 새 씬 배치(작은 번호)는 무해하지만, 위 에폭 판정이 볼 「뒤로 점프」
+				#   자체가 사라져 I-1 처방이 무력해진다. 관용구는 `player.gd`의 G_POS 쪽과 맞춘다.
+				if mseq > 0:
+					_last_mpos_seq = mseq
+				for entry: Variant in (data.get("m", []) as Array):
+					if not (entry is Array) or (entry as Array).size() < 4:
+						continue
+					var arr := entry as Array
+					var mob: Node = _mobs.get(str(arr[0]))
+					if mob != null:
+						mob.call("apply_remote_pos",
+							Vector2(float(arr[1]), float(arr[2])), bool(arr[3]))
 		NetSchema.G_MOB_ATK:
 			var mob: Node = _mobs.get(str(data.get("eid", "")))
 			if mob != null:

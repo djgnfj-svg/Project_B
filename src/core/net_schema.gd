@@ -35,7 +35,7 @@ const G_HIT_REQ := "hitreq"           # {k, eid, dx, dy}  게스트 → 호스�
 const G_ENEMY_HP := "ehp"             # {k, eid, hp, cr, d}  호스트 → 전원: 적 HP 확정 브로드캐스트 (hp<=0 = 사망). cr = 1이면 이번 확정이 치명타(표시 강조 전용 — 게스트가 자기 치명을 아는 유일한 경로. 굴림은 호스트만 §1). php(플레이어 HP)엔 없다 — 적은 치명타를 굴리지 않는다. d = 실제로 들어간 데미지(표시 전용, 2026-08-01): hp만 보내면 수신 측이 감소량으로 역산하는데 그 값은 `maxi(0, hp-dmg)` 때문에 **오버킬이 잘려** 막타가 실제보다 작게 뜬다. 없으면 0 = 미상 → 글루가 감소량 폴백 = 구버전과 항등
 const G_SCENE := "scene"              # {k, scene, c, i} 호스트 → 전원: 씬 전환 지시 — 전환 확정 권한은 호스트 (rules §1·§3). scene=stage일 때 c=챕터 id·i=스테이지 인덱스 — 수신 측은 data/chapters 스캔 allowlist + 범위 검증(scene_flow)
 const G_ROLL := "roll"                # {k, dx, dy}   발신자=본인: 구르기 시작 선언 — 호스트가 쿨다운 검증 후 i-frame 창 부여. dx/dy = 원격 구르기 연출(peer_sync가 소비, 표시 전용)
-const G_MOB_POS := "mpos"             # {k, m}        호스트 → 전원: 잔몹 위치 배치 (m = [[eid, x, y, f], …], 10Hz). ⚠ 릴레이 2곳 로그 제외 목록에 등록 (고빈도)
+const G_MOB_POS := "mpos"             # {k, n, m}     호스트 → 전원: 잔몹 위치 배치 (m = [[eid, x, y, f], …], 10Hz). ⚠ 릴레이 2곳 로그 제외 목록에 등록 (고빈도). n = 송신 시퀀스(배치 단위, 단조 증가) — 🔴 G_POS와 **같은 이유·같은 함수**(CombatMath.is_pos_seq_fresh): 이 kind도 RTC_FAST_KINDS라 P2P에서 unordered이고, 뒤바뀐 배치를 적용하면 게스트 `_remote_target`이 **송신 주기 하나만큼(100ms) 과거로 되돌아간다**. G_POS보다 나쁜 자리가 하나 있다 — 그 좌표는 표시로 안 끝나고 **게스트의 로컬 근접 질의에 그대로 들어가서**(player.gd가 intersect_shape 결과의 global_position을 is_melee_in_cone에 넣는다) 증상이 "적 HP만 안 깎인다"가 되어 §3 「각 축 지연 보상」 결함과 **구분되지 않는다**. 배치 단위 1개면 충분하다(항목별 불필요 — 한 배치는 같은 순간의 스냅샷이다). 0/미부착 = 항등 폴백(구버전·릴레이 경로)
 const G_MOB_ATK := "matk"             # {k, eid, x, y} 호스트 → 전원: 잔몹 텔레그래프 시작(타격 중심). 타격 시각은 def.telegraph_s를 각자 로컬 리졸브
 # {k, eid, ox, oy, dx, dy, aid} 호스트 → 전원: 원거리 잔몹 발사. (ox,oy)=원점·(dx,dy)=정규화 방향·aid=투사체 고유 id.
 # 🔴 **수치는 하나도 싣지 않는다** — 속도·사거리·데미지·명중 반경은 각 클라가 `eid`로 찾은 자기 씬의
