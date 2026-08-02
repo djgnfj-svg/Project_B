@@ -756,8 +756,13 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			# ⚠ 이건 **거부가 아니라 기하 폴백이다** — null = 직업 기본 사거리 + 전방위 = 부채꼴 도입 전과
 			#   항등. 그래서 위 거부 게이트 **뒤**에 있어야 맞다(거부는 이미 끝났다).
 			#   ⚠ 판정 규칙은 클라의 착용 규칙과 **같은 함수**(can_job_equip)를 지난다 — 사본 금지.
+			# 🔴 **거부로 null이 된 것과 「아직 모른다」는 다른 사건이다** (netreview N-2ⓐ).
+			#   아래 폴백 넓힘은 **모르는 경우에만** 준다 — 안 가르면 궁수가 대검을 공지했을 때
+			#   **거부의 보상으로** 수용이 84 → 160px가 된다(정직한 클라 비용 0인 구분이다).
+			var weapon_known := melee_weapon != null
 			if not GameState.can_job_equip(_peer_sync.peer_job_id(from_id), melee_weapon):
 				melee_weapon = null
+				weapon_known = true   # 알긴 아는데 못 드는 것 = 넓히지 않는다
 			# 🔴 **근접 콤보 타수 — 아래 G_ATK 분기가 이미 센 값이다. 여기서 다시 세지 마라.**
 			#   근거가 둘이 되면 갈라지고, 이 타수는 데미지 배율과 판정 각을 **동시에** 고르므로
 			#   갈라짐이 곧 "맞는 곳 ≠ 보이는 곳"이 된다(§3).
@@ -768,6 +773,31 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			var req_combo := CombatMath.clamp_combo_index(
 				int(_melee_combo.get(from_id, 0)), melee_weapon)
 			var req_finish := _is_melee_finish(melee_weapon, req_combo)
+			# 🔴 **거리 판정 전용 폴백** (netreview 2026-08-02 I-3). G_STATS 미도착 창에는 무기뿐
+			#   아니라 **reach 특성도 모른다**(같은 메시지다) — 그래서 호스트 수용이 `기본 × 1 × SLACK`
+			#   = 84로 고정되는데 로컬은 `무기 도달 × (1+reach)`까지 뻗어 **정당한 팁 타격이 무음
+			#   거부**됐다(창 + 검성 = 실측 20px 띠, **스테이지 전환마다** 재발. 창은 콤보가 필요
+			#   없어 전환 직후 첫 스윙에 바로 닿는다). 이 창에서만 「그 직업이 낼 수 있는 가장 긴
+			#   근접 무기」를 거리 기준으로 쓴다 — 전사 기준 84 → 160px.
+			# 🔴🔴 **거리에만 쓴다 — `melee_weapon`을 통째로 바꾸지 마라.** 각(`hit_half`)·데미지
+			#   배율·타수는 여전히 `melee_weapon = null` 기준(= 부채꼴 도입 전과 항등)이다. 통째로
+			#   바꾸면 그 창에서 남의 무기 각·배율까지 확정받는다.
+			# ⚠ **reach는 여기 안 넣는다**(그래서 인자가 그대로 `attacker.trait_value`다) — `SLACK`
+			#   2.0이 이미 특성 상한(+50%)을 덮는다: 로컬 최악 `80 × 1.5 = 120` ≤ 호스트 `80 × 2 = 160`.
+			#   넣으면 240px가 되어 표면만 넓어진다.
+			# 🔴🔴 **남는 표면 — 리뷰가 리드의 초기 판단 둘을 정정했다** (netreview N-2, 수용 결정):
+			#   ⑴ 기각된 오판: *"160px는 창 공지 208~240px보다 작으니 표면이 안 넓어진다."* **면적으로
+			#      보면 반대다** — 폴백은 **전방위**(`melee_half_angle(null)` = `MELEE_FULL_ARC`)라
+			#      `π·160²` ≈ **80,400px²**이고 창 공지는 반각 17°라 `½·208²·0.593` ≈ **12,800px²**,
+			#      즉 **약 6배**다. 두 집합은 포함관계가 아니라 반지름 비교가 성립하지 않는다.
+			#   ⑵ 기각된 오판: *"창이 200~400ms만 열린다."* **G_STATS를 아예 안 보내면 영구히 열린다**
+			#      (`peer_weapon_id` = "" → `equip_def("")` = null). 창은 네트워크가 아니라 클라가 연다.
+			#   🔵 **그래도 수용한다** — 그 클라는 장비 공격력·5스탯(치명/공속/피흡)·콤보 배율을 전부
+			#      포기한다(`combo_len` 1 = 항상 ×1.0). 협동 2인·PvP 없음. §2 G_STATS 게이트에 등재.
+			#   ⚠ 남은 값싼 레버 = 넓힘을 스폰 후 N초로 한정하는 것(정직한 클라는 1 RTT 안에 보낸다)
+			#      — §2 게이트에 후보로 적어 뒀다.
+			# 🔴 폴백은 `is_finish = true`로 읽는다 — `widest_melee_for_job`이 **마무리 도달로 골랐으므로**
+			#   소비도 같은 기준이어야 지표와 값이 일치한다(N-1 ③). 무기를 아는 경우는 실제 타수 그대로.
 			var reach_def := entry["def"] as EnemyDef
 			var reach_radius := reach_def.body_radius if reach_def != null else 0.0
 			# 🔴 특성(검기 파형)의 사거리 보너스도 **공격자 아바타에서** 읽는다 — 공속·치명·피흡과
@@ -807,6 +837,24 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 				CombatMath.clamp_combo_index(int(_melee_claim.get(from_id, 0)), melee_weapon))
 			var hit_half := CombatMath.melee_half_angle(melee_weapon, req_finish or claim_finish) \
 				if has_dir else CombatMath.MELEE_FULL_ARC
+			var reach_equip := melee_weapon
+			var reach_finish := req_finish or claim_finish
+			if reach_equip == null and not weapon_known:
+				reach_equip = GameState.widest_melee_for_job(_peer_sync.peer_job_id(from_id))
+				reach_finish = true
+			# 🔴🔴 **사거리도 각과 같이 `req or claim`이다** (netreview 2026-08-02 I-1·I-2).
+			#   ⚠ **처음엔 `req_finish`만 썼다가 리뷰에서 뒤집혔다 — 그 논거를 여기 남긴다.**
+			#   기각된 논거: *"각은 dx/dy를 빼면 이미 전방위라 `or`의 대가가 ≈0인데, 사거리엔 그런
+			#   우회로가 없으니 주장 리졸브는 수용 반경을 84 → 168px로 새로 연다."*
+			#   🔴 **거짓이다 — 우회로는 `dx`/`dy`가 아니라 「무기 id 공지」다**(§2가 이미 등재):
+			#   변조 게스트가 `long_spear`를 공지하면 오늘도 수용 **208~240px**를 얻는다. `or`로 얻는
+			#   최대치는 철대검 **189px**(r=0.5)라 **이미 도달 가능한 것보다 작다** = 한계 표면 불변.
+			#   🔴 반대로 `req`만 쓰는 대가는 실재했다: 안전 여유가 `2·E_base − E_fin`로 **반토막**난다
+			#   (철대검 42 → 21px). 마무리 타는 스스로 `combo_dash` 20px를 만들므로 릴레이에서 남는
+			#   여유가 1~7px이고, 불일치 창(`advance_combo` 리셋 → claim=2 / req=0)은 지터 한 번이면
+			#   생긴다. 증상은 **"궤적·타격음은 나는데 적 HP만 안 깎인다"** 로 각 축 결함과 구분되지 않는다.
+			#   ✅ `or`면 여유가 `E_fin`(63 / r=0.3에서 81.9)로 **도입 전보다 넓어진다.**
+			# ⚠ **데미지는 아래에서 여전히 `req_combo`(min)다 — 그 줄은 주장으로 바꾸지 마라.**
 			# 🔴 **각 축의 지연 보상**(netreview C-1) — apex가 `net_anchor()`(낡은 좌표)라 이동 중인
 			#   게스트는 각이 통째로 틀어진다. 거리는 anchor 하나로 묶어 두고(신뢰 경계 불변) **각만**
 			#   외삽 좌표와 둘 중 하나가 맞으면 통과시킨다. §3 방어자 우대와 반대 부호인 이유는
@@ -819,8 +867,8 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			if CombatMath.is_hit_in_reach_lagged(
 					attacker.net_anchor(), attacker.net_anchor_lead(Net.one_way_ms(from_id)),
 					(entry["root"] as Node2D).global_position, attacker.job,
-					reach_radius, attacker.trait_value("reach"), melee_weapon,
-					hit_dir.angle(), hit_half, mob_lag):
+					reach_radius, attacker.trait_value("reach"), reach_equip,
+					hit_dir.angle(), hit_half, mob_lag, reach_finish):
 				# 🔴 데미지 배율도 **확정 타수**에서 온다 — 각과 같은 인덱스라 "세게 때리는 타 = 넓게
 				#   치는 타"가 데이터 한 장에서 함께 온다(`_register_arrow`의 같은 규약).
 				_confirm_damage(entry["health"] as HealthComponent, attacker.job, from_id,

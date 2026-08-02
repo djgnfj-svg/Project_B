@@ -259,6 +259,54 @@ func equip_def(id: String) -> EquipDef:
 	return e
 
 
+# 🔴 **G_STATS 미도착 창(폴백)에서 호스트가 쓸 「그 직업이 낼 수 있는 가장 긴 근접 무기」**
+#   (netreview 2026-08-02 I-3). 전엔 폴백이 `melee_weapon = null` → **직업 기본 사거리**였는데,
+#   그 창에는 무기뿐 아니라 **reach 특성도 모른다**(`wid`와 `ms`/`ss`가 같은 G_STATS 메시지다).
+#   그래서 호스트 수용이 `기본 × 1 × SLACK`으로 고정되는데 로컬은 `무기 도달 × (1+reach)`까지
+#   뻗어 **정당한 팁 타격이 무음 거부**됐다 — 창 + 검성이 실측 20px 띠였고 **스테이지 전환마다**
+#   재발했다(창은 콤보가 필요 없어 전환 직후 첫 스윙에 바로 닿는다).
+# 🔵 **신뢰 표면은 안 넓어진다** — 이 폴백이 여는 최대 수용(창 80 → 240px)은 변조 게스트가
+#   `long_spear`를 **공지**해서 이미 얻을 수 있는 값과 **정확히 같다**(§2 G_STATS 게이트에 등재된
+#   기존 표면). 즉 새 상한이 아니라 **이미 열려 있는 상한을 정직한 클라에게도 그 창에서만 허용**하는
+#   것이고, 부호는 §3 「정직한 플레이어의 행동이 살아남는 쪽」이다.
+# ⚠ 발사형은 제외한다 — 근접 판정의 폴백이라 `is_projectile_weapon`이 참인 것을 섞으면 안 된다.
+#   기준 함수는 호스트 근접 거부 게이트와 **같은 것**을 쓴다(사본 금지).
+var _widest_melee_cache: Dictionary = {}  # job_id -> EquipDef (또는 null)
+
+
+func widest_melee_for_job(job_id: String) -> EquipDef:
+	if _widest_melee_cache.has(job_id):
+		return _widest_melee_cache[job_id] as EquipDef
+	var jd := job_def(job_id)
+	var best: EquipDef = null
+	# 🔴🔴 **바닥은 「직업 기본」이다 — 못 이기면 null을 돌려 옛 폴백과 항등으로 떨어진다**
+	#   (netreview N-1 ②). 안 두면 `melee_range`가 직업 기본보다 **짧은** 무기(도끼 38 < 전사 42)가
+	#   유일 후보일 때 폴백이 **더 좁아진다** = 고치려던 것을 반대로 만든다.
+	var best_reach: float = jd.attack_range if jd != null else 0.0
+	for eid: String in equipment_ids():
+		var e := equip_def(eid)
+		if e == null or e.slot() != EquipDef.SLOT_WEAPON:
+			continue
+		if not can_job_equip(job_id, e) or CombatMath.is_projectile_weapon(e):
+			continue
+		# 🔴🔴 **선택 지표는 소비 지점과 「같은 함수」여야 한다** (netreview N-1 ①). 전엔
+		#   `maxf(melee_range, combo_finish_range)`로 골랐는데 **소비는 `melee_range`만 읽었다**
+		#   (폴백은 `melee_weapon == null`이라 `is_finish`가 false로 떨어진다) — 즉
+		#   `combo_finish_range`로만 긴 무기는 폴백에 **1px도 기여하지 못했다.** 오늘은 창(80)이
+		#   양쪽에서 이겨 마스킹됐고, **테스트도 같은 잘못된 지표를 미러해 초록이었다**(코드와
+		#   테스트가 같은 모델을 공유하면 검출력이 0이다).
+		#   ⚠ 짝으로 `combat_authority`가 폴백일 때 `is_finish = true`를 넘긴다 — 지표가 마무리
+		#   도달로 고른 무기를 소비도 마무리 기준으로 읽어야 둘이 같은 값이 된다.
+		if jd == null:
+			continue
+		var r := CombatMath.effective_attack_range(jd, 0.0, e, true)
+		if r > best_reach:
+			best_reach = r
+			best = e
+	_widest_melee_cache[job_id] = best
+	return best
+
+
 func recipe_ids() -> Array[String]:
 	if _recipe_ids.is_empty():
 		_recipe_ids = _scan_ids("res://data/recipes")

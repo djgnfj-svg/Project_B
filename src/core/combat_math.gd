@@ -170,11 +170,48 @@ static func clamp_reach(reach: float) -> float:
 #   🔴 무기별 사거리를 여기 한 곳에서만 고르는 이유는 위 주석과 같다: 사거리 3함수가 전부 이 함수를
 #   지나므로, 호출부 하나라도 job.attack_range를 직접 읽으면 창의 긴 사거리가 판정과 표시 중
 #   한쪽에만 걸린다. null/0 = **직업 기본 = 도입 전과 완전 항등**.
-static func effective_attack_range(job: JobDef, reach: float = 0.0, equip: EquipDef = null) -> float:
+# is_finish = 그 타가 콤보 마무리인가 (GDD v2.3 §6 「사거리」). false = 도입 전과 완전 항등.
+# 🔴 **`is_finish`가 는 것은 이 함수 안의 분기다** — 호출부가 만들 수 있는 값은 여전히 「이 함수의
+#   반환값」 하나뿐이라 §3 「사거리 3함수가 전부 이 함수를 지난다」가 그대로 유지된다.
+#   **콤보 배율을 호출부에서 곱하는 형태로 만들지 마라** — 그게 곧 제3의 값이고, `melee_half_angle`
+#   주석이 각 축에서 금지한 것과 같은 자리다.
+# 🔴🔴 **판정은 각 축과 **같이** 「`req or claim`」으로 리졸브한다** (netreview 2026-08-02 I-1·I-2).
+#   ⚠ 처음엔 「센 타수만」으로 갔다가 뒤집혔다 — 근거였던 *"사거리엔 우회로가 없다"* 가 거짓이었다.
+#   우회로는 `dx`/`dy`가 아니라 **무기 id 공지**이고(§2), 창을 공지하면 오늘도 수용 208~240px가 열린다.
+#   `or`로 얻는 최대치(철대검 189px)가 그보다 작아 **한계 표면이 안 늘고**, 반대로 「센 타수만」의
+#   대가는 실재했다: 여유가 `2·E_base − E_fin`로 반토막(42 → 21px)인데 마무리 대시가 20px를 먹는다.
+#   아래 clamp는 그래도 남는다 — 그것이 「로컬 ⊆ 호스트」의 하한을 구조로 보장한다.
+static func effective_attack_range(job: JobDef, reach: float = 0.0, equip: EquipDef = null,
+		is_finish: bool = false) -> float:
 	var base := job.attack_range
 	if equip != null and equip.melee_range > 0.0:
 		base = equip.melee_range
+	if is_finish and equip != null and is_finite(equip.combo_finish_range) \
+			and equip.combo_finish_range > 0.0:
+		# 🔴🔴 **이 `minf` 하나가 「거부 띠 0」을 구조로 만든다 — 호출부로 옮기지 마라.**
+		#   로컬 질의는 여유 없이 `E(claim)`, 호스트 확정은 `E(req) × HIT_REACH_SLACK`이다.
+		#   최악(claim=마무리 · req=평타)에서 로컬 통과 ⟹ 호스트 통과의 충분조건은
+		#     `R_f × (1+r) ≤ 2 × R_b × (1+r)` ⟺ `R_f ≤ R_b × HIT_REACH_SLACK`
+		#   이고 **(1+r)이 약분되므로 reach와 무관하게** 참이다(호스트도 공격자 아바타에서 같은
+		#   reach를 읽는다 — §3). 즉 데이터가 무엇을 적든 아래 clamp가 그 부등식을 강제한다.
+		#   ⚠ `MAX_MELEE_RANGE` clamp도 이 증명을 안 깬다: 호스트 쪽 최종값이 `min(…,130) × 2`라
+		#   `R_b(1+r) ≥ 65`면 260 ≥ 130 ≥ 로컬이고, 아니면 `2R_b(1+r) ≥ R_f(1+r) ≥ 로컬`이다.
+		base = minf(equip.combo_finish_range, base * HIT_REACH_SLACK)
 	return minf(base * (1.0 + clamp_reach(reach)), MAX_MELEE_RANGE)
+
+
+# 마무리 타의 **표시** 배율 — 판정이 커진 그 비율을 **나눗셈으로 유도한다**(사본 금지).
+# 🔴 칼·리본·잔상은 사거리를 안 읽고 **텍스처 폭**에서 도달을 만든다(`_weapon_local_dist`). 그래서
+#   판정만 늘리면 표시가 한 픽셀도 안 따라오고, 대검은 현행 여유가 **+2px뿐**이라(칼끝 44 vs 판정 42)
+#   42 → 63으로 올리는 순간 **−19px의 「안 보이는데 맞는다」** 가 생긴다 — §3이 금지하는 방향이다.
+#   비율을 그대로 곱하면 현행 여유가 **비율째 보존**되므로 튜닝값이 아니라 갈라질 축이 없다.
+# ⚠ 표시는 「주장 타수」로 그린다(판정과 부호가 다르다) — 로컬이 자기 스윙을 그리는 것이라 남의
+#   화면을 칠하지 않고, 표시가 판정보다 넓은 것은 §3이 허용하는 방향이다.
+static func combo_finish_show_mult(job: JobDef, equip: EquipDef, reach: float = 0.0) -> float:
+	var base := effective_attack_range(job, reach, equip, false)
+	if base <= 0.0:
+		return 1.0
+	return effective_attack_range(job, reach, equip, true) / base
 
 
 # 🔴 근접 도달 거리의 **하드 상한** — `MAX_REACH_BONUS`가 특성 축에서 막는 것("근접이 원거리가 되면
@@ -252,9 +289,10 @@ static func melee_show_half_angle(equip: EquipDef, is_finish: bool = false) -> f
 #   "몸통이 부채꼴에 걸치면 맞는다"는 화면과 같은 판단이 된다.
 static func is_hit_in_reach(attacker_pos: Vector2, enemy_pos: Vector2, job: JobDef,
 		enemy_radius: float = 0.0, reach: float = 0.0, equip: EquipDef = null,
-		facing: float = 0.0, half_angle: float = MELEE_FULL_ARC) -> bool:
+		facing: float = 0.0, half_angle: float = MELEE_FULL_ARC,
+		is_finish: bool = false) -> bool:
 	return is_melee_in_cone(attacker_pos, enemy_pos, facing, half_angle,
-		effective_attack_range(job, reach, equip) * HIT_REACH_SLACK, enemy_radius)
+		effective_attack_range(job, reach, equip, is_finish) * HIT_REACH_SLACK, enemy_radius)
 
 
 # 근접 부채꼴 판정 코어 — 🔴 **로컬 질의(player)와 호스트 확정(combat_authority)이 같은 이 함수를 지난다.**
@@ -324,9 +362,9 @@ static func is_angle_in_cone(apex: Vector2, target: Vector2, facing: float,
 static func is_hit_in_reach_lagged(anchor: Vector2, lead_pos: Vector2, enemy_pos: Vector2,
 		job: JobDef, enemy_radius: float = 0.0, reach: float = 0.0, equip: EquipDef = null,
 		facing: float = 0.0, half_angle: float = MELEE_FULL_ARC,
-		target_lag_px: float = 0.0) -> bool:
+		target_lag_px: float = 0.0, is_finish: bool = false) -> bool:
 	if anchor.distance_to(enemy_pos) - enemy_radius \
-			> effective_attack_range(job, reach, equip) * HIT_REACH_SLACK:
+			> effective_attack_range(job, reach, equip, is_finish) * HIT_REACH_SLACK:
 		return false
 	var angle_radius := enemy_radius + maxf(target_lag_px, 0.0)
 	return is_angle_in_cone(anchor, enemy_pos, facing, half_angle, angle_radius) \
@@ -359,9 +397,10 @@ const ATTACK_CENTER_SCALE := 0.6  # FX 중심까지의 거리 = range * 이 값
 const ATTACK_RADIUS_SCALE := 0.5  # FX 굵기(파형 세로 반높이 정합) = range * 이 값
 
 
+# ⚠ `is_finish` = 적중 FX 원점이 마무리 타에 그만큼 앞으로 나간다(순수 표시 — `weapon_impact`).
 static func attack_center_offset(dir: Vector2, job: JobDef, reach: float = 0.0,
-		equip: EquipDef = null) -> Vector2:
-	return dir * (effective_attack_range(job, reach, equip) * ATTACK_CENTER_SCALE)
+		equip: EquipDef = null, is_finish: bool = false) -> Vector2:
+	return dir * (effective_attack_range(job, reach, equip, is_finish) * ATTACK_CENTER_SCALE)
 
 
 static func attack_radius(job: JobDef, reach: float = 0.0, equip: EquipDef = null) -> float:

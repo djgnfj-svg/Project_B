@@ -2148,7 +2148,13 @@ func _resolve_swing_hit() -> void:
 	#   `is_melee_in_cone`이 거른다 — 호스트 확정과 **같은 함수**다(여유 배율만 다르다).
 	# ⚠ 좌표는 **지금(스윕 완료 시점)의 것**이다 — 선딜 동안 나도 적도 움직였으므로 클릭 시점 좌표를
 	#   쓰면 화면과 어긋난다. 호스트가 보는 상대적 낡음은 그대로다(요청 송신 시점 기준이라 불변).
-	var reach_dist := CombatMath.effective_attack_range(job, trait_value("reach"), _weapon_override)
+	# 🔴 **사거리도 콤보를 본다**(v2.3) — 마무리 타면 `EquipDef.combo_finish_range`로 길어진다.
+	#   ⚠ 로컬은 **자기 주장 타수**(`_swing_is_finish`)를 쓰고 호스트는 **센 타수**를 쓰는데, 그래도
+	#     거부 띠가 안 생긴다: 호스트 쪽에만 `HIT_REACH_SLACK`(×2.0)이 곱해지고
+	#     `effective_attack_range`의 clamp가 `R_f ≤ R_b × 2.0`을 강제하므로 **로컬 ⊆ 호스트**가
+	#     구조로 성립한다(증명은 그 함수 주석). 각 축이 `or`를 필요로 했던 것과 다른 이유다.
+	var reach_dist := CombatMath.effective_attack_range(
+		job, trait_value("reach"), _weapon_override, _swing_is_finish)
 	# 🔴 **판정 각도 콤보를 본다**(v2.2) — 마무리 타면 `EquipDef.combo_finish_arc`로 넓어진다.
 	#   ⚠ `_swing_is_finish`는 `_begin_swing`이 굳힌 값이라 **표시 각과 같은 판단**이다: 표시는 여기에
 	#     `COMBO_FINISH_SHOW_MARGIN`을 더한 값이므로 「표시 ⊇ 판정」이 구조로 유지된다.
@@ -2427,8 +2433,20 @@ func _weapon_point_global(dist: float, ang_off: float) -> Vector2:
 #   그래서 `_weapon_local_dist`(칼 실물 배치식의 미러)에 곱하지 않고 여기서만 곱한다.
 # ⚠ **두께는 저절로 따라온다** — `_blade_base_global`이 같은 배율을 곱해 닮음이라, 길이를 키우면
 #   폭도 같은 비율로 커진다("크고 두껍게"가 상수 하나로 떨어지는 이유).
+# 🔴 **마무리 사거리(v2.3)도 여기서 곱한다 — 안 곱하면 §3 「표시 ≥ 판정」이 즉시 깨진다.**
+#   칼·리본·잔상은 사거리를 **한 번도 안 읽고** 텍스처 폭에서 도달을 만든다(`_weapon_local_dist`).
+#   그래서 판정만 늘리면 표시가 한 픽셀도 안 따라오는데, 대검의 현행 여유는 **+2px뿐**이다
+#   (판정 프레임 칼끝 44.0 vs 판정 42 — 베기는 `sin(uπ)`라 u=1에 내지르기가 정확히 0이다).
+#   42 → 63으로 올리고 이 줄이 없으면 **−19px의 「안 보이는데 맞는다」** 가 그 자리에서 생긴다.
+# 🔵 **배율을 판정 비율에서 나눗셈으로 유도하므로 현행 여유가 비율째 보존된다** — 튜닝값이 아니라
+#   갈라질 축이 없다. reach 축(`TRAIL_REACH_SHOW_MULT`)과 **곱해지는** 것도 의도다(두 축이 독립).
+# ⚠ 표시는 **주장 타수**(`_swing_is_finish`)로 그린다 — 판정(호스트 = 센 타수)과 부호가 다르지만
+#   방향이 「표시 ⊇ 판정」이라 §3이 허용하는 쪽이다.
 func _trail_reach_mult() -> float:
-	return 1.0 + CombatMath.clamp_reach(trait_value("reach")) * TRAIL_REACH_SHOW_MULT
+	var m := 1.0 + CombatMath.clamp_reach(trait_value("reach")) * TRAIL_REACH_SHOW_MULT
+	if _swing_is_finish:
+		m *= CombatMath.combo_finish_show_mult(job, _weapon_override, trait_value("reach"))
+	return m
 
 
 # 칼끝의 월드 좌표 = 텍스처 오른쪽 끝 (× 검기 배율). 🔴 **리본의 바깥 변이자 상한이다.**

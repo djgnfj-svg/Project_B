@@ -823,6 +823,11 @@ func _initialize() -> void:
 	var clamp_probe_done := false
 	var melee_combo_seen := 0
 	var combo_scanned := 0
+	# ⑻ 마무리 타 사거리 (v2.3) — 넷 다 화면에 단서가 안 남는 부류다
+	var finish_range_band := ""        # 거부 띠: E(true) > E(false) × HIT_REACH_SLACK
+	var finish_range_shorter := ""     # 마무리가 평타보다 짧다(로컬이 더 엄격 = §3 반대 위반)
+	var finish_range_clamped := ""     # 데이터가 조용히 절삭된다
+	var finish_show_mult_bad := ""     # 표시 배율 < 1.0 = 「표시 < 판정」
 	for cf: String in DirAccess.get_files_at("res://data/equipment"):
 		var cbase := cf.trim_suffix(".remap")
 		if cbase.get_extension() != "tres":
@@ -851,6 +856,50 @@ func _initialize() -> void:
 			#      함수**) — `motion_type == "swing"`으로 좁히면 찌르기(창)가 말없이 빠진다.
 			if cw.combo_range_mult.size() > 0:
 				melee_has_range += "%s " % cw.id
+			# ══ ⑻ 🔴 마무리 타 사거리 (v2.3 2026-08-02) — `combo_finish_range` ══
+			#    이 축은 **거부 띠**(로컬이 보낸 정당한 타격을 호스트가 거부 = "적 HP만 안 깎인다")를
+			#    만들 수 있는 자리라, 증명의 **입력이 바뀌는 것**을 전수로 잡는다.
+			for jf: String in DirAccess.get_files_at("res://data/jobs"):
+				var jbase := jf.trim_suffix(".remap")
+				if jbase.get_extension() != "tres":
+					continue
+				var jd := load("res://data/jobs/%s" % jbase) as JobDef
+				# ⚠ `GameState.can_job_equip`을 못 쓴다 — 오토로드라 `-s`에서 컴파일이 안 된다(§5).
+				#   기존 대시 검사(⑸)와 **같은 관용구**: 범용 무기(`job_id`가 빈)는 전 직업이 든다.
+				if jd == null or (not cw.job_id.is_empty() and cw.job_id != jd.id):
+					continue
+				for rr: float in [0.0, CombatMath.MAX_REACH_BONUS]:
+					var e_base := CombatMath.effective_attack_range(jd, rr, cw, false)
+					var e_fin := CombatMath.effective_attack_range(jd, rr, cw, true)
+					# ⓐ 🔴🔴 **거부 띠 0의 증명 그 자체** — 로컬은 `E(claim)`을 여유 없이 쓰고 호스트는
+					#    `E(req) × HIT_REACH_SLACK`을 쓴다. 최악(claim=마무리·req=평타)에서
+					#    `E(true) ≤ E(false) × SLACK`이면 **로컬 질의 ⊆ 호스트 수용**이 성립한다.
+					#    이것이 깨지면 화면에 **아무 단서 없이** 정당한 마무리 타가 사라진다.
+					if e_fin > e_base * CombatMath.HIT_REACH_SLACK + 0.001:
+						finish_range_band += "%s/%s@%.2f " % [cw.id, jd.id, rr]
+					# ⓑ 설계 의도: 마무리는 평타보다 짧아지지 않는다(짧으면 로컬이 더 엄격해져
+					#    §3 「로컬 ≤ 호스트」가 반대 방향으로 깨진다 — 각 축의 `combo_finish_arc`와 같다).
+					if e_fin < e_base - 0.001:
+						finish_range_shorter += "%s/%s " % [cw.id, jd.id]
+				# ⓒ 🔴 **조용한 절삭 검출**(J-1 관용구) — 데이터가 `기본 × HIT_REACH_SLACK`을 넘으면
+				#    `minf`가 말없이 떨군다. 상한을 복제하지 않고 「적은 값이 그대로 쓰이는가」로 본다.
+				if cw.combo_finish_range > 0.0:
+					var raw_base: float = cw.melee_range if cw.melee_range > 0.0 else jd.attack_range
+					if cw.combo_finish_range > raw_base * CombatMath.HIT_REACH_SLACK + 0.001:
+						finish_range_clamped += "%s/%s(%.1f > %.1f) " % [
+							cw.id, jd.id, cw.combo_finish_range, raw_base * CombatMath.HIT_REACH_SLACK]
+					# 🔴 **절삭은 clamp가 둘이다 — `MAX_MELEE_RANGE`도 봐야 한다** (netreview M-2).
+					#   위 줄만 두면 창에 150을 적었을 때 `150 ≤ 160`이라 초록인데 실제로는 130으로
+					#   **조용히 잘린다** = 이 단정이 막겠다고 한 바로 그 실패 형태를 놓친다.
+					#   기존 `melee_range × (1 + MAX_REACH_BONUS) ≤ MAX_MELEE_RANGE` 관용구를 미러한다.
+					if cw.combo_finish_range * (1.0 + CombatMath.MAX_REACH_BONUS) \
+							> CombatMath.MAX_MELEE_RANGE + 0.001:
+						finish_range_clamped += "%s/%s(특성상한에서 %.1f > %d) " % [
+							cw.id, jd.id, cw.combo_finish_range * (1.0 + CombatMath.MAX_REACH_BONUS),
+							CombatMath.MAX_MELEE_RANGE]
+					# ⓓ 표시 배율이 판정 비율을 따라오는가 — 1.0 미만이면 「표시 < 판정」이다(§3 금지).
+					if CombatMath.combo_finish_show_mult(jd, cw, 0.0) < 0.999:
+						finish_show_mult_bad += "%s/%s " % [cw.id, jd.id]
 			# ⑸ 🔴 **대시 속도 ≤ 원격 위치 clamp 하한** (netreview I-1). 넘으면 정당한 대시가 원격에서
 			#    깎여 외삽이 과소평가되고 **"피했는데 맞았다"가 부분 재발**한다(2026-07-24에 고친 버그).
 			#    유도는 `MAX_COMBO_DASH` 주석이 정본이고, 이 단정은 **그 유도의 입력이 바뀌는 것**을 잡는다:
@@ -970,6 +1019,19 @@ func _initialize() -> void:
 	failures += _check(melee_has_range.is_empty(),
 		"★근접 콤보 전수 ⑴: 근접 무기에 combo_range_mult 없음 — 실리면 사거리는 그대로인데 타수만 옮겨간다 (위반: %s)"
 			% ("없음" if melee_has_range.is_empty() else melee_has_range))
+	# ⑻ 마무리 타 사거리 (v2.3) — ⓐ가 거부 띠 증명의 입력을 지킨다.
+	failures += _check(finish_range_band.is_empty(),
+		"★근접 콤보 전수 ⑻ⓐ: 마무리 사거리 ≤ 평타 × HIT_REACH_SLACK — **거부 띠 0의 증명**(깨지면 정당한 마무리 타가 화면 단서 없이 사라진다) (위반: %s)"
+			% ("없음" if finish_range_band.is_empty() else finish_range_band))
+	failures += _check(finish_range_shorter.is_empty(),
+		"★근접 콤보 전수 ⑻ⓑ: 마무리 사거리 ≥ 평타 사거리 — 짧으면 로컬이 호스트보다 엄격해져 §3이 반대로 깨진다 (위반: %s)"
+			% ("없음" if finish_range_shorter.is_empty() else finish_range_shorter))
+	failures += _check(finish_range_clamped.is_empty(),
+		"★근접 콤보 전수 ⑻ⓒ: combo_finish_range가 조용히 절삭되지 않는다 (적은 값 > 기본×2.0 = clamp 발동) (위반: %s)"
+			% ("없음" if finish_range_clamped.is_empty() else finish_range_clamped))
+	failures += _check(finish_show_mult_bad.is_empty(),
+		"★근접 콤보 전수 ⑻ⓓ: 표시 배율 ≥ 1.0 — 1 미만이면 판정만 늘고 궤적이 안 따라온다(「안 보이는데 맞는다」) (위반: %s)"
+			% ("없음" if finish_show_mult_bad.is_empty() else finish_show_mult_bad))
 	failures += _check(dash_worst_ratio <= 1.0,
 		"★대시 속도 전수: 최대 haste에서도 원격 위치 clamp 하한 이내 (최악 %s = %.1f%%)"
 			% ["없음" if dash_worst_id.is_empty() else dash_worst_id, dash_worst_ratio * 100.0])
@@ -1244,6 +1306,7 @@ func _initialize() -> void:
 	#    swing_time < attack_cooldown이 유지되나. 같은 배율을 곱하므로 수학적으로 자동 보존되지만,
 	#    누군가 한쪽만 스케일하도록 고치면 여기가 빨개진다.
 	var swing_ok := true
+	var fallback_reach_bad := ""   # 폴백 창 위반 목록 (netreview I-3)
 	var fallback_reach_ok := true
 	var degenerate_ok := true
 	var lead_ok := true
@@ -1387,14 +1450,51 @@ func _initialize() -> void:
 			#   판정한다 = **직업 기본 사거리 × HIT_REACH_SLACK**. 무기의 로컬 도달이 그걸 넘으면 그 창의
 			#   정당한 팁 타격이 **무음 거부**된다(창 80 vs 전사 42×2.0 = 84 — 여유 4px뿐이다).
 			#   폴백 창은 짧지만 `PeerSync._peer_stats`가 씬마다 새로 태어나 **스테이지 전환마다 재발**한다.
-			#   ⚠ reach 특성은 양변에 똑같이 곱해져 상쇄되므로 기본값끼리 비교하면 충분하다.
-			#   ⚠ 기존 `melee_range × 1.5 ≤ MAX_MELEE_RANGE` 트립와이어는 이 축을 **전혀 안 본다**(상한
-			#     130 기준이면 창은 87까지 통과하는데 실제로는 85부터 이 부등식이 깨진다).
-			if e.melee_range > 0.0 and e.melee_range > j.attack_range * CombatMath.HIT_REACH_SLACK:
-				fallback_reach_ok = false
+			#   🔴🔴 **옛 주석의 *"reach는 양변에 똑같이 곱해져 상쇄된다"* 는 거짓이다** (netreview
+			#     2026-08-02 I-3). `wid`와 `ms`/`ss`는 **같은 G_STATS 메시지·같은 `_peer_stats`**
+			#     딕셔너리다(`peer_sync.gd:286`) — 무기를 모르는 창은 곧 **reach도 모르는 창**이고,
+			#     호스트 폴백은 `직업 기본 × 1 × SLACK`으로 **고정**된다. 로컬만 reach가 곱해진다.
+			#     즉 상쇄가 아니라 **한쪽에만 곱해지는** 축이라 특성 상한까지 넣어 비교해야 한다.
+			#   🔴 **마무리 사거리도 이 창의 대상이다**(v2.3) — 호스트는 무기를 몰라도 **타수는 안다**
+			#     (`G_ATK`는 계속 온다). 그래서 로컬은 `combo_finish_range × (1+reach)`까지 뻗는데
+			#     호스트는 직업 기본으로 잰다. 도달 후보 = `max(melee_range, combo_finish_range)`.
+			#   ⚠ 기존 `melee_range × 1.5 ≤ MAX_MELEE_RANGE` 트립와이어는 이 축을 **전혀 안 본다**.
+			#   ✅ **2026-08-02: 호스트 폴백 기준이 「직업 기본」에서 「그 직업의 최장 근접 무기」로
+			#     바뀌었다**(`GameState.widest_melee_for_job` — netreview I-3 처방). 그래서 비교
+			#     기준도 같이 옮긴다. ⚠ 호스트 쪽에 **reach를 안 넣는 것**이 그 처방의 일부다 —
+			#     `SLACK` 2.0이 특성 상한(+50%)을 덮는 것이 성립 근거이므로 여기서도 넣지 않는다.
+			#   ⚠ `GameState`는 오토로드라 `-s`에서 못 쓴다(§5) → 같은 규칙을 여기서 직접 스캔한다.
+			var fb_reach: float = maxf(e.melee_range, e.combo_finish_range)
+			if fb_reach > 0.0:
+				var host_fb := 0.0
+				for wf2: String in DirAccess.get_files_at("res://data/equipment"):
+					var wb2 := wf2.trim_suffix(".remap")
+					if wb2.get_extension() != "tres":
+						continue
+					var w2 := load("res://data/equipment/%s" % wb2) as EquipDef
+					if w2 == null or w2.slot() != EquipDef.SLOT_WEAPON:
+						continue
+					if not w2.job_id.is_empty() and w2.job_id != j.id:
+						continue
+					if CombatMath.is_projectile_weapon(w2):
+						continue
+					# 🔴 **선택 지표 = 소비 지점과 같은 함수** (netreview N-1). 전엔 여기도 코드와
+					#   똑같이 `maxf(melee_range, combo_finish_range)`를 썼는데, **코드와 테스트가
+					#   같은 잘못된 모델을 공유하면 검출력이 0이다** — 지표가 고른 무기를 소비가
+					#   안 읽는 불일치를 영원히 못 잡는다.
+					host_fb = maxf(host_fb, CombatMath.effective_attack_range(j, 0.0, w2, true))
+				# 바닥 = 직업 기본(코드의 `widest_melee_for_job`과 같은 규칙 — 못 이기면 null 반환).
+				host_fb = maxf(host_fb, j.attack_range)
+				if fb_reach * (1.0 + CombatMath.MAX_REACH_BONUS) \
+						> host_fb * CombatMath.HIT_REACH_SLACK + 0.001:
+					fallback_reach_ok = false
+					fallback_reach_bad += "%s/%s(%.1f > %.1f) " % [e.id, j.id,
+						fb_reach * (1.0 + CombatMath.MAX_REACH_BONUS),
+						host_fb * CombatMath.HIT_REACH_SLACK]
 	failures += _check(swing_ok, "스윙 창 계약 전수: 모든 무기×직업×haste에서 swing_time < effective_cooldown")
 	failures += _check(fallback_reach_ok,
-		"★폴백 창 전수: melee_range ≤ 직업 기본 × HIT_REACH_SLACK (G_STATS 미도착 창의 무음 거부 방지)")
+		"★폴백 창 전수: max(melee_range, combo_finish_range) × (1+MAX_REACH_BONUS) ≤ 직업 기본 × SLACK — G_STATS 미도착 창은 **무기도 reach도** 모른다 (위반: %s)"
+			% ("없음" if fallback_reach_bad.is_empty() else fallback_reach_bad))
 
 	# 🔴 근접 기하 데이터 전수 (무기 모션 축 2026-07-28) — 둘 다 **에러 없이 조용히 깨지는** 부류다.
 	var melee_arc_ok := true

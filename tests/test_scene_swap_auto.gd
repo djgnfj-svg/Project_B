@@ -154,6 +154,31 @@ func _source_tripwires() -> void:
 		_check(src.find("owner if owner != null else get_parent()") >= 0,
 			"%s: 씬 기준이 owner다(get_parent()는 폴백)" % path.get_file())
 
+	# 🔴 G_MOB_POS 순서 가드 (2026-08-02) — 씬 글루라 preload가 안 돼 소스 문자열로 겨눈다.
+	#   이 셋 중 하나만 지워도 증상이 **"적 HP만 안 깎인다"** 라서 §3 「각 축 지연 보상」 결함과
+	#   구분되지 않는다(서로를 가린다). 그래서 세 조각을 각각 단정한다.
+	var ms := _src("res://src/stage/mob_sync.gd")
+	_check(ms.find("\"n\": _mpos_seq") >= 0,
+		"mob_sync: G_MOB_POS 배치에 시퀀스 n을 싣는다 (없으면 수신 가드가 항등 폴백으로 무력화)")
+	_check(ms.find("is_pos_seq_fresh") >= 0,
+		"mob_sync: 수신부가 CombatMath.is_pos_seq_fresh로 순서를 본다 (사본 금지 — G_POS와 공유)")
+	# 🔴 에폭 리셋이 짝이다 — 이것만 빠지면 순서 가드가 오히려 피해를 **키운다**(netreview I-1:
+	#   직전 씬의 큰 번호가 새 씬 `_last`에 박혀 이후 전량 폐기 = 수백 초 정지).
+	# ⚠ `find("EPOCH_GAP")`으로는 부족하다 — 상수 선언만 남기고 **사용처를 지우는** 뮤테이션이
+	#   그대로 통과한다(실측). 리셋이 실제로 일어나는 표현식을 겨눈다.
+	_check(ms.find("_last_mpos_seq - EPOCH_GAP") >= 0 and ms.find("_last_mpos_seq = 0") >= 0,
+		"mob_sync: 씬 에폭 리셋이 동작한다 — 순서 가드 단독은 씬 전환에서 오히려 더 나쁘다(netreview I-1)")
+
+	# 🔴 마무리 타 사거리(v2.3)의 **표시 배선** — `combat_math` 전수 트립와이어가 원리적으로 못 닿는
+	#   자리다(`player.gd`는 씬 글루라 `-s` preload 불가). 이 한 줄이 사라지면 판정만 늘고 궤적은
+	#   그대로여서 **「안 보이는데 맞는다」**(§3 금지 방향)가 되는데, 대검 여유가 +2px뿐이라
+	#   42 → 63에서 **−19px**가 즉시 생긴다. 전수 쪽 ⑻ⓓ는 `CombatMath` 함수만 보므로 여기가 짝이다.
+	var pl := _src("res://src/player/player.gd")
+	_check(pl.find("combo_finish_show_mult") >= 0,
+		"player: 리본 배율이 마무리 사거리를 따라간다(combo_finish_show_mult) — 없으면 판정만 늘어 §3 위반")
+	_check(pl.find("_weapon_override, _swing_is_finish") >= 0,
+		"player: 로컬 근접 질의가 마무리 타 사거리를 쓴다(_swing_is_finish 전달)")
+
 
 # --- ⑷ 노드 순서 계약 — 그룹 등록이 `.tscn`이 아니라 코드 `_ready`에서 일어난다 ---
 #
