@@ -15,6 +15,7 @@ var _rocks: Dictionary = {}  # rid -> BossRock 노드 (중복 스폰 가드 — 
 
 func _ready() -> void:
 	EventBus.rock_spawn_local.connect(_on_rock_spawn_local)
+	EventBus.rock_break_local.connect(_on_rock_break_local)
 	EventBus.net_msg.connect(_on_net_msg)
 
 
@@ -26,8 +27,34 @@ func _on_rock_spawn_local(rocks: Array) -> void:
 		Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ROCK, "s": GameState.stage_token(), "rk": rocks})
 
 
+# 호스트 로컬 파괴 — 보스 FSM(_break_rock)이 emit. 로컬 shatter는 **보스가 이미 했다**(같은 함수 안).
+# 여기는 중계만 한다 — 🔴 보스가 `Net.send_game`을 직접 부르면 호스트 루프백이 없어 문제가 없어
+#   보이지만, 스폰 경로와 배선이 갈라져 다음 사람이 어느 쪽을 따라야 할지 모르게 된다(§2 복사 금지).
+func _on_rock_break_local(rid: String) -> void:
+	if rid.is_empty() or not Net.is_host():
+		return
+	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_ROCK_BREAK, "s": GameState.stage_token(), "rid": rid})
+
+
 func _on_net_msg(from_id: int, data: Dictionary) -> void:
-	if str(data.get(NetSchema.KEY_KIND, "")) != NetSchema.G_ROCK:
+	var kind := str(data.get(NetSchema.KEY_KIND, ""))
+	# 🔴 파괴 수신(게스트) — 없으면 부서진 바위가 게스트 화면에 `ttl`까지 남아 **길을 막는다**
+	#   (netreview I-1). 가드 셋은 스폰 경로와 **같다** — 사본을 만들지 말고 형태를 맞춰 둔다.
+	if kind == NetSchema.G_ROCK_BREAK:
+		if Net.is_host():
+			return  # 호스트는 _break_rock에서 이미 shatter (스폰 경로와 같은 이유)
+		if from_id != NetSchema.HOST_ID:
+			return
+		if str(data.get("s", "")) != GameState.stage_token():
+			return
+		var rid := str(data.get("rid", ""))
+		var node: Variant = _rocks.get(rid)
+		# ⚠ 이미 despawn(ttl 만료)됐거나 못 받은 rid면 조용히 무시 = 항등. `is_instance_valid`가
+		#   **캐스트보다 먼저**여야 한다(해제된 노드는 캐스트하는 순간 터진다 — rules §5).
+		if node != null and is_instance_valid(node as Node) and (node as Node).has_method("shatter"):
+			(node as Node).call("shatter")
+		return
+	if kind != NetSchema.G_ROCK:
 		return
 	if Net.is_host():
 		return  # 호스트는 rock_spawn_local로 이미 스폰 (자기 G_ROCK 미수신 — SwampField 미러)

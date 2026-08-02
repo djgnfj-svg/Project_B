@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="BossDef" load_steps=20 format=3]
+[gd_resource type="Resource" script_class="BossDef" load_steps=21 format=3]
 
 [ext_resource type="Script" path="res://src/core/boss_def.gd" id="1"]
 [ext_resource type="Script" path="res://src/core/boss_pattern_def.gd" id="2"]
@@ -112,6 +112,32 @@ charge_sweep_radius = 72.0
 charge_travel_max = 260.0
 groggy_s = 3.0
 
+[sub_resource type="Resource" id="pat_cross"]
+script = ExtResource("2")
+id = "cross"
+shape = "capsule"
+telegraph_s = 1.4
+damage = 18
+range = 72.0
+cooldown_s = 14.0
+recover_s = 0.5
+priority = 3
+use_min_dist = 0.0
+use_max_dist = 99999.0
+min_phase = 2
+is_charge = true
+charge_speed = 1200.0
+charge_sweep_radius = 72.0
+charge_travel_max = 642.0
+groggy_s = 3.0
+charge_spin_s = 0.0
+charge_repeat = 3
+charge_speedup = 0.2
+charge_approach_speed = 600.0
+target_mode = "host"
+wide_view = true
+breaks_rock = true
+
 [sub_resource type="Resource" id="pat_slam"]
 script = ExtResource("2")
 id = "slam"
@@ -141,7 +167,7 @@ aggro_range = 600.0
 keep_distance = 0.0
 exp = 30
 drop_table = SubResource("d_table")
-patterns = Array[BossPatternDef]([SubResource("pat_swing"), SubResource("pat_slam"), SubResource("pat_charge"), SubResource("pat_rockfall"), SubResource("pat_spin")])
+patterns = Array[BossPatternDef]([SubResource("pat_swing"), SubResource("pat_slam"), SubResource("pat_charge"), SubResource("pat_rockfall"), SubResource("pat_spin"), SubResource("pat_cross")])
 phase2_hp_ratio = 0.5
 swamp_radius = 44.0
 swamp_slow_factor = 0.5

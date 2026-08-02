@@ -31,6 +31,14 @@ func _init() -> void:
 		NetSchema.G_SCENE, NetSchema.G_STAGE_CLEAR, NetSchema.G_WIPE, NetSchema.G_HIT_REQ,
 		NetSchema.G_ROLL, NetSchema.G_ATK, NetSchema.G_JOB, NetSchema.G_STATS, NetSchema.G_SIT,
 		NetSchema.G_MOB_ATK, NetSchema.G_BOSS_ATK, NetSchema.G_BOSS_SPRAY, NetSchema.G_BOSS_PHASE,
+		# 🔴 광역 시야 종료는 **사건**이다 — 한 통 유실이면 카메라가 줌아웃에 갇힌다(워치독 20초까지).
+		#   ⚠ 지금은 `fast.size()` 단정이 우연히 이 축을 덮지만, 정당한 세 번째 fast kind가 생겨
+		#   그 수를 올리는 날 이 kind만 **아무 단정에도 안 걸린 채** 새어 나간다(netreview M-1).
+		NetSchema.G_BOSS_VIEW,
+		# 바위 지형 — ⚠ `G_ROCK`은 **선재 누락**이었다(2026-08-02에 등재). 유실되면 게스트에 바위가
+		#   아예 안 생기고, `G_ROCK_BREAK` 유실이면 부서진 바위가 게스트 화면에 남아 **길을 막는다**.
+		#   둘 다 "다음 패킷이 덮어쓰는 것"이 아니라 사건이다.
+		NetSchema.G_ROCK, NetSchema.G_ROCK_BREAK,
 		NetSchema.G_SWAMP,
 		# 코옵 파훼(소울 브레이크) — 🔴 G_COOP_IN이 유실되면 파훼가 실패해 파티가 피해를 입는다.
 		# "둘 다 눌렀나"는 다음 패킷이 덮어쓰지 않는 **사건**이다(2026-07-26 master 병합분).

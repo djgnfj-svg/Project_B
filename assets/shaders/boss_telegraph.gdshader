@@ -22,6 +22,19 @@ shader_type canvas_item;
 //       (로컬 프레임에서 facing = +x = 각 0 ⇒ angle_difference(facing, 각) = atan 결과 그대로.
 //        UV.y·로컬 y·Godot 각 모두 아래가 +y로 같은 손잡이라 부호가 일치한다.)
 //
+// 캡슐(띠) — 횡단 돌진 경로 예고 (2026-08-02):
+//   원의 중심을 로컬 x축 [-half_len_px, +half_len_px] 선분으로 늘린 것 = CombatMath.capsule_depth.
+//     qx    = max(|p.x| - half_len_px, 0)          (선분 밖으로 나간 만큼만 남긴다)
+//     d_lat = length(vec2(qx, p.y))                (선분까지의 최단거리)
+//   🔴 **항등 증명 — half_len_px = 0이면 원·콘과 IEEE 비트 단위로 같다.**
+//     qx = max(|p.x| - 0, 0) = |p.x| 이고 length(vec2(|p.x|, p.y)) = sqrt(p.x*p.x + p.y*p.y)
+//     = length(p). `|p.x| * |p.x| == p.x * p.x`는 부호 무관이라 반올림까지 동일하다.
+//     ⇒ 기존 원·콘 예고는 **한 픽셀도 안 바뀐다**(이 uniform 하나가 캡슐 채택의 안전 근거 전부다).
+//   🔴 노드 원점 = **선분의 중점**(원의 중심이 아니다) · rotation = 진행 방향.
+//     boss.gd `_begin_windup`이 `보스 위치 + 진행방향 × charge_travel_max/2`로 중점을 만든다.
+//   🔴 판정은 여전히 **이동하는 원**이고 캡슐은 그 합집합이다 — 프레임 사이 가리비가 캡슐
+//     **안쪽으로** 파이므로(CombatMath.SWEEP_SCALLOP_MAX_PX) 판정 ⊆ 표시가 기하로 성립한다.
+//
 // 경계 처리 (2026-08-02 개정 — **격자 스냅 폐기**):
 //   ⚠ 옛 버전은 표본점을 월드 2px 격자 셀 중심으로 스냅해 "16px 도트와 같은 계단"을 만들었다.
 //     그 근거는 **16px 세대 기준**이었고, 지금은 캐릭터 32px + 카메라 줌 1.5라 화면에서 3px 계단으로
@@ -46,6 +59,10 @@ shader_type canvas_item;
 uniform float quad_px = 132.0;       // 쿼드 월드 한 변 = 2*(radius + aa_px + 마진)
 uniform float radius_px = 64.0;      // 판정 반경(원) / 사거리(부채꼴) = BossPatternDef.range
 uniform float half_angle = 3.15;     // 반각(rad). PI-0.01 이상 = 각 제한 없음(원)
+// 캡슐 반길이(월드 px). 🔴 **0 = 원/콘 = 현행과 완전 항등**(헤더 「캡슐」 항등 증명).
+// ⚠ boss.gd `_apply_telegraph_geometry`가 캡슐이 아닐 때도 **무조건 0을 심는다** — Telegraph
+//   노드가 재사용되므로 안 심으면 다음 원 예고가 캡슐로 그려진다(에러 없음).
+uniform float half_len_px = 0.0;
 // 경계 소프트 폭(월드 px). 🔴 **바깥으로만** 퍼진다(위 주석) — 안쪽 알파는 항상 1이다.
 uniform float aa_px = 1.0;
 // 테두리 밴드 = d ∈ [경계, border_px]. 소프트 폭 aa_px가 양옆에 붙는다.
@@ -90,7 +107,9 @@ void fragment() {
 	// 월드 px 오프셋. **스냅하지 않는다** — 판정식이 보는 점 = 이 점 그대로다(헤더 「경계 처리」).
 	vec2 p = (UV - vec2(0.5)) * quad_px;
 
-	float r = length(p);
+	// 선분(캡슐 축)까지의 최단거리. half_len_px = 0이면 length(p)와 **비트 단위 동일**(헤더 증명).
+	float qx = max(abs(p.x) - half_len_px, 0.0);
+	float r = length(vec2(qx, p.y));
 	float d_arc = radius_px - r;                 // 원호 경계까지의 거리(양수 = 안쪽)
 	float d_side = 1.0e9;                        // 부채꼴 옆면까지 (원이면 제한 없음)
 	// ⚠ `< PI`가 아니라 여유를 둔다: GDScript가 넘긴 PI가 float32 반올림으로 셰이더 PI보다 아주 조금
@@ -123,11 +142,22 @@ void fragment() {
 	//   t=0부터 끝까지 볼 수 있어야 회피 판단이 서므로, 차오름은 "덜 보이게" 하는 것이 아니라
 	//   "더 뜨겁게" 하는 방향으로만 쓴다.
 	float pr = clamp(progress, 0.0, 1.0);
-	float fill_r = radius_px * pr;
-	float filled = 1.0 - smoothstep(fill_r - aa, fill_r + aa, r);
+	// 차오름 좌표 — 원/콘은 중심(apex)에서 **바깥으로**, 캡슐은 **길이 방향**(진행 방향)으로 찬다.
+	// 🔴 캡슐에서 반지름 방향으로 채우면 임박도는 실리지만 **방향이 안 실린다** — 이 패턴은
+	//   "어디서 어디로 지나가는가"가 곧 회피 정보라 축이 곧 정보다(설계 §7-1).
+	// ⚠ half_len_px = 0이면 아래 두 줄이 정확히 `r` / `radius_px`로 떨어져 **현행과 항등**이다.
+	float fill_axis = r;
+	float fill_span = radius_px;
+	if (half_len_px > 0.0) {
+		fill_axis = p.x + half_len_px;      // 선분 시작단(로컬 -x)에서 잰 거리
+		fill_span = 2.0 * half_len_px;
+	}
+	float fill_r = fill_span * pr;
+	float filled = 1.0 - smoothstep(fill_r - aa, fill_r + aa, fill_axis);
 	base = mix(base, charge_color, filled);
-	// 선단 파면 — 지금 차오르고 있는 자리를 밝게. 원이면 퍼지는 링, 콘이면 apex에서 나가는 호.
-	float wave = clamp(1.0 - abs(r - fill_r) / max(lead_px, 0.0001), 0.0, 1.0);
+	// 선단 파면 — 지금 차오르고 있는 자리를 밝게. 원이면 퍼지는 링, 콘이면 apex에서 나가는 호,
+	// 캡슐이면 띠를 가로지르는 수직 파면(= 보스가 지금 어디까지 왔는가).
+	float wave = clamp(1.0 - abs(fill_axis - fill_r) / max(lead_px, 0.0001), 0.0, 1.0);
 	base = mix(base, border_color, wave);
 	// 바깥 테두리 밴드 — 도형의 실제 경계(= 판정 경계)를 언제나 또렷하게 남긴다.
 	float rim = 1.0 - smoothstep(border_px - aa, border_px + aa, d);

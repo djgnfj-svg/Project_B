@@ -1223,6 +1223,112 @@ static func is_hit_in_cone(pt: Vector2, apex: Vector2, facing: float, half_angle
 	return absf(angle_difference(facing, to_pt.angle())) <= half_angle
 
 
+# --- 횡단 돌진 (2026-08-02 · docs/plans/active/2026-08-02-boss-dash-pattern.md) — 단일 소스 (§3) ---
+#
+# 🔴 **왜 여기인가**: `src/enemies/boss.gd`는 씬 글루라 `-s`가 preload를 못 한다(rules §5).
+#   데이터가 만족해야 하는 상수·유도를 거기 두면 `data/enemies` **전수 트립와이어를 만들 수 없고**,
+#   그러면 "속도를 낮췄더니 조용히 미완주" · "예고가 구르기보다 짧아졌다"의 자동 방어가 0이 된다.
+#   `player.gd`에서 같은 값을 치른 자리가 리뷰 J-1·J-2다 — 함수째 여기로 올리고 boss.gd는 부르기만 한다.
+
+# 돌진 타임아웃 여유(초) — 돌진 지속의 하한 = 이동시간 + 이 값(벽·바위에 낀 채 무한 돌진 방지).
+# ⚠ 옛날엔 `boss.gd`에 **선언만 되고 아무도 안 쓰는 죽은 상수**였다. 그 자리에는 고정 1.0초가
+#   박혀 있었고, 그래서 "이동 거리와 시간이 서로를 몰라" 속도를 낮추는 순간 **조용히 미완주**였다.
+const CHARGE_TIMEOUT_MARGIN := 0.4
+
+# 회차 단축의 하한 배율. 🔴 **근거 = `ROLL_TIME_S`(0.25s)** — 예고가 구르기보다 짧아지면
+#   「예고를 읽고 구른다」(GDD §5 기믹 원칙)가 **원리적으로** 불가능해진다. 그래서 하한은 손맛
+#   튜닝값이 아니라 **구르기에서 유도된 값**이고, 전수 트립와이어가 그 부등식을 지킨다.
+const CHARGE_TELEGRAPH_MIN := 0.35
+
+# `BossPatternDef.target_mode` allowlist — 코드가 실제로 구현한 모드의 전부다.
+# 🔴 `_select_target`은 **모르는 값을 조용히 `nearest`로 떨어뜨린다**(데이터 오타가 패턴을 죽이지
+#   않게 하려는 폴백이 계약이다). 그 관대함의 대가가 "적었는데 안 먹는다"이므로 데이터 축에서
+#   전수로 막는다. ⚠ `"alternate"`(번갈아)는 4인 파티 게이트(rules §2)와 함께 열린다 — 지금
+#   `.tres`에 적으면 nearest로 떨어져 **아무 일도 안 일어난다.**
+const TARGET_MODES := ["nearest", "host"]
+
+# 🔴 가리비(scallop) 예산(px) — 이산 판정(원)과 연속 표시(캡슐) 사이에 파이는 최대 깊이.
+#   돌진은 프레임당 `speed/60`px씩 점프하므로 판정 원들의 합집합이 캡슐 **안쪽으로** 파인다:
+#       D = r − √(r² − (d/2)²)   (r = 스윕 반경 · d = 프레임당 전진)
+#   🔵 방향은 언제나 안전하다(가리비는 안쪽으로만 판다 = 판정 ⊆ 표시 유지). 그래서 이 상수는
+#     §3 위반을 막는 것이 아니라 **손맛 예산**이다 — "띠 안인데 안 맞았다"가 눈에 띄는 폭.
+#   근거 = 캐릭터 32px의 6%. `ARROW_SPEED` 터널링 불변식의 1:1 미러이되, 이쪽은 **반경이 패턴
+#   데이터**라 상수가 아니라 함수(`max_charge_speed`)로 유도한다.
+const SWEEP_SCALLOP_MAX_PX := 2.0
+# 스윕 표본 주기 = 물리 틱. ⚠ `Engine.physics_ticks_per_second`(project.godot 60)와 미러 —
+#   물리 틱을 바꾸면 여기도 고친다(안 고치면 상한만 조용히 틀려진다).
+const SWEEP_STEP_FPS := 60.0
+
+
+# 회차별 예고 배율 — 호스트(`_telegraph_hold_s` 확정)와 게스트(`_telegraph_duration`)가 **같은
+# 함수**를 지나야 「다 찼다 = 지금 맞는다」가 양쪽 화면에서 동시에 성립한다.
+# 🔴 `charge_speedup == 0`이면 항상 1.0 = **모든 기존 패턴과 완전 항등**이다(이 축의 안전 근거 전부).
+# ⚠ 큰 idx(버그·조작)는 하한으로 포화하고 음수는 `maxi`가 0으로 누른다 — 별도 clamp 불필요.
+static func charge_telegraph_scale(pat: BossPatternDef, idx: int) -> float:
+	if pat == null:
+		return 1.0
+	return maxf(1.0 - pat.charge_speedup * float(maxi(idx, 0)), CHARGE_TELEGRAPH_MIN)
+
+
+# 돌진이 `charge_travel_max`를 지나는 데 걸리는 시간(초). 예고 재장전 분모(돌진 내내 켜 두는
+# 차오름)와 아래 지속 유도가 **같은 값**을 써야 "선단이 도착 = 보스가 도착"이 유지된다.
+static func charge_travel_s(pat: BossPatternDef) -> float:
+	if pat == null:
+		return 0.0
+	return pat.charge_travel_max / maxf(pat.charge_speed, 1.0)
+
+
+# 돌진 서브상태의 총 지속(초) = max(도달 후 회전 유지, 이동시간 + 타임아웃 여유).
+# 🔴 **`maxf`를 빼지 마라** — 빼면 P3(`charge_spin_s` 1.0)가 1.0 → 0.92s로 **조용히 짧아진다**(회귀).
+# 🔴 반대로 우변을 빼고 `charge_spin_s` 하나로 두면(= 도입 전 고정 상수) 속도를 낮추는 순간
+#   **에러 없이 미완주**가 된다 — 예고 띠는 끝까지 그려져 있는데 보스가 중간에 선다.
+#   `test_combat_math_auto`의 「★돌진 완주 불변식」이 양쪽 방향을 다 잡는다.
+static func charge_dash_duration_s(pat: BossPatternDef) -> float:
+	if pat == null:
+		return 0.0
+	return maxf(pat.charge_spin_s, charge_travel_s(pat) + CHARGE_TIMEOUT_MARGIN)
+
+
+# 이 스윕 반경에서 허용되는 최대 돌진 속도(px/s) — 가리비 예산에서 역산.
+#   D = r − √(r² − (d/2)²) ≤ SWEEP_SCALLOP_MAX_PX  ⇒  d ≤ 2√(r² − (r − D)²)  ⇒  speed = d·fps
+# 🔴 **속도를 올릴 때 이것이 유일한 자동 방어다**(전수 트립와이어).
+# ⚠ 반경이 예산보다 작으면 (r − D)²가 r²를 넘어 0으로 포화한다 = 어떤 속도도 거부 = 안전한 방향.
+static func max_charge_speed(sweep_radius: float) -> float:
+	var r := maxf(sweep_radius, 0.01)
+	var inner := r - SWEEP_SCALLOP_MAX_PX
+	return 2.0 * SWEEP_STEP_FPS * sqrt(maxf(r * r - inner * inner, 0.0))
+
+
+# 실제 가리비 깊이(px) — 트립와이어가 **값을 찍는** 용도(실패 조건이 아니다). 속도를 바꾼 사람이
+# 숫자를 보게 만드는 것이 목적이다(§9-2 4c).
+static func sweep_scallop_px(sweep_radius: float, speed: float) -> float:
+	var r := maxf(sweep_radius, 0.01)
+	var half_step := maxf(speed, 0.0) / SWEEP_STEP_FPS * 0.5
+	return r - sqrt(maxf(r * r - half_step * half_step, 0.0))
+
+
+# 캡슐(선분 + 반경) 안쪽 깊이 — 양수면 안, 0이 경계. **표시 형태의 단일 소스**다.
+# 🔴 판정은 여전히 **이동하는 원**(`charge_sweep_radius`)이고 캡슐은 그 원이 경로를 따라 쓸고 간
+#   **합집합**이다. 부채꼴로는 원리적으로 못 맞춘다 — apex가 보스에 붙어 있어 끝으로 갈수록
+#   넓어지는데 스윕은 폭이 일정하다(642px에서 2.76배 과예고 = 아레나 세로의 95%가 붉어진다).
+# 🔴 `a == b`이면 `is_strike_hit`과 **완전 항등**이다 — 그게 셰이더 `half_len_px = 0` 항등의
+#   GDScript 쪽 짝이고, 「기존 원·콘 예고는 한 픽셀도 안 바뀐다」의 근거다.
+# ⚠ 소비자는 `assets/shaders/boss_telegraph.gdshader`(같은 식을 GLSL로)와 트립와이어다. 한쪽을
+#   고치면 같이 고쳐라 — 테스트는 엔진 함수(`Geometry2D.get_closest_point_to_segment`)를 독립
+#   오라클로 써서 **둘 다 틀린 채 초록**이 되는 것을 막는다.
+static func capsule_depth(pt: Vector2, a: Vector2, b: Vector2, radius: float) -> float:
+	var ab := b - a
+	var l2 := ab.length_squared()
+	var t := 0.0 if l2 < 0.000001 else clampf((pt - a).dot(ab) / l2, 0.0, 1.0)
+	return radius - pt.distance_to(a + ab * t)
+
+
+# 조준 = 호스트 고정인가. 🔴 **모르는 문자열은 여기서 false로 떨어져 `nearest` 폴백이 된다** —
+#   폴백이 계약이다(호스트가 죽어 관전 중이면 대상이 없고, 데이터 오타가 패턴을 죽이면 안 된다).
+static func is_host_targeted(mode: String) -> bool:
+	return mode == "host"
+
+
 # --- 지연 보상 (2026-07-24) — 단일 소스 (§3). "피했는데 맞았다"를 없애는 계약. ---
 #
 # 문제: 호스트 권한 모델에서 게스트만 구조적으로 손해본다 (실측 2026-07-24, RTT 83~207ms).

@@ -43,9 +43,22 @@ signal boss_telegraph(eid: String, pattern_id: String, center: Vector2, angle: f
 signal boss_strike(center: Vector2, angle: float, pattern: BossPatternDef)  # 호스트 emit(보스 STRIKE) — CombatAuthority가 pattern.shape별(원/부채꼴) 플레이어 피격 판정
 signal boss_sweep(center: Vector2, angle: float, pattern: BossPatternDef, dash_seq: int)  # 🔴 호스트 emit(돌진 P3 매 프레임 스윕) — CombatAuthority가 charge_sweep_radius 원 판정. **dash_seq로 돌진당 플레이어 1회 dedup**(boss_strike의 프레임 dedup과 다르다 — 이동 히트박스라 매 프레임 발화). 데미지=호스트 확정(게스트는 mpos로 이동만 봄)
 signal swamp_spawn_local(swamps: Array)  # 호스트 보스 → SwampField 로컬 스폰 (호스트는 자기 G_SWAMP를 릴레이로 못 받으므로 — drop_spawn_local 미러). swamps=[[sid,x,y,r,ttl,slow], …] slow=늪 안 이동 배율
-signal rock_spawn_local(rocks: Array)  # 호스트 보스(낙석 P4 STRIKE) → RockField 로컬 스폰 + G_ROCK 브로드캐스트 (swamp_spawn_local 미러). rocks=[[rid,x,y,r,ttl], …] 착탄점에 바위 지형(돌진 유도용)이 남는다
+# 호스트 보스(돌진이 바위를 부술 때) → RockField 로컬 shatter + G_ROCK_BREAK 브로드캐스트.
+# 🔴 **`rock_spawn_local`의 정확한 미러다** — 스폰만 동기화하고 파괴를 안 하면 게스트 화면에
+#   부서진 바위가 남아 길을 막는다(netreview I-1). 배선도 같은 형태로 유지해라: 보스는 emit만 하고
+#   `Net.send_game`은 RockField가 부른다(호스트 루프백 없음 = 보스가 직접 보내면 자기 화면만 안 바뀐다).
+signal rock_break_local(rid: String)
+signal rock_spawn_local(rocks: Array)# 호스트 보스(낙석 P4 STRIKE) → RockField 로컬 스폰 + G_ROCK 브로드캐스트 (swamp_spawn_local 미러). rocks=[[rid,x,y,r,ttl], …] 착탄점에 바위 지형(돌진 유도용)이 남는다
 signal boss_spray(eid: String, pattern_id: String, centers: Array, angle: float)  # 호스트 emit(보스 물뿌리기 WINDUP) — MobSync가 G_BOSS_SPRAY 브로드캐스트. 각 클라가 centers마다 원 텔레그래프 표시(N개). 판정은 호스트가 STRIKE 시 boss_strike를 착탄점마다 재사용
 signal boss_phase_changed(phase: int)  # 호스트 emit(보스 페이즈 전이) — MobSync가 G_BOSS_PHASE 브로드캐스트, HUD가 배너. 게스트는 G_BOSS_PHASE 수신 시 로컬 emit(mob_telegraph→matk 미러)
+# 호스트 emit(광역 시야 패턴 시작/종료) — MobSync가 G_BOSS_VIEW 브로드캐스트, camera_rig가 줌.
+# 🔴 **배선은 위 `boss_phase_changed`의 1:1 미러다** — `boss.gd`가 `Net.send_game`을 직접 부르면
+#   **호스트 화면만 안 바뀐다**(Net 루프백이 없어 자기 메시지를 못 받는다). 이 프로젝트가 여러 번
+#   값을 치른 자리라 로컬 emit → MobSync 중계 → 게스트 재emit 형태를 반드시 지켜라.
+# 🔴 종료 emit은 **`_set_wide(false)` 한 곳**으로 모은다 — 출구가 여섯이다(마지막 회차·바위 그로기·
+#   사망·코옵 결박·대상 전멸·접근 타임아웃). 호출부에 흩으면 **일곱 번째 출구에서 빠진다**
+#   (`apply_job_loadout()`이 정확히 그 이유로 만들어졌다).
+signal boss_wide_view(active: bool)
 signal coop_call(duration: float)      # 코옵 파훼 시전 시작 — HUD 프롬프트("함께 F!")·보스 cast 애니·아레나 텔레그래프. 호스트/게스트 각자 로컬 표시
 signal coop_result(success: bool)      # 코옵 파훼 결과 — 배너/연출(성공=취소·그로기, 실패=폭발). 표시 전용, 정본 판정은 호스트
 

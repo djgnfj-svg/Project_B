@@ -66,6 +66,18 @@ const GROUND_WIDTH_FRAC_MIN := 0.25
 # 그건 `centered = true` 전제(판정 원점 = 셀 중심)와 그림이 갈라졌다는 신호다.
 const GROUND_CX_FRAC_MAX := 0.15
 
+# 🔴 `boss.gd`의 `ATTACK_ANIMS` **미러** — 이 파일은 그 스크립트를 preload 못 한다(헤더).
+#   그 배열은 §2가 등재한 「패턴 id의 하드코딩 미러」이고, **덮이지 않는 패턴 id는 에러 없이
+#   깨진다**: `_is_attack_anim_playing()`이 false를 돌려 `_update_move_anim`이 **다음 프레임에
+#   공격 애니를 idle/walk로 덮는다** = 공격 모션이 아예 안 보인다.
+#   ⚠ 한쪽을 고치면 같이 고쳐라. 이 단정이 게이트의 절반을 규율에서 구조로 옮긴다.
+const ATTACK_ANIMS := ["swing", "slam", "spray", "spin",
+	"charge_windup", "charge_dash", "charge_hit", "charge_recover"]
+
+# 회피 여유 배수 — 최단 예고(회차 단축이 하한까지 간 경우)가 구르기의 이 배수 이상이어야 한다.
+# 🔴 구르기 한 번으로 "겨우" 되는 것은 회피가 아니다(반응 시간이 0이 된다).
+const ROLL_MARGIN := 1.5
+
 var _fail := 0
 var _checks := 0
 
@@ -199,6 +211,7 @@ func _check_boss(file: String, def: BossDef) -> void:
 		_check(p.range > 0.0,
 			"%s: range > 0 (%.1f) — 0이면 예고만 보이고 판정이 없다"
 			% [label, p.range])
+		_check_pattern_common(label, p)
 		# 돌진(P3)은 pat.id 애니가 아니라 상태머신이 placeholder 클립(windup=slam·dash=walk)을 직접 몬다
 		# → id 애니 존재 계약에서 제외. 대신 돌진 전용 파라미터가 유효한지 본다(0이면 안 움직이거나 못 맞힌다).
 		if p.is_charge:
@@ -206,10 +219,12 @@ func _check_boss(file: String, def: BossDef) -> void:
 			_check(p.charge_sweep_radius > 0.0,
 				"%s: charge_sweep_radius > 0 (%.1f) — 0이면 스윕이 아무도 못 맞힌다" % [label, p.charge_sweep_radius])
 			_check(p.charge_travel_max > 0.0, "%s: charge_travel_max > 0 (%.1f)" % [label, p.charge_travel_max])
+			_check_charge_pattern(label, p)
 			continue
 		# 패턴 id가 **모든 facing**에서 재생 가능한 애니로 풀려야 (방향 변형·slam_<dir> 폴백 포함).
 		_check(_resolves_all(sf, p.id),
 			"%s: 패턴 id가 모든 facing에서 애니로 풀린다 (없으면 공격 모션이 조용히 안 나온다)" % label)
+		_check_attack_anim_coverage(label, sf, p)
 		# loop·길이 검사는 실제 풀린 애니로 한다 — front(se) 방향 대표값. 안 풀리면 건너뛴다.
 		var anim := _resolve(sf, p.id, "se")
 		if anim == &"":
@@ -223,6 +238,87 @@ func _check_boss(file: String, def: BossDef) -> void:
 		_check(ratio <= LEN_TOLERANCE,
 			"%s: 애니 %.3fs ≤ telegraph_s %.2fs × %.1f (speed_scale %.3f 필요)"
 			% [label, base, p.telegraph_s, LEN_TOLERANCE, ratio])
+
+
+# 🔴 횡단 돌진 데이터 계약 (2026-08-02) — **전부 에러 없이 깨진다.**
+#   `boss.gd`는 씬 글루라 `-s`가 preload를 못 한다 = 그 경로는 스위트의 구조적 사각이다.
+#   그래서 규칙을 **데이터 축**으로 밀어 여기서 잡는다(리뷰 J-1·J-2와 같은 규율).
+func _check_charge_pattern(label: String, p: BossPatternDef) -> void:
+	# ⑴ 🔴 **속도 상한** — 이산 판정(원)과 연속 표시(캡슐) 사이 가리비 예산에서 역산한 값.
+	#    속도를 올릴 때 **유일한 자동 방어**다. 반경이 데이터라 상수가 아니라 함수로 유도한다.
+	var lim := CombatMath.max_charge_speed(p.charge_sweep_radius)
+	_check(p.charge_speed <= lim,
+		"★%s: charge_speed %.0f ≤ 상한 %.0f (스윕 반경 %.0f · 가리비 예산 %.1fpx에서 역산)"
+		% [label, p.charge_speed, lim, p.charge_sweep_radius, CombatMath.SWEEP_SCALLOP_MAX_PX])
+	# ⑵ **값을 찍는다**(실패 조건이 아니다) — 속도를 바꾼 사람이 숫자를 보게 만드는 것이 목적이다.
+	print("       가리비 %.2fpx (프레임당 전진 %.1fpx · 반경 %.0f)"
+		% [CombatMath.sweep_scallop_px(p.charge_sweep_radius, p.charge_speed),
+		p.charge_speed / CombatMath.SWEEP_STEP_FPS, p.charge_sweep_radius])
+	# ⑶ 🔴 **완주 불변식** — 지속이 이동시간 + 여유 이상인가. 고정 상수로 되돌리면(옛 1.0s)
+	#    이동거리를 늘리거나 속도를 낮추는 순간 **에러 없이 미완주**다(예고 띠는 끝까지 그려져 있다).
+	var travel_s := CombatMath.charge_travel_s(p)
+	var dur := CombatMath.charge_dash_duration_s(p)
+	_check(dur >= travel_s + CombatMath.CHARGE_TIMEOUT_MARGIN - 0.000001,
+		"★%s: 돌진 지속 %.3fs ≥ 이동 %.3fs + 여유 %.2fs — 미달이면 아레나 중간에 선다"
+		% [label, dur, travel_s, CombatMath.CHARGE_TIMEOUT_MARGIN])
+	# ⑷ 회전 잔여가 있는 패턴(P3)은 도달이 그 안에 끝나야 **도입 전 상수 동작과 항등**이다.
+	if p.charge_spin_s > 0.0:
+		_check(is_equal_approx(dur, p.charge_spin_s),
+			"★%s: 회전 잔여 %.2fs가 지속을 정한다(도달 %.3fs) — 옛 CHARGE_SPIN_TIME 동작 유지"
+			% [label, p.charge_spin_s, travel_s])
+	_check(p.charge_repeat >= 1,
+		"%s: charge_repeat %d ≥ 1 — 0/음수면 패턴이 한 번도 안 돈다" % [label, p.charge_repeat])
+	# ⑸ 캡슐 예고는 `charge_sweep_radius`·`charge_travel_max`를 읽는다(`range`가 아니다).
+	if p.shape == "capsule":
+		_check(p.charge_travel_max > 0.0,
+			"★%s: 캡슐 예고는 charge_travel_max로 띠 길이를 만든다 (%.0f)" % [label, p.charge_travel_max])
+		_check(p.charge_approach_speed > 0.0,
+			"%s: 캡슐(횡단)은 가장자리 접근이 필요하다 — charge_approach_speed %.0f > 0"
+			% [label, p.charge_approach_speed])
+
+
+# 🔴 패턴 공통 계약 (돌진 여부 무관) — 회피 가능성·조준 모드·형태 전제.
+func _check_pattern_common(label: String, p: BossPatternDef) -> void:
+	# ⑴ 🔴 **회피 가능성** — 회차 단축이 하한까지 갔을 때의 **최단** 예고가 구르기보다 충분히 긴가.
+	#    근거는 손맛이 아니라 `ROLL_TIME_S`다: 예고가 구르기보다 짧으면 「예고를 읽고 구른다」
+	#    (GDD §5 기믹 원칙)가 **원리적으로** 불가능해진다.
+	var worst := p.telegraph_s * CombatMath.charge_telegraph_scale(p, 100000)
+	_check(worst >= CombatMath.ROLL_TIME_S * ROLL_MARGIN,
+		"★%s: 최단 예고 %.3fs ≥ 구르기 %.2fs × %.1f (회차 단축 하한 %.2f 적용)"
+		% [label, worst, CombatMath.ROLL_TIME_S, ROLL_MARGIN, CombatMath.CHARGE_TELEGRAPH_MIN])
+	# ⑵ 🔴 **조준 모드 allowlist** — 모르는 값은 `_select_target`이 조용히 nearest로 떨어뜨린다.
+	#    폴백이 계약이라 게임은 안 깨지지만 **적은 대로 안 먹는다** = 데이터 축에서 막는다.
+	_check(CombatMath.TARGET_MODES.has(p.target_mode),
+		"★%s: target_mode \"%s\" ∈ %s — 그 밖은 nearest로 조용히 떨어진다"
+		% [label, p.target_mode, str(CombatMath.TARGET_MODES)])
+	# ⑶ 캡슐·바위 파괴는 돌진 전용 축이다. 아니면 코드가 아예 안 읽어 **적어도 아무 일이 안 난다.**
+	_check(p.shape != "capsule" or p.is_charge,
+		"★%s: shape=capsule은 is_charge 전용 — 아니면 띠만 그려지고 돌진이 없다" % label)
+	_check(not p.breaks_rock or p.is_charge,
+		"%s: breaks_rock은 is_charge 전용 — 아니면 아무 분기도 안 탄다" % label)
+	# ⑷ 🔴 **P3 항등 확인** — 돌진인데 확장 필드를 안 쓴 패턴은 도입 전과 완전히 같아야 한다.
+	if p.is_charge and p.charge_approach_speed <= 0.0:
+		_check(p.charge_repeat == 1 and p.shape != "capsule" and is_equal_approx(p.charge_speedup, 0.0),
+			"★%s: 접근 없는 돌진(P3 계열)은 왕복·캡슐·회차 단축을 안 쓴다 = 도입 전과 항등" % label)
+
+
+# 🔴 `ATTACK_ANIMS` 커버리지 — 패턴 id가 푸는 애니가 그 접두 규칙에 덮이는가.
+#   안 덮이면 `_update_move_anim`이 공격 모션을 **다음 프레임에 idle/walk로 덮는다**(에러 없음).
+#   ⚠ 돌진(`is_charge`)은 제외다 — 그쪽은 상태기계가 클립을 직접 몰고, 자세 보존은
+#     `_on_hp_changed`의 `_in_charge_states()` 가드가 **애니 이름이 아니라 상태로** 한다.
+func _check_attack_anim_coverage(label: String, sf: SpriteFrames, p: BossPatternDef) -> void:
+	for d: String in DIRS:
+		var anim := String(_resolve(sf, p.id, d))
+		if anim.is_empty():
+			continue   # 애니가 아예 안 풀리는 것은 _check_boss가 이미 잡는다
+		var covered := false
+		for a: String in ATTACK_ANIMS:
+			if anim == a or anim.begins_with(a + "_"):
+				covered = true
+				break
+		_check(covered,
+			"★%s[%s]: 애니 \"%s\"가 ATTACK_ANIMS 접두에 덮인다 — 안 덮이면 공격 모션이 다음 프레임에 지워진다"
+			% [label, d, anim])
 
 
 # 원거리 잔몹 = `CombatMath.is_ranged_enemy(def)`(BossDef 제외). data/enemies 전수.

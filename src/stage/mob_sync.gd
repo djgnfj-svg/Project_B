@@ -35,6 +35,7 @@ func _ready() -> void:
 	EventBus.boss_telegraph.connect(_on_boss_telegraph)
 	EventBus.boss_spray.connect(_on_boss_spray)
 	EventBus.boss_phase_changed.connect(_on_boss_phase_changed)
+	EventBus.boss_wide_view.connect(_on_boss_wide_view)
 	# 🔴 **자기 씬 하위만 등록한다** — combat_authority._ready와 같은 이유이고, 여기 피해는
 	#   네트워크로 나간다: 씬 스왑 프레임의 유령이 박히면 다음 프레임부터 아래 `_physics_process`의
 	#   `_mobs[eid] as Node2D`가 **캐스트에서** 터져(`Trying to cast a freed object`) 함수가 중단되고,
@@ -115,8 +116,17 @@ func _on_mob_shoot(eid: String, origin: Vector2, dir: Vector2, aid: String, _def
 func _on_boss_telegraph(eid: String, pattern_id: String, center: Vector2, angle: float) -> void:
 	if not Net.is_host():
 		return  # 방어적 — 보스 AI는 호스트만 emit하지만, 게스트 발신 시 릴레이 낭비 차단 (게스트 위조는 수신부 HOST_ID 검증이 이미 거부)
+	# 🔴 돌진 **회차 인덱스**는 시그널 인자에 없다 — 배우에게 직접 묻는다(`get_sync_state`·
+	#   `show_telegraph`와 같은 덕타이핑 API). `boss_telegraph` emit이 **동기**라 이 시점의 값이
+	#   곧 그 예고의 회차다. 없으면 0 = 회차 단축 없음 = 도입 전과 항등.
+	# ⚠ **수치(단축 배율)는 안 싣는다** — 각 클라가 `CombatMath.charge_telegraph_scale`로 자기
+	#   `.tres`에서 리졸브한다(`peer_weapon_id`·`projectile_params`와 같은 철학, rules §3).
+	var idx := 0
+	var actor: Node = _mobs.get(eid)
+	if actor != null and actor.has_method("charge_telegraph_idx"):
+		idx = int(actor.call("charge_telegraph_idx"))
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_BOSS_ATK,
-		"eid": eid, "p": pattern_id, "x": center.x, "y": center.y, "a": angle})
+		"eid": eid, "p": pattern_id, "x": center.x, "y": center.y, "a": angle, "i": idx})
 
 
 # 호스트 전용 — 보스 물뿌리기 착탄점들을 전원에 중계(표시 전용). 게스트가 N개 원 텔레그래프 렌더.
@@ -136,6 +146,18 @@ func _on_boss_phase_changed(phase: int) -> void:
 	if not Net.is_host():
 		return
 	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_BOSS_PHASE, "ph": phase})
+
+
+# 호스트 전용 — 보스 패턴의 광역 시야 on/off를 전원에 중계(표시 전용·판정 0). `boss_phase_changed` 미러.
+# 🔴 **게스트 가드가 필수다** — 아래 수신부가 로컬 `boss_wide_view`를 재emit하고 그것이 이
+#   핸들러로 되돌아온다. 가드가 없으면 무한 중계다(`_on_mob_shoot`이 같은 이유로 달고 있다).
+# 🔴🔴 **이 kind를 `RTC_FAST_KINDS`에 넣지 마라** — 종료는 "다음 패킷이 곧 덮어쓰는 것"이 아니라
+#   **사건**이라 한 통 유실이면 **카메라가 영영 안 돌아온다**(줌아웃에 갇힌다). 그 집합은
+#   allowlist라 아무것도 안 하면 safe이고, 넣으면 `test_net_transport_auto`가 빨개진다.
+func _on_boss_wide_view(active: bool) -> void:
+	if not Net.is_host():
+		return
+	Net.send_game({NetSchema.KEY_KIND: NetSchema.G_BOSS_VIEW, "on": 1 if active else 0})
 
 
 func _on_net_msg(from_id: int, data: Dictionary) -> void:
@@ -199,9 +221,10 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 		NetSchema.G_BOSS_ATK:
 			var boss: Node = _mobs.get(str(data.get("eid", "")))
 			if boss != null:
+				# ⚠ "i"(돌진 회차) 없음 = 0 = **구버전 호스트와 항등**(회차 단축 없음).
 				boss.call("show_boss_telegraph", str(data.get("p", "")),
 					Vector2(float(data.get("x", 0.0)), float(data.get("y", 0.0))),
-					float(data.get("a", 0.0)))
+					float(data.get("a", 0.0)), int(data.get("i", 0)))
 		NetSchema.G_BOSS_SPRAY:
 			# 착탄점 [[x,y], …] → Vector2 배열 복원 후 boss_spray 로컬 emit(보스 렌더러가 N개 원 그림)
 			var centers: Array = []
@@ -212,3 +235,8 @@ func _on_net_msg(from_id: int, data: Dictionary) -> void:
 			EventBus.boss_spray.emit(str(data.get("eid", "")), str(data.get("p", "")), centers, 0.0)
 		NetSchema.G_BOSS_PHASE:
 			EventBus.boss_phase_changed.emit(int(data.get("ph", 1)))  # HUD 배너(표시 큐)
+		NetSchema.G_BOSS_VIEW:
+			# 광역 시야 on/off — 로컬 재emit(`boss_phase_changed` 미러). camera_rig가 구독한다.
+			# 🔵 판정에 아무것도 안 한다: 최악의 오용도 "화면이 넓어진다"뿐이라 신뢰 표면이 실질
+			#   0이고, 그래서 페이로드를 `on` 하나로 좁혔다(eid·패턴 id를 안 싣는다).
+			EventBus.boss_wide_view.emit(int(data.get("on", 0)) != 0)

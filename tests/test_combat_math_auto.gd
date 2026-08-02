@@ -1958,6 +1958,137 @@ func _initialize() -> void:
 	failures += _check(int(prog_max["level"]) == 5 and int(prog_max["need"]) == 0,
 		"exp_progress: 만레벨 = need 0 (잉여 EXP 폐기)")
 
+	# =====================================================================================
+	# 횡단 돌진 (2026-08-02 · docs/plans/active/2026-08-02-boss-dash-pattern.md)
+	# 데이터 전수(속도 상한·완주·회피 가능성)는 `test_boss_data_auto`가 본다 — 여기는 **함수**다.
+	# =====================================================================================
+
+	# ★① 회차 예고 배율 — `charge_speedup = 0`이면 **모든 기존 패턴과 완전 항등**이라는 것이
+	#    이 축 전체의 안전 근거다. 그 항등이 깨지면 swing·slam·spray·spin·charge가 전부 흔들린다.
+	var pat_plain := BossPatternDef.new()   # charge_speedup 기본 0 = 도입 전 패턴
+	var plain_identity := true
+	for i0: int in [0, 1, 3, 7, 999]:
+		if not is_equal_approx(CombatMath.charge_telegraph_scale(pat_plain, i0), 1.0):
+			plain_identity = false
+	failures += _check(plain_identity,
+		"★charge_telegraph_scale: speedup 0 = 어느 회차에서도 1.0 (기존 패턴 전량 항등)")
+	failures += _check(is_equal_approx(CombatMath.charge_telegraph_scale(null, 3), 1.0),
+		"charge_telegraph_scale: null 패턴 → 1.0 항등 폴백")
+
+	var pat_cross := BossPatternDef.new()
+	pat_cross.charge_speedup = 0.2
+	failures += _check(is_equal_approx(CombatMath.charge_telegraph_scale(pat_cross, 0), 1.0)
+			and is_equal_approx(CombatMath.charge_telegraph_scale(pat_cross, 1), 0.8)
+			and is_equal_approx(CombatMath.charge_telegraph_scale(pat_cross, 2), 0.6),
+		"charge_telegraph_scale: 0.2 speedup → 1회차 1.00 · 2회차 0.80 · 3회차 0.60")
+	var mono_ok := true
+	var prev_scale := 2.0
+	for i1: int in range(0, 40):
+		var s1 := CombatMath.charge_telegraph_scale(pat_cross, i1)
+		if s1 > prev_scale + 0.000001 or s1 < CombatMath.CHARGE_TELEGRAPH_MIN - 0.000001:
+			mono_ok = false
+		prev_scale = s1
+	failures += _check(mono_ok, "charge_telegraph_scale: 단조 감소 + 하한 포화(회차가 폭주해도 안전)")
+	failures += _check(is_equal_approx(CombatMath.charge_telegraph_scale(pat_cross, -5), 1.0),
+		"charge_telegraph_scale: 음수 회차 → 0으로 눌림(조작·버그 방어)")
+
+	# ★② 회피 가능성 하한의 **근거가 `ROLL_TIME_S`라는 것**이 계약이다 — 손맛 상수가 아니다.
+	#    (전수 데이터 검사는 test_boss_data_auto. 여기선 유도가 안 뒤집혔는지만 본다.)
+	failures += _check(CombatMath.CHARGE_TELEGRAPH_MIN > 0.0 and CombatMath.CHARGE_TELEGRAPH_MIN < 1.0,
+		"CHARGE_TELEGRAPH_MIN ∈ (0, 1) — 1 이상이면 단축이 아예 안 걸리고 0이면 예고가 사라진다")
+
+	# ★③④ 돌진 지속 유도 — `maxf` 양쪽 항이 각각 살아 있는가.
+	var pat_p3 := BossPatternDef.new()      # P3 현행 데이터 재현: 260px / 500px·s / spin 1.0
+	pat_p3.charge_travel_max = 260.0
+	pat_p3.charge_speed = 500.0
+	failures += _check(is_equal_approx(CombatMath.charge_dash_duration_s(pat_p3), 1.0),
+		"★돌진 지속: P3(spin 1.0 · 이동 0.92s) = **1.0** — 옛 CHARGE_SPIN_TIME 상수와 항등")
+	var pat_slow := BossPatternDef.new()    # 실기에서 속도를 낮춘 경우 = 이동시간이 회전 잔여를 넘는다
+	pat_slow.charge_travel_max = 642.0
+	pat_slow.charge_speed = 600.0
+	pat_slow.charge_spin_s = 0.0
+	failures += _check(is_equal_approx(CombatMath.charge_dash_duration_s(pat_slow),
+			642.0 / 600.0 + CombatMath.CHARGE_TIMEOUT_MARGIN),
+		"★돌진 지속: spin 0 · 느린 속도 → 이동시간 + 여유 (고정 상수면 여기서 **조용히 미완주**였다)")
+	failures += _check(CombatMath.charge_dash_duration_s(pat_slow) > 1.0,
+		"★돌진 지속 검출력: 옛 고정값(1.0s)으로 되돌리면 642px/600을 못 완주한다 = 이 단정이 잡는다")
+
+	# ★4b 속도 상한 — 가리비 예산에서 역산한 값을 **되짚어** 확인한다(왕복 검산).
+	failures += _check(is_equal_approx(
+			CombatMath.sweep_scallop_px(72.0, CombatMath.max_charge_speed(72.0)),
+			CombatMath.SWEEP_SCALLOP_MAX_PX),
+		"★max_charge_speed: 상한 속도에서 가리비 깊이가 정확히 예산과 같다(역산 왕복)")
+	failures += _check(CombatMath.max_charge_speed(72.0) > 1200.0 and CombatMath.max_charge_speed(72.0) < 2100.0,
+		"max_charge_speed(72) ≈ 2022px/s — 제안 1200은 그 59% (여유 큼)")
+	failures += _check(CombatMath.max_charge_speed(36.0) < CombatMath.max_charge_speed(72.0),
+		"max_charge_speed: 반경을 줄이면 상한도 같이 내려간다(상수가 아니라 함수인 이유)")
+	failures += _check(CombatMath.sweep_scallop_px(72.0, 500.0) < CombatMath.sweep_scallop_px(72.0, 1200.0),
+		"sweep_scallop_px: 속도가 오르면 가리비가 깊어진다(단조)")
+
+	# ★⑤ 캡슐 — 독립 오라클(엔진 함수) 교차검증. 🔵 테스트가 코드를 미러하면 검출력이 0이다(§3 N-1).
+	var cap_a := Vector2(100.0, 200.0)
+	var cap_b := cap_a + Vector2(642.0, 0.0)
+	var cap_r := 72.0
+	var oracle_ok := true
+	for ox: int in range(-4, 30):
+		for oy: int in range(-4, 5):
+			var pt := Vector2(cap_a.x + float(ox) * 25.0, cap_a.y + float(oy) * 25.0)
+			var closest := Geometry2D.get_closest_point_to_segment(pt, cap_a, cap_b)
+			if not is_equal_approx(CombatMath.capsule_depth(pt, cap_a, cap_b, cap_r),
+					cap_r - pt.distance_to(closest)):
+				oracle_ok = false
+	failures += _check(oracle_ok,
+		"★capsule_depth == 엔진 오라클(Geometry2D.get_closest_point_to_segment) 전수 일치")
+
+	# ★⑤ `a == b` 항등 — 셰이더 `half_len_px = 0`이 원·콘과 비트 단위로 같다는 것의 GDScript 쪽 짝.
+	var cap_identity := true
+	for ix: int in range(-10, 11):
+		for iy: int in range(-10, 11):
+			var pt2 := cap_a + Vector2(float(ix), float(iy)) * 12.0
+			var by_cap := CombatMath.capsule_depth(pt2, cap_a, cap_a, cap_r) >= 0.0
+			if by_cap != CombatMath.is_strike_hit(pt2, cap_a, cap_r):
+				cap_identity = false
+	failures += _check(cap_identity,
+		"★capsule_depth: a == b면 is_strike_hit과 **완전 항등**(원 예고가 한 픽셀도 안 바뀌는 근거)")
+
+	# ★⑤ 판정 ⊆ 표시 — 이산 샘플 원(호스트가 매 프레임 확정하는 것)이 맞히는 점은 **반드시** 캡슐 안이다.
+	var subset_ok := true
+	var dash_step := 1200.0 / 60.0
+	var dash_dir := (cap_b - cap_a).normalized()
+	for si: int in range(0, int(642.0 / dash_step) + 1):
+		var sample_c := cap_a + dash_dir * minf(float(si) * dash_step, 642.0)
+		for gx: int in range(-9, 10):
+			for gy: int in range(-9, 10):
+				var q := sample_c + Vector2(float(gx), float(gy)) * (cap_r / 8.0)
+				if CombatMath.is_strike_hit(q, sample_c, cap_r) \
+						and CombatMath.capsule_depth(q, cap_a, cap_b, cap_r) < -0.0001:
+					subset_ok = false
+	failures += _check(subset_ok,
+		"★판정 ⊆ 표시: 돌진 샘플 원(속도 1200)이 맞히는 점은 전부 캡슐 안 — 「안 보이는데 맞는다」 원리적 불가")
+
+	# ★⑤ 가리비가 **실재한다**(반대 방향 = 손맛 손해)는 것도 못 박는다 — 그 깊이가 곧 예산이다.
+	var half_step := dash_step * 0.5
+	var y_cov := sqrt(cap_r * cap_r - half_step * half_step)
+	var scallop_pt := Vector2(cap_a.x + half_step, cap_a.y + y_cov + 0.05)
+	failures += _check(CombatMath.capsule_depth(scallop_pt, cap_a, cap_b, cap_r) > 0.0
+			and not CombatMath.is_strike_hit(scallop_pt, cap_a, cap_r)
+			and not CombatMath.is_strike_hit(scallop_pt, cap_a + Vector2(dash_step, 0.0), cap_r),
+		"★가리비 실재: 캡슐 안이지만 이웃한 두 샘플 원 어느 쪽에도 안 맞는 점이 있다(= 표시 손해 방향)")
+	failures += _check(is_equal_approx(CombatMath.sweep_scallop_px(cap_r, 1200.0), cap_r - y_cov),
+		"★가리비 깊이 유도 == 기하 실측 (%.3fpx)" % (cap_r - y_cov))
+
+	# ★⑦ 조준 모드 — 모르는 문자열이 **관대한 쪽(nearest 폴백)** 으로 떨어지는 것이 계약이다.
+	failures += _check(CombatMath.is_host_targeted("host"), "is_host_targeted: \"host\"")
+	var fallback_ok := true
+	for m: String in ["nearest", "", "Host", "hostt", "alternate", "HOST"]:
+		if CombatMath.is_host_targeted(m):
+			fallback_ok = false
+	failures += _check(fallback_ok,
+		"★is_host_targeted: 모르는 값·대소문자 차이는 전부 false → nearest 폴백(데이터 오타가 패턴을 안 죽인다)")
+	failures += _check(CombatMath.TARGET_MODES.has("nearest") and CombatMath.TARGET_MODES.has("host")
+			and not CombatMath.TARGET_MODES.has("alternate"),
+		"TARGET_MODES = 구현된 모드만 — \"alternate\"는 4인 게이트(rules §2)와 함께 열린다")
+
 	if failures == 0:
 		print("TEST_OK combat_math")
 		quit(0)

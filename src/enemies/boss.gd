@@ -13,6 +13,7 @@ const HitStop := preload("res://src/feel/hit_stop.gd")
 const HitFlash := preload("res://src/feel/hit_flash.gd")
 const Flinch := preload("res://src/feel/flinch.gd")
 const SpriteGround := preload("res://src/enemies/sprite_ground.gd")
+const NetSchema := preload("res://src/core/net_schema.gd")
 const TELEGRAPH_SHADER := preload("res://assets/shaders/boss_telegraph.gdshader")
 
 # 연출값 (rules §0 예외)
@@ -91,14 +92,26 @@ const STAGGER_DUR := 0.4        # 카운터 성공 꿇음 지속(s)
 const STAGGER_DROP := 9.0       # 꿇을 때 아래로 꺾이는 양(px, offset)
 const STAGGER_LEAN := 0.22      # 꿇을 때 앞으로 숙이는 skew
 
-enum State { IDLE, CHASE, WINDUP, RECOVER, CHARGE_DASH, CHARGE_HIT }
+# ⚠ CHARGE_APPROACH는 **끝에 붙였다** — 앞에 끼우면 기존 값이 밀린다(직렬화는 안 하지만
+#   상태 순서를 눈으로 읽는 코드가 여럿이다).
+enum State { IDLE, CHASE, WINDUP, RECOVER, CHARGE_DASH, CHARGE_HIT, CHARGE_APPROACH }
 
 # 돌진(P3) 연출 상수 (rules §0 예외 — 손맛값, docs/TUNING.md 대상)
 const CHARGE_HIT_DUR := 0.3       # 바위 충돌 리코일(튕김) 지속(s) — 짧게, 이후 그로기로
 const CHARGE_RECOIL_SPEED := 180.0  # 바위 충돌 시 뒤로 튕기는 초기 속도(px/s)
-const CHARGE_TIMEOUT_MARGIN := 0.4  # 돌진 타임아웃 = 이동시간 + 이 여유(벽에 낀 채 무한 돌진 방지)
-const CHARGE_SPIN_TIME := 1.0       # 돌진+회전 총 지속(s). 이동은 앞부분(속도로 0.5s쯤 도달)
+# ⚠ `CHARGE_TIMEOUT_MARGIN`·`CHARGE_SPIN_TIME`은 2026-08-02에 **여기서 사라졌다.**
+#   ⑴ 여유는 `CombatMath.CHARGE_TIMEOUT_MARGIN`으로 올렸다 — 이 파일은 씬 글루라 `-s`가
+#      preload를 못 해 `data/enemies` 전수 트립와이어를 만들 수 없다(rules §3 J-1·J-2).
+#   ⑵ 회전 지속 1.0초는 `BossPatternDef.charge_spin_s`의 **기본값**이 됐다(= P3 완전 항등).
+#      상수로 두면 이동 거리와 시간이 서로를 몰라 **속도를 낮추는 순간 조용히 미완주**다.
+#   지속 유도의 단일 소스 = `CombatMath.charge_dash_duration_s(pat)`.
 const WHIRL_OFFSET_Y := -13.0       # F7 회오리 시트(128px, 발밑 y96)를 방향 시트 발 높이에 맞추는 오프셋
+# 바위를 부수고 지나갈 때의 화면 흔들림(§2 손맛 훅). 🔴 `HitStop.punch`는 쓰지 마라 —
+#   피격용이라 보스 `speed_scale`을 0으로 만들어 `_apply_anim_scale`과 채널이 겹친다.
+const ROCK_BREAK_SHAKE := 2.4
+# 접근 도달 판정 여유(px) — 이 안에 들면 시작단에 **스냅**한다. 스냅이 계약인 이유는
+# `_enter_charge_approach` 주석 참조(각이 정확히 0/PI여야 판정선과 예고 띠가 겹친다).
+const CROSS_ARRIVE_EPS := 3.0
 
 @export var eid: String = ""
 @export var def: BossDef
@@ -149,6 +162,25 @@ var _aura: Sprite2D = null             # 보스 발밑 가산 발광(따라다�
 var _noise: FastNoiseLite = null       # 지터용 연속 노이즈(1D 표본) — _ready에서 생성
 var _charge_seq: int = 0               # 돌진(P3) 회차 id — 스윕 dedup 키(돌진당 +1, CombatAuthority._boss_sweep_seq와 짝)
 var _charge_start: Vector2 = Vector2.ZERO  # 이번 돌진 시작 위치 — 이동거리(travel_max) 판정 기준
+# --- 횡단 돌진 (2026-08-02 · docs/plans/active/2026-08-02-boss-dash-pattern.md) ---
+# 🔴 **회차 카운터는 `_charge_seq`가 아니다.** 그쪽은 보스 생애 동안 단조 증가하는 **1회 히트
+#   dedup 키**라(CombatAuthority._boss_sweep_seq와 짝) 회차 인덱스로 재사용하면 ⑴ 두 번째 패턴이
+#   idx 3부터 시작하고 ⑵ 회차마다 같은 플레이어를 다시 못 때린다. 별도로 든다.
+#   `_charge_idx`는 패턴 **선택 시 0**으로 리셋되고 왕복마다 +1 된다. 게스트는 G_BOSS_ATK "i"로 받는다.
+var _charge_idx: int = 0
+var _charge_dir: Vector2 = Vector2.RIGHT   # 이번 돌진의 진행 방향(단위) — 선분 고정·애니 방향의 단일 소스
+var _cross_start: Vector2 = Vector2.ZERO   # 이번 회차 횡단 시작단(아레나 가장자리)
+var _cross_end: Vector2 = Vector2.ZERO     # 반대편 끝 — `_begin_windup`에 이걸 넘기면 각이 정확히 0/PI가 된다
+var _home_pos: Vector2 = Vector2.ZERO      # _ready 위치 — `arena_rect` 메타가 없을 때의 폴백 기준(하네스)
+# 광역 시야(줌아웃) 현재 상태 — 🔴 **`_set_wide` 단일 choke point의 엣지 게이트**다.
+# 출구가 여섯(마지막 회차·바위 그로기·사망·코옵 결박·대상 전멸·접근 타임아웃)이라 호출부에
+# 흩으면 일곱 번째에서 빠진다 → 상태를 **매 프레임 재주장**하고 이 변수가 중복 emit을 막는다.
+var _wide_on: bool = false
+# 예고 단계 — 0 = 예고(WINDUP) · 1 = 돌진 중 연장(캡슐 전용, 설계 §7-2).
+# 🔴 돌진 내내 예고를 켜 두는 것이 이 패턴의 핵심 처방이다: 속도 1200에서 게스트 화면의 보스 몸은
+#   304~350px(스윕 반경의 4.2~4.9배) 뒤처지므로 **정확한 표시가 예고 도형 하나뿐**이 된다.
+var _telegraph_phase: int = 0
+var _telegraph_pat: BossPatternDef = null  # 지금 그려져 있는 예고의 패턴(호스트/게스트 공용 — 단계 전환이 읽는다)
 var _c1_frames: SpriteFrames = null    # C1 코옵 전용 클립 시트(roar/grab/groggy — mino_boss_c1) 지연 로드
 var _spin_frames: SpriteFrames = null  # 돌진 회전 전용 풀캐릭터 시트(mino_spin_full) 지연 로드
 var _whirl_frames: SpriteFrames = null # F7 제자리 회오리 전용 시트(mino_whirl, 128px + 황금 에너지) 지연 로드
@@ -179,6 +211,7 @@ func _ready() -> void:
 	add_to_group("enemy")
 	add_to_group("mob")  # MobSync mpos 배치·G_BOSS_ATK 라우팅이 이 그룹으로 문다
 	_remote_target = global_position
+	_home_pos = global_position   # `arena_rect` 메타가 없는 하네스에서 횡단 선분의 폴백 기준
 	# 🔴 예고가 끝나도 머티리얼을 떼지 않는다 — hit_flash의 "끝나면 material=null" 규율(§5)과 다른 판단이다.
 	# 그 규율의 근거는 "평상시에도 그려지는 스프라이트에 셰이더가 남으면 웹 Compatibility에서 항등이
 	# 아닐 수 있다"인데, 이 노드는 예고 밖에서 visible=false라 **아예 그려지지 않는다**(항등을 물을 상태가
@@ -332,7 +365,14 @@ func _on_hp_changed(hp: int, dropped: bool) -> void:
 	else:
 		visible = true
 		# 공격 애니가 도는 중이 아니면 idle 복귀 (피격 흠칫과 겹치지 않게)
-		if not _is_attack_anim_playing():
+		# 🔴 **돌진 서브상태도 같이 가드한다** — 그 자리의 뜻이 원래 *"모션을 상태기계가 몰고 있으면
+		#   덮지 마라"* 이고 돌진이 정확히 그 성격이다. 안 넣으면 횡단 중(플레이어가 **반드시** 때린다)
+		#   달리던 자세가 매 피격마다 idle로 바뀐다.
+		# ⚠ **P3가 지금 멀쩡한 것은 우연이다** — 그 클립 이름이 `spin`이고 `spin`이 마침 P5 패턴 id라
+		#   `ATTACK_ANIMS`에 들어 있을 뿐이다. 이 가드는 그 우연을 구조로 바꾼다(P3에도 항등).
+		# ❌ `ATTACK_ANIMS`에 `walk`를 넣어 고치지 마라 — 평소 이동 중 피격에도 idle 복귀가 막혀
+		#    **전역 동작이 바뀐다.**
+		if not _is_attack_anim_playing() and not _in_charge_states():
 			_play(&"idle")
 
 
@@ -340,10 +380,16 @@ func _physics_process(delta: float) -> void:
 	if _telegraph_left > 0.0:
 		_telegraph_left -= delta
 		if _telegraph_left <= 0.0:
-			_telegraph.visible = false
+			_advance_telegraph_phase()
 		_update_telegraph_progress()
 	_apply_anim_scale()
 	_update_life_feel(delta)
+	# 🔴 **광역 시야 단일 choke point** — 출구를 세지 않고 "지금 넓어야 하는가"를 매 프레임
+	#   재주장한다(`_apply_anim_scale`·`_reassert_telegraph_pos`와 같은 관용구). 사망·결박·대상
+	#   전멸·타임아웃이 전부 `_wants_wide()` 안에서 false가 되므로 **일곱 번째 출구가 생겨도**
+	#   여기서 자동으로 닫힌다. ⚠ 아래 사망 early-return **앞**에 있어야 죽었을 때도 돌아온다.
+	if Net.is_host():
+		_set_wide(_wants_wide())
 	if _health.is_dead() or def == null:
 		_reassert_telegraph_pos()
 		return
@@ -351,7 +397,12 @@ func _physics_process(delta: float) -> void:
 	if Net.is_host():
 		_host_ai(delta)
 		_tick_knock(delta)   # 🔴 AI **뒤** — 넉백이 그 프레임의 이동을 대체한다(합산 금지, A-9)
-		raw_moving = _state == State.CHASE and velocity.length_squared() > 0.0
+		# ⚠ **CHARGE_APPROACH를 여기 넣는 것이 계약이다** — 빠지면 보스가 아레나 가장자리로
+		#   **idle 자세로 미끄러진다**(에러 없음 — `walk`가 없던 시절의 그 증상이 이 상태에서만
+		#   재발한다). 🔴 `_update_move_anim`의 게이트에는 **넣지 마라 — 부호가 반대다**(거기 넣으면
+		#   walk가 막힌다). 두 곳의 부호가 반대라는 것이 이 항목에서 가장 헷갈리는 지점이다.
+		raw_moving = (_state == State.CHASE or _state == State.CHARGE_APPROACH) \
+			and velocity.length_squared() > 0.0
 	else:
 		raw_moving = global_position.distance_to(_remote_target) > REMOTE_MOVE_EPS
 		global_position = global_position.lerp(_remote_target, minf(1.0, REMOTE_LERP_SPEED * delta))
@@ -599,7 +650,11 @@ static func _radial_tex() -> GradientTexture2D:
 
 func _host_ai(delta: float) -> void:
 	_state_left -= delta
-	# C1 결박 중 — 패턴 AI·이동·자동 늪 전부 정지(c1 클립이 몸을 몬다, 설계 §9). 예고/돌진 서브상태 진행 중이면 먼저 정리 안 함(그런 상태에서 STELE가 겹치지 않게 coop 쪽이 보장).
+	# C1 결박 중 — 패턴 AI·이동·자동 늪 전부 정지(c1 클립이 몸을 몬다, 설계 §9).
+	# ⚠ **"coop 쪽이 겹침을 보장한다"는 옛 서술은 거짓이다**(netreview M-3, 2026-08-02).
+	#   `coop_authority`의 발동은 **순수 타이머**(`_next_left <= 0` → `_trigger`)이고 보스 상태 게이트가
+	#   없다 — 즉 **예고·돌진 진행 중에도 결박이 걸린다.** 그래서 이 return이 그 상태를 정리하지
+	#   않고 나가면 남는다. 🔴 광역 시야는 그 경로도 `_set_wide(false)`를 지나야 한다(출구 ④).
 	if coop_locked:
 		velocity = Vector2.ZERO
 		return
@@ -610,8 +665,10 @@ func _host_ai(delta: float) -> void:
 			_p2_swamp_accum = _auto_swamp_interval()
 			_spawn_auto_swamp()
 	# 테스트 랩 — debug_hold면 제자리 정지(관찰용). 강제 발동 패턴(WINDUP/RECOVER/돌진 서브상태)은 그대로 진행.
+	# ⚠ CHARGE_APPROACH를 빼면 랩에서 **접근 도중 얼어붙는다**(패턴이 영원히 안 끝난다).
 	if debug_hold and _state != State.WINDUP and _state != State.RECOVER \
-			and _state != State.CHARGE_DASH and _state != State.CHARGE_HIT:
+			and _state != State.CHARGE_DASH and _state != State.CHARGE_HIT \
+			and _state != State.CHARGE_APPROACH:
 		velocity = Vector2.ZERO
 		return
 	match _state:
@@ -634,7 +691,23 @@ func _host_ai(delta: float) -> void:
 				return
 			var pat := _select_pattern(dist)
 			if pat != null:
-				_begin_windup(pat, anchor)
+				# 🔴 **조준 대상은 거리 게이트와 다른 축이다** — 후보 선택은 (기존대로) 가장 가까운
+				#   플레이어와의 거리로 하고, 실제로 겨눌 대상은 패턴이 정한다(`target_mode`).
+				#   조준 결과는 `_strike_center`/`_strike_angle`(= G_BOSS_ATK의 x,y,a)로만 나가므로
+				#   모드를 무엇으로 바꿔도 **네트워크 표면은 0**이다.
+				var tgt := _select_target(pat)
+				var taim := tgt.net_anchor() if tgt != null else anchor
+				_charge_idx = 0   # 패턴 선택 = 새 왕복 묶음의 시작(회차 카운터 리셋)
+				if _has_cross_approach(pat):
+					_cur_pattern = pat
+					# 🔴 **쿨다운을 여기서 건다** — 쿨다운 기록 자리인 `_fire_strike`를 돌진 경로는
+					#   아예 안 탄다(`is_charge` 분기). 안 걸면 6.9초짜리 패턴이 끝나자마자 다시 시작한다.
+					#   ⚠ 이 줄은 **접근 단계를 가진 패턴만** 지난다 = 기존 P3는 여기 안 온다 =
+					#   P3의 현행 동작(쿨다운이 사실상 안 걸린다)이 **한 픽셀도 안 바뀐다.**
+					_pattern_last_msec[pat.id] = Time.get_ticks_msec()
+					_enter_charge_approach()
+				else:
+					_begin_windup(pat, taim)
 				return
 			# 쓸 패턴 없음 → 이동 (net_anchor 기준, rules §3).
 			# keep_distance>0 = 카이팅: 너무 가까우면 물러나고, 유지 거리면 멈추고, 멀면 접근.
@@ -669,25 +742,58 @@ func _host_ai(delta: float) -> void:
 					# 회복은 짧게(recover_s) — 재사용 쿨다운(cooldown_s)은 _pattern_last_msec가 따로 막는다.
 					# 둘을 분리하지 않으면 슬램 후 쿨다운(4s)만큼 멈춰 서 "빈틈"이 생긴다.
 					_state_left = _cur_pattern.recover_s if _cur_pattern != null else 0.5
+		State.CHARGE_APPROACH:
+			# 횡단 전 아레나 가장자리로 붙는다 (설계 §2). 🔴 **예고는 여기서 안 뜬다** — 위협이
+			# 없는 구간에 예고를 그리면 *"예고를 봐도 안 맞는 경우가 있다"* 를 가르쳐 예고 언어
+			# 전체가 약해진다. 대신 카메라가 이미 뒤로 빠져 있고(§6-3), 그건 예고 **도형**이
+			# 아니라서 「2단계 예고」 규약을 안 깬다.
+			var to_start := _cross_start - global_position
+			if to_start.length() <= CROSS_ARRIVE_EPS:
+				# 🔴 **시작단에 스냅한다** — `_begin_windup`이 `(anchor − global_position).angle()`로
+				#   각을 확정하므로 어긋난 채 넘기면 돌진선이 예고 캡슐과 미세하게 갈라진다.
+				#   스냅하면 각이 **정확히 0/PI**가 되어 「판정선 = 띠 중심선」이 구조로 성립한다.
+				global_position = _cross_start
+				velocity = Vector2.ZERO
+				_begin_windup(_cur_pattern, _cross_end)
+				return
+			if _state_left <= 0.0:
+				_end_charge_pattern()   # ⑥ 접근 타임아웃 — 패턴 포기(광역 시야는 재주장이 닫는다)
+				return
+			_face_dir = _dir_suffix(to_start)
+			# 넉백 중엔 자기 이동을 접는다 — CHASE와 같은 규약(대체이지 합산이 아니다, A-9).
+			if _knock_left > 0.0:
+				velocity = Vector2.ZERO
+			else:
+				velocity = to_start.normalized() * _approach_speed()
+				move_and_slide()
+				_sprite.flip_h = false
 		State.CHARGE_DASH:
-			# 돌진(앞부분 이동) + 회전(총 CHARGE_SPIN_TIME, 2바퀴). 이동거리 도달하면 제자리 회전 지속.
-			# 바위에 박으면 HIT(그로기·회전 멈춤), 아니면 회전 끝나고 RECOVER.
+			# 돌진(앞부분 이동) + 도달 후 제자리 회전(`charge_spin_s`). 바위에 박으면 HIT(그로기),
+			# `breaks_rock`이면 부수고 그대로 통과. 끝나면 다음 회차 또는 RECOVER.
 			var traveled := _charge_start.distance_to(global_position)
 			if traveled < _cur_pattern.charge_travel_max:
-				velocity = Vector2.RIGHT.rotated(_strike_angle) * _cur_pattern.charge_speed * speed_mult
+				velocity = _charge_dir * _cur_pattern.charge_speed * speed_mult
 			else:
-				velocity = Vector2.ZERO   # 도달 — 제자리에서 회전만
+				velocity = Vector2.ZERO   # 도달 — 제자리에서 회전만(charge_spin_s > 0인 경우)
 			move_and_slide()
+			# 🔴 **순서가 계약이다 — `move_and_slide()` 뒤 · `boss_sweep.emit` 앞.** emit 뒤에 두면
+			#   그 프레임의 판정이 드리프트된 좌표로 난다(고쳐 놓고도 한 프레임씩 새는 형태).
+			#   `_reassert_telegraph_pos()`가 `_physics_process` 맨 끝이어야 하는 것과 같은 부류다.
+			_pin_to_dash_line()
 			if Net.is_host():
 				EventBus.boss_sweep.emit(global_position, _strike_angle, _cur_pattern, _charge_seq)
 			var rock: Node = _dash_rock_collision()
-			if rock != null:
-				_enter_charge_hit(rock)              # 🪨 바위 박음 → 회전 멈춤 + 그로기 처벌창
-			elif _state_left <= 0.0:
-				velocity = Vector2.ZERO               # 회전 끝 → 후딜
-				_stop_spin_axe()                      # 풍차 도끼 숨김
-				_state = State.RECOVER
-				_state_left = _cur_pattern.recover_s
+			if rock != null and not _cur_pattern.breaks_rock:
+				_enter_charge_hit(rock)              # 🪨 바위 박음 → 회전 멈춤 + 그로기 처벌창(P3 현행)
+			else:
+				if rock != null:
+					_break_rock(rock)                 # 부수고 계속 — 상태 전이 없음(횡단)
+				# 🔴 종료 조건 둘: ⑴ 타임아웃 ⑵ **거리 도달 + 회전 잔여 없음**.
+				#   ⑵가 없으면 도달 후에도 `boss_sweep`이 매 프레임 나가 **끝단이 계속 위험**하다
+				#   (P3에선 의도 — 도끼를 휘두르며 돈다. 횡단에선 아니다).
+				if _state_left <= 0.0 or (_cur_pattern.charge_spin_s <= 0.0
+						and _charge_start.distance_to(global_position) >= _cur_pattern.charge_travel_max):
+					_end_charge_dash()
 		State.CHARGE_HIT:
 			# 리코일(뒤로 튕김) 감쇠 → 끝나면 그로기(무방비 처벌창). 눕는 포즈는 _update_life_feel이 처리.
 			velocity = velocity.lerp(Vector2.ZERO, minf(1.0, delta * 8.0))
@@ -739,7 +845,12 @@ func debug_force_pattern(pid: String) -> void:
 	for p: BossPatternDef in def.patterns:
 		if p != null and p.id == pid:
 			_telegraph_left = 0.0
-			_begin_windup(p, anchor)
+			_charge_idx = 0
+			if _has_cross_approach(p):
+				_cur_pattern = p
+				_enter_charge_approach()   # 실제 경로 그대로 — 랩에서도 접근→예고→횡단이 진짜와 같다
+			else:
+				_begin_windup(p, anchor)
 			return
 
 
@@ -749,7 +860,12 @@ func _begin_windup(pat: BossPatternDef, anchor: Vector2) -> void:
 	_state = State.WINDUP
 	# 지연 보상(§3, 잔몹 mob_melee와 같은 규약): 예고가 게스트 화면에 뜨기까지 편도 지연만큼 늦으므로
 	# 타격도 그만큼 늦춘다 → 게스트도 온전한 telegraph_s를 갖는다. 이 경로는 호스트 전용(보스 AI).
-	_telegraph_hold_s = pat.telegraph_s + CombatMath.strike_delay_s(Net.max_remote_one_way_ms())
+	# 🔴 **회차 단축은 `_telegraph_duration`에 인자를 늘리지 않고 여기서 한 번 곱한다.** 그 함수는
+	#   §3이 못 박은 단일 소스이고 소비처가 넷이다(표시 지속 · N개 원 타이머 · 애니 길이 · 차오름
+	#   분모) — 인자를 늘리면 네 호출부를 손으로 맞추게 된다. `_telegraph_hold_s`가 이미 그 방식이다.
+	#   `charge_speedup = 0`이면 배율이 1.0이라 **모든 기존 패턴과 완전 항등**이다.
+	_telegraph_hold_s = pat.telegraph_s * CombatMath.charge_telegraph_scale(pat, _charge_idx) \
+		+ CombatMath.strike_delay_s(Net.max_remote_one_way_ms())
 	_state_left = _telegraph_hold_s
 	velocity = Vector2.ZERO
 	_strike_angle = (anchor - global_position).angle()  # 대상 방향
@@ -765,16 +881,25 @@ func _begin_windup(pat: BossPatternDef, anchor: Vector2) -> void:
 		if Net.is_host():
 			EventBus.boss_spray.emit(eid, pat.id, _strike_centers, _strike_angle)
 		return
-	if pat.shape == "cone" or pat.center_self:
+	if pat.shape == "capsule":
+		# 🔴 캡슐(띠) 예고의 노드 원점 = **선분의 중점**이다(셰이더가 로컬 x축 ±half_len으로 그린다).
+		#   진행 방향 × 이동거리의 절반으로 유도하므로 **돌진 경로와 같은 두 값**에서 나온다 —
+		#   중점을 따로 재면 그 순간 "맞는 곳 ≠ 보이는 곳"이 된다.
+		_strike_center = global_position \
+			+ Vector2.RIGHT.rotated(_strike_angle) * (pat.charge_travel_max * 0.5)
+	elif pat.shape == "cone" or pat.center_self:
 		# 부채꼴 apex = 보스 위치 · 도끼 회전(center_self) 원 중심 = 보스 자신(전방위 근접)
 		_strike_center = global_position
 	else:
 		# 원: 대상 net_anchor 고정 — 예고를 보고 빠져나갈 수 있게 (GDD §5 기믹 원칙)
 		_strike_center = anchor
 	_show_telegraph_visual(pat, _strike_center, _strike_angle)
-	if pat.is_charge:
+	if pat.is_charge and pat.charge_spin_s > 0.0:
 		# 돌진 예비 자세 — 회전 시트(mino_spin_full)의 spin_prep(도끼 치켜듦→웅크림)을 예고 동안 재생.
 		# 예고(좁은 cone)는 "경로 예고(긁힘 선)"로 이미 _show_telegraph_visual이 그렸다.
+		# 🔴 게이트가 `charge_spin_s > 0`인 것이 요점이다 — 그 필드가 곧 "제자리 회전이 있는가"라
+		#   회전 시트를 트는 조건과 **문자 그대로 같은 뜻**이다. 횡단(0)은 «확정» 새 클립이 없어
+		#   방향 시트의 walk 루프를 그대로 쓴다(설계 §9-0 — 아트 요청 0).
 		play_spin_clip(&"spin_prep")
 	elif pat.id == "spin":
 		# F7 제자리 회오리 — 예고 동안 황금 링이 천천히 여러 바퀴(whirl_spin 루프 6fps). 타격 순간 폭발(STRIKE 분기).
@@ -821,27 +946,252 @@ func _fire_strike() -> void:
 
 # --- 돌진(P3) 서브상태 진입/충돌 (minotaur_patterns.md §3-1) ---
 
-# 돌진 진입 — WINDUP 종료 후 호출. 예고를 끄고 고정 방향(_strike_angle, WINDUP에서 대상 방향으로 확정)으로 질주.
+# 돌진 진입 — WINDUP 종료 후 호출. 고정 방향(_strike_angle, WINDUP에서 대상 방향으로 확정)으로 질주.
 func _enter_charge_dash() -> void:
+	_charge_seq += 1                       # 스윕 dedup 회차 갱신 (CombatAuthority._boss_sweep_seq와 짝 — 돌진당 1회)
+	_charge_dir = Vector2.RIGHT.rotated(_strike_angle)
+	# 🔴 **캡슐은 시작점을 「그려진 띠」에서 유도한다**(netreview M-2). 예고 띠 중심(`_strike_center`)은
+	#   `_begin_windup` 시점 좌표에서 나오는데 돌진선은 여기(WINDUP 종료) 좌표를 쓴다 — 그 사이 1.4초
+	#   동안 `can_knock()`이 WINDUP을 허용하므로 **넉백이 보스를 밀면 두 기준이 갈라진다.**
+	#   `_pin_to_dash_line()`은 어긋난 쪽 선에 못 박으므로 드리프트를 **보존**하고, 그 수직 성분만큼
+	#   스윕 원이 띠 밖으로 나간다 = 🔴 **「표시 < 판정」**(§3이 금지하는 바로 그 방향).
+	#   띠에서 유도하면 그 갈라짐이 **원리적으로** 사라진다.
+	# 🔵 크기 자체는 작다(보스 저항 0.036 → 타당 1회 밀림 ≤ 0.44px, 최악 ~3.5px) — 수용된 가리비
+	#   예산(2px, 안전한 방향)과 같은 자릿수다. 그래도 처방이 한 줄이라 닫아 둔다.
+	# 🔴🔴 **`capsule` 가드가 필수다** — P3(`cone`)는 `_strike_center`가 **보스 자신**(apex)이라 같은
+	#   식을 태우면 시작점이 반길이만큼 뒤로 밀려 **P3가 통째로 깨진다.**
+	if _cur_pattern != null and _cur_pattern.shape == "capsule":
+		_charge_start = _strike_center - _charge_dir * (_cur_pattern.charge_travel_max * 0.5)
+	else:
+		_charge_start = global_position
+	# 🔴 지속 유도의 단일 소스 = `CombatMath.charge_dash_duration_s`(= max(회전 잔여, 이동시간 + 여유)).
+	#   여기서 식을 다시 쓰지 마라 — 옛 고정 상수(1.0s)로 되돌아가면 속도를 낮추는 순간 **조용히
+	#   미완주**가 되고(예고 띠는 끝까지 그려져 있다), `maxf`를 빼면 P3가 1.0 → 0.92s로 짧아진다.
+	_state_left = CombatMath.charge_dash_duration_s(_cur_pattern)
+	_state = State.CHARGE_DASH
+	if _cur_pattern.charge_spin_s > 0.0:
+		_start_spin_axe()                  # 회전 시트(mino_spin_full) spin 클립으로 몸통 통째 스왑
+	else:
+		# «확정» 새 애니 없음 — 방향 시트의 walk 루프를 진행 방향으로 튼다(설계 §9-0).
+		# ⚠ `_update_move_anim`이 CHARGE_DASH에서 early return하므로 여기서 한 번 심으면 유지된다.
+		#   반대로 여기서 안 심으면 **접근 방향의 walk**(= 반대편을 보는 자세)가 그대로 남는다.
+		_face_dir = _dir_suffix(_charge_dir)
+		_play(&"walk")
+	# 🔴 **예고를 끄지 않는다(캡슐 한정)** — 돌진 내내 켜 두고 차오름만 재장전한다(설계 §7-2).
+	#   속도 1200에서 게스트 화면의 보스 몸은 304~350px(스윕 반경의 4.2~4.9배) 뒤처지므로
+	#   **정확한 표시가 예고 도형 하나뿐**이 된다. 단계 전환 자체는 `_advance_telegraph_phase()`가
+	#   타이머 만료로 이미 했다(호스트/게스트 공용 경로 — 게스트는 이 함수를 아예 안 탄다).
+	if _cur_pattern.shape != "capsule":
+		_hide_telegraph()
+
+
+# 돌진 종료(도달 또는 타임아웃) — 왕복이 남았으면 다음 회차, 아니면 패턴 종료.
+# 🔴 회차 카운터는 `_charge_idx`이지 `_charge_seq`가 아니다(선언부 주석) — `_charge_seq`는 위에서
+#   회차마다 +1 되어 **회차마다 같은 플레이어를 다시 때릴 수 있게** 한다(설계 의도).
+func _end_charge_dash() -> void:
+	velocity = Vector2.ZERO
+	_stop_spin_axe()                       # 풍차 도끼 숨김(안 켰으면 end_c1_clip이 early return = 무해)
+	_charge_idx += 1
+	if _cur_pattern != null and _charge_idx < maxi(_cur_pattern.charge_repeat, 1) \
+			and _has_cross_approach(_cur_pattern) and _select_target(_cur_pattern) != null:
+		_enter_charge_approach()
+		return
+	_end_charge_pattern()
+
+
+# 돌진 패턴 전체 종료 → 후딜. 광역 시야는 `_set_wide` 재주장이 자동으로 닫는다(호출부에 안 흩는다).
+func _end_charge_pattern() -> void:
+	velocity = Vector2.ZERO
+	_hide_telegraph()
+	_state = State.RECOVER
+	_state_left = _cur_pattern.recover_s if _cur_pattern != null else 0.5
+
+
+# 바위 파괴(횡단) — 부수고 그대로 지나간다. 상태 전이 없음.
+# 🔵 **물리적 통과는 공짜다** — `boss_rock.shatter()`가 첫 줄에서 콜리전을 `set_deferred`로 끄므로
+#   다음 물리 프레임부터 안 막는다. 여기서 따로 설계할 것이 없다.
+# 🔴 남는 것은 **한 프레임의 슬라이드 드리프트**이고 그건 `_pin_to_dash_line()`이 막는다.
+# ⚠ `HitStop.punch`는 쓰지 마라 — 피격용이라 보스 `speed_scale`을 0으로 만들어 `_apply_anim_scale`과
+#   채널이 겹친다(rules §2 "소유자가 매 프레임 재주장한다"가 그 자리다).
+func _break_rock(rock: Node) -> void:
+	if rock.has_method("shatter"):
+		rock.call("shatter")
+	# 🔴 **게스트에도 알린다**(netreview I-1). 안 보내면 게스트 화면엔 그 바위가 `rock_ttl`까지
+	#   서 있고 **실제로 길을 막는다**(정적 몸) — 호스트는 통과하는데 상대는 벽을 본다.
+	#   ⚠ `Net.send_game`을 여기서 부르지 마라 — 호스트 루프백이 없어 **자기 화면만 안 바뀐다**.
+	#   `rock_spawn_local`과 같은 형태로 RockField가 중계한다.
+	var rid_v: Variant = rock.get("rid")
+	if rid_v is String and not (rid_v as String).is_empty():
+		EventBus.rock_break_local.emit(rid_v as String)
+	EventBus.screen_shake.emit(ROCK_BREAK_SHAKE)   # §2 손맛 훅 — 새 자산 0(바위가 파괴 애니를 이미 갖고 있다)
+
+
+# 🔴 **돌진선 이탈 금지** — 판정 ⊆ 표시를 바위 충돌·벽 슬라이드에도 구조로 보존한다.
+#   ⑴ 수직 성분 제거: 충돌을 감지한 그 프레임에 `move_and_slide()`는 **이미 보스를 옆으로
+#      미끄러뜨렸다**. 벗어나면 스윕 원이 예고 캡슐 밖으로 나간다 = **「표시 < 판정」**(= 안 보이는데 맞는다).
+#   ⑵ 진행 성분 clamp: 프레임당 전진이 `speed/60`(1200에서 20px)이라 마지막 프레임에 끝단을
+#      넘어설 수 있다 — 그러면 그 20px가 캡슐 밖이다.
+# ⚠ 선분에 못 박는 것이지 y를 고정하는 것이 아니다 — 횡단은 각이 0/PI라 결과가 같지만, 사선
+#   `breaks_rock` 패턴이 생겨도 이 유도는 그대로 옳다.
+# ⚠ **P3(캡슐도 breaks_rock도 아님)에는 적용하지 않는다** — 거기선 슬라이드가 곧 "박았다"는
+#   신호다(그리고 콘 예고는 애초에 경로 근사다). **항등.**
+func _pin_to_dash_line() -> void:
+	if _cur_pattern == null or not (_cur_pattern.shape == "capsule" or _cur_pattern.breaks_rock):
+		return
+	var along := clampf((global_position - _charge_start).dot(_charge_dir),
+		0.0, maxf(_cur_pattern.charge_travel_max, 0.0))
+	global_position = _charge_start + _charge_dir * along
+
+
+# 이 패턴이 **아레나 가장자리 접근 단계**를 갖는가 = 횡단 돌진인가.
+# 🔵 기존 P3는 `charge_approach_speed` 기본값 0이라 여기서 false로 떨어진다 = **완전 항등**.
+func _has_cross_approach(pat: BossPatternDef) -> bool:
+	return pat != null and pat.is_charge and pat.charge_approach_speed > 0.0
+
+
+func _approach_speed() -> float:
+	if _cur_pattern == null:
+		return 0.0
+	return maxf(_cur_pattern.charge_approach_speed * speed_mult, 1.0)
+
+
+# 횡단 접근 진입 — 이번 회차의 선분(시작단·반대편 끝)을 확정하고 가장자리로 걸어간다.
+# 🔴 **선분을 여기서 한 번만 정한다** — 도착 후 `_begin_windup(pat, _cross_end)`에 끝점을 그대로
+#   넘기면 `_strike_angle`이 정확히 0/PI가 되고 `_strike_center`(캡슐 중점)가 같은 두 값에서
+#   유도된다. 즉 예고 띠·돌진선·판정 원이 **한 곳에서 갈라져 나온다.**
+func _enter_charge_approach() -> void:
+	var tgt := _select_target(_cur_pattern)
+	if tgt == null:
+		_end_charge_pattern()   # ⑤ 대상 전멸
+		return
+	var seg := _cross_segment(tgt.net_anchor())
+	_cross_start = seg[0]
+	_cross_end = seg[1]
+	_hide_telegraph()
+	_state = State.CHARGE_APPROACH
+	# 타임아웃 = 이동시간 + 여유. 벽·바위에 낀 채 접근이 영원히 안 끝나는 것을 막는다(⑥ 출구).
+	_state_left = global_position.distance_to(_cross_start) / _approach_speed() \
+		+ CombatMath.CHARGE_TIMEOUT_MARGIN
+
+
+# 이번 횡단의 [시작단, 반대편 끝]. 시작단 = 보스에게 **가까운 쪽** 가장자리(2회차부터는 이미
+# 그쪽에 서 있으므로 세로 이동만 남는다) · y = 대상 앵커(아레나 안으로 clamp).
+# 🔴 **끝점은 `charge_travel_max`에서 유도한다 — 아레나 반대쪽 가장자리에서 유도하지 않는다.**
+#   이동거리·돌진 지속·캡슐 반길이가 전부 그 한 필드에서 나오므로, 이렇게 해야 `body_radius`를
+#   바꿔도(= `sprite_scale`을 바꾸면 반드시 같이 바꾼다) **표시와 판정이 같이 움직인다.** 어긋나는
+#   것은 "아레나에 딱 맞는가"뿐이고 그건 눈에 보이는 축이다(반대로 하면 조용히 깨진다).
+func _cross_segment(aim: Vector2) -> Array:
+	var rect := _arena_rect()
+	var r := def.body_radius if def != null else 0.0
+	var travel := maxf(_cur_pattern.charge_travel_max, 1.0)
+	var left_x := rect.position.x + r
+	var right_x := rect.end.x - r
+	var y := clampf(aim.y, rect.position.y + r, rect.end.y - r)
+	# 가까운 쪽에서 출발한다 — 반대편까지 걸어갈 일이 없다(설계 §2: 최악 대각 ~435px).
+	var from_left := absf(global_position.x - left_x) <= absf(global_position.x - right_x)
+	var sx := left_x if from_left else right_x
+	var dx := travel if from_left else -travel
+	return [Vector2(sx, y), Vector2(sx + dx, y)]
+
+
+# 패턴 기하가 쓰는 싸움터 경계. 씬 루트가 `set_meta("arena_rect", Rect2(...))`로 선언하고
+# 조상 체인에서 찾는다(`camera_rig`의 `map_rect` 관용구 미러 — 복붙 배선 방지).
+# 🔴 **`map_rect`와 헷갈리지 마라 — 다른 것이고 값이 같을 이유도 없다.**
+#   `map_rect`  = 카메라가 **보여줘도 되는** 범위(맵 밖 공허 차단) · 소비자 = `camera_rig.set_limits`
+#   `arena_rect` = 패턴 기하가 쓰는 **싸움터 경계**(횡단 끝 좌표) · 소비자 = 여기
+#   같은 씬에 둘 다 선언될 수 있고 그때도 값이 달라도 된다(카메라는 여유를 더 보여줘도 되고,
+#   패턴은 몸이 들어가야 하므로 `body_radius`만큼 안쪽이다). **한쪽을 다른 쪽에서 유도하지 마라.**
+# ⚠ 메타가 없으면(테스트 하네스·시험장) `_ready` 위치를 중심으로 한 폴백을 만든다 — 패턴이
+#   조용히 안 나오는 것보다 낫다.
+func _arena_rect() -> Rect2:
+	var n: Node = self
+	while n != null:
+		if n.has_meta("arena_rect"):
+			return n.get_meta("arena_rect") as Rect2
+		n = n.get_parent()
+	var r := def.body_radius if def != null else 0.0
+	var travel := maxf(_cur_pattern.charge_travel_max, 1.0) if _cur_pattern != null else 1.0
+	var half_w := travel * 0.5 + r
+	return Rect2(_home_pos.x - half_w, _home_pos.y - 208.0 - r, half_w * 2.0, 416.0 + r * 2.0)
+
+
+# 이 패턴이 겨눌 대상 — 단일 소스. 🔴 **폴백이 계약이다**(호스트가 죽어 관전 중이면 대상이 없고,
+#   모르는 `target_mode` 문자열도 여기로 떨어져 **데이터 오타가 패턴을 죽이지 않는다**).
+# 🔵 호스트 고정은 `NetSchema.HOST_ID`가 상수라 RNG도 이전 대상 기억도 필요 없다 = 상태 표면 0.
+# ⚠ 알려진 대가: 2인이면 게스트가 그 패턴 동안 완전히 안전해진다. 실기에서 심심하면
+#   `.tres` 한 줄(`target_mode`)로 바꾼다 — 그게 이 필드의 존재 이유 전부다(docs/TUNING.md).
+func _select_target(pat: BossPatternDef) -> PlayerActor:
+	if pat != null and CombatMath.is_host_targeted(pat.target_mode):
+		var host := _alive_peer(NetSchema.HOST_ID)
+		if host != null:
+			return host
+	return _nearest_alive_player()
+
+
+func _alive_peer(peer_id: int) -> PlayerActor:
+	for node: Node in get_tree().get_nodes_in_group("player"):
+		var p := node as PlayerActor
+		if p != null and p.is_alive() and p.peer_id == peer_id:
+			return p
+	return null
+
+
+# --- 광역 시야(줌아웃) — `EventBus.boss_wide_view` → MobSync 중계 → 게스트 재emit ---
+
+# 🔴 **`Net.send_game`을 여기서 직접 부르면 안 된다** — Net 루프백이 없어 호스트가 자기 메시지를
+#   못 받으므로 **호스트 화면만 안 바뀐다**. `boss_phase_changed`의 1:1 미러(로컬 emit → MobSync
+#   중계 → 게스트 재emit)를 지켜라. 이 프로젝트가 여러 번 값을 치른 자리다.
+# 🔴 **엣지에서만 emit한다** — 매 프레임 재주장하는 구조라 게이트가 없으면 초당 60통이 나간다.
+func _set_wide(on: bool) -> void:
+	if _wide_on == on:
+		return
+	_wide_on = on
+	EventBus.boss_wide_view.emit(on)
+
+
+# 지금 광역 시야여야 하는가 — **출구를 세지 않는다.** 사망·결박·대상 전멸·타임아웃·바위 그로기·
+# 마지막 회차가 전부 여기서 false로 떨어지므로 일곱 번째 출구가 생겨도 자동으로 닫힌다.
+func _wants_wide() -> bool:
+	if _cur_pattern == null or not _cur_pattern.wide_view:
+		return false
+	if coop_locked or _health.is_dead():
+		return false
+	# 접근 진입부터 패턴이 끝날 때까지(예고 포함) — WINDUP은 돌진 패턴일 때만 이 구간에 든다.
+	return _in_charge_states() or (_state == State.WINDUP and _cur_pattern.is_charge)
+
+
+# 돌진 서브상태(접근·질주·충돌) — 모션을 상태기계가 모는 구간.
+# ⚠ WINDUP은 **일부러 뺐다** — 그 구간엔 보스가 서 있으므로 피격 시 idle 복귀가 옳다.
+func _in_charge_states() -> bool:
+	return _state == State.CHARGE_APPROACH or _state == State.CHARGE_DASH \
+		or _state == State.CHARGE_HIT
+
+
+func _hide_telegraph() -> void:
 	_telegraph.visible = false
 	_telegraph_left = 0.0
-	_charge_seq += 1                       # 스윕 dedup 회차 갱신 (CombatAuthority._boss_sweep_seq와 짝 — 돌진당 1회)
-	_charge_start = global_position
-	_state_left = CHARGE_SPIN_TIME         # 돌진+회전 총 지속(이동은 앞부분, 도달 후 제자리 회전). _host_ai가 감산.
-	_state = State.CHARGE_DASH
-	_start_spin_axe()                      # 회전 시트(mino_spin_full) spin 클립으로 몸통 통째 스왑
+	_telegraph_phase = 0
+
+
+# MobSync가 G_BOSS_ATK에 실을 회차 인덱스 — `get_sync_state`·`show_telegraph`와 같은 덕타이핑 API.
+# 🔴 `boss_telegraph` emit이 **동기**라 중계 시점의 이 값이 곧 그 예고의 회차다.
+func charge_telegraph_idx() -> int:
+	return maxi(_charge_idx, 0)
 
 
 # 바위 충돌 — 리코일로 뒤로 튕기고 CHARGE_HIT 진입. 바위가 shatter를 구현했으면 부순다(P4 오브젝트 계약).
 func _enter_charge_hit(rock: Node) -> void:
+	_hide_telegraph()
 	_state = State.CHARGE_HIT
 	_state_left = CHARGE_HIT_DUR
 	play_hitfall_clip(&"hit")              # 🔴 바위 박음 = 회전 중단 + 충돌 프레임(이후 groggy 눕기 클립)
 	var away := global_position - (rock as Node2D).global_position
 	var dir := away.normalized() if away.length_squared() > 1.0 else -Vector2.RIGHT.rotated(_strike_angle)
 	velocity = dir * CHARGE_RECOIL_SPEED
+	# 🔴 **여기도 파괴 브로드캐스트를 지나야 한다** — P3(박고 그로기)도 게스트 화면엔 바위가 남는다.
+	#   선재 결함이지만 같은 함수를 지나게 하면 다음 파괴 지점이 생겨도 자동으로 따라온다.
 	if rock.has_method("shatter"):
-		rock.call("shatter")               # 바위 산산조각 (없으면 그냥 남는다 — 헤드리스 디버그 바위엔 없음)
+		_break_rock(rock)                  # 바위 산산조각 + rid 브로드캐스트 (없으면 그냥 남는다 — 헤드리스 디버그 바위엔 없음)
 
 
 # 돌진 중 슬라이드 충돌에서 "boss_rock" 그룹만 골라 반환. 벽(아레나 경계)은 무시 → 헛참으로 처리. 없으면 null.
@@ -917,10 +1267,15 @@ func apply_remote_pos(pos: Vector2, flip: bool) -> void:
 
 # --- 게스트 표시 API (G_BOSS_ATK 수신 → MobSync가 호출). 판정은 절대 없다(mob_melee matk 표시 미러). ---
 
-func show_boss_telegraph(pattern_id: String, center: Vector2, angle: float) -> void:
+# ⚠ `idx` = 돌진 회차(G_BOSS_ATK "i"). 기본 0 = **구버전 호스트와 항등**.
+# 🔴 **게스트가 회차를 모르면 3회차에서 호스트 0.84s vs 게스트 1.4s가 되어 「다 찼다 = 지금
+#   맞는다」가 깨진다** — 게스트가 절반 시점에 이미 맞는다. 수치(단축 배율)는 안 실린다: 각자
+#   로컬 `CombatMath.charge_telegraph_scale`로 리졸브한다(특성 축이 id만 보내는 것과 같은 철학).
+func show_boss_telegraph(pattern_id: String, center: Vector2, angle: float, idx: int = 0) -> void:
 	var pat := _resolve_pattern(pattern_id)
 	if pat == null:
 		return  # 모르는 패턴 id = 무시
+	_charge_idx = maxi(idx, 0)
 	_show_telegraph_visual(pat, center, angle)
 	_play_attack_anim(pat)  # 공격 애니 재생 (게스트는 자기 pat.telegraph_s 길이에 맞춘다)
 
@@ -977,8 +1332,30 @@ func _resolve_pattern(pattern_id: String) -> BossPatternDef:
 # (_telegraph_hold_s), 게스트는 그 값이 0이라 자기 pat.telegraph_s를 쓴다(§3 지연 보상).
 # 🔴 예고 표시 지속(단일/N개 원)과 공격 애니 길이가 **전부 이 함수에서 파생돼야** 예고와 동작이
 # 같은 순간에 끝난다 — 식을 복제하면 다음 튜닝에서 표시와 모션이 갈라진다.
+# ⚠ 게스트 갈래에만 회차 배율이 붙는다 — 호스트 갈래(`_telegraph_hold_s`)는 `_begin_windup`이
+#   **이미 곱해서** 확정했다(거기서 한 번, 여기서 한 번 = 두 번 곱하면 3회차가 0.5배가 된다).
 func _telegraph_duration(pat: BossPatternDef) -> float:
-	return _telegraph_hold_s if _telegraph_hold_s > 0.0 else pat.telegraph_s
+	if _telegraph_hold_s > 0.0:
+		return _telegraph_hold_s
+	return pat.telegraph_s * CombatMath.charge_telegraph_scale(pat, _charge_idx)
+
+
+# 예고 타이머 만료 — 캡슐(횡단)은 **여기서 끝나지 않고 돌진 구간으로 넘어간다**(설계 §7-2).
+# 🔴 호스트/게스트 **공용 경로**인 것이 요점이다: 게스트는 돌진 시작 메시지를 따로 받지 않지만
+#   "예고가 끝났다 = 돌진이 시작됐다"를 시간으로 알 수 있고, 분모(`charge_travel_s`)는 양쪽이
+#   자기 `.tres`에서 리졸브하므로 **신규 메시지 0개**로 정합이 선다.
+# 🔵 그래서 이 패턴에서 **표시 정확도의 정본은 스프라이트가 아니라 셰이더**다 — 차오름 선단은
+#   위치 패킷이 아니라 데이터 유도 지속시간에서 나오므로 게스트 오차가 300px이 아니라 지터(±24px)다.
+#   반직관적이라 여기 적어 둔다.
+func _advance_telegraph_phase() -> void:
+	if _telegraph_phase == 0 and _telegraph_pat != null and _telegraph_pat.shape == "capsule":
+		_telegraph_phase = 1
+		_telegraph_total_s = CombatMath.charge_travel_s(_telegraph_pat)
+		_telegraph_left = _telegraph_total_s
+		if _telegraph_mat != null:
+			_telegraph_mat.set_shader_parameter(&"progress", 0.0)   # 차오름 재장전(0 → 1 다시)
+		return
+	_telegraph.visible = false
 
 
 # 예고를 월드에 못 박는다 — "예고는 뜬 자리에 그대로 있다"가 회피의 전제다(§3 "맞는 곳=보이는 곳"이
@@ -1038,12 +1415,20 @@ static func _telegraph_quad_tex() -> ImageTexture:
 #   한 번이라도 안 심으면 이전 패턴의 각·반지름이 남는다.
 func _apply_telegraph_geometry(spr: Sprite2D, pat: BossPatternDef, angle: float) -> void:
 	var is_cone := pat.shape == "cone"
-	var radius := maxf(pat.range, 0.0)
+	# 🔴 **캡슐의 반지름은 `range`가 아니라 `charge_sweep_radius`다** — 그 필드가 곧 호스트가
+	#   `boss_sweep`으로 확정하는 판정 반경이고(`combat_authority._on_boss_sweep`), 예고가 그것을
+	#   그려야 "맞는 곳 = 보이는 곳"이다. `range`를 쓰면 판정과 표시가 **다른 칸**에서 나와 갈라진다.
+	# 🔴 반길이 = 이동거리의 절반 — **돌진 종료 조건·지속 유도와 같은 한 필드**에서 나온다.
+	var is_capsule := pat.shape == "capsule"
+	var radius := maxf(pat.charge_sweep_radius if is_capsule else pat.range, 0.0)
+	var half_len := maxf(pat.charge_travel_max, 0.0) * 0.5 if is_capsule else 0.0
 	spr.texture = _telegraph_quad_tex()
 	spr.centered = true
 	spr.offset = Vector2.ZERO
 	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	spr.rotation = angle if is_cone else 0.0  # 원은 회전 불변 — 회전을 넣어도 그림이 같다
+	# 원은 회전 불변 — 회전을 넣어도 그림이 같다. ⚠ **캡슐은 반드시 돌려야 한다** — 안 돌리면
+	#   띠가 항상 가로로 누워 있고(오른→왼 회차에서 **차오름 방향만** 반대가 된다) 판정선과 갈라진다.
+	spr.rotation = angle if (is_cone or is_capsule) else 0.0
 	# 쿼드 한 변 = (반지름 + 소프트 폭 + 화면픽셀 마진)의 2배.
 	# 🔴 딱 지름으로 두면 원호의 상하좌우 끝에서 화면 픽셀 중심이 쿼드 밖으로 나가 그 픽셀이 아예
 	#   안 그려진다(= 판정 안인데 무예고). 여유는 표시용일 뿐 판정 기하가 아니다 — 셰이더는
@@ -1052,7 +1437,9 @@ func _apply_telegraph_geometry(spr: Sprite2D, pat: BossPatternDef, angle: float)
 	#   (= 2.0 + 1.41)는 격자 셀 크기와 그 반대각선에서 나온 값이라 격자가 없어지면 근거가 없다.
 	#   새 항 둘은 각각 ⑴ 알파 램프가 바깥으로 퍼지는 폭(`aa_px`) ⑵ 프래그먼트가 픽셀 **중심**에서만
 	#   생기는 데서 오는 화면 반픽셀(줌 1.5에서 0.33 월드px)이고, 후자를 1.0으로 넉넉히 잡았다.
-	var quad := 2.0 * (radius + TELEGRAPH_AA_PX + TELEGRAPH_QUAD_MARGIN_PX)
+	# ⚠ 캡슐도 **정사각 유지**(비균일 스케일 금지 — 정원이 타원이 된다, rules §3). 비용은
+	#   "반투명 쿼드 한 장 × 1.7초"뿐이라 그 문을 열 이유가 없다.
+	var quad := 2.0 * (half_len + radius + TELEGRAPH_AA_PX + TELEGRAPH_QUAD_MARGIN_PX)
 	# 텍스처가 2×2라 월드 한 변 = 2*scale → scale = quad/2. quad_px(월드 span)은 quad 그대로 넘긴다.
 	spr.scale = Vector2.ONE * (quad * 0.5)
 	var mat := spr.material as ShaderMaterial
@@ -1064,6 +1451,10 @@ func _apply_telegraph_geometry(spr: Sprite2D, pat: BossPatternDef, angle: float)
 	mat.set_shader_parameter(&"radius_px", radius)
 	# 원 = 각 제한 없음. PI를 넘기면 셰이더가 각 검사를 통째로 건너뛴다(is_strike_hit와 항등).
 	mat.set_shader_parameter(&"half_angle", pat.half_angle if is_cone else PI)
+	# 🔴 **무조건 심는다(캡슐 아니면 0.0)** — Telegraph 노드는 재사용되므로 조건부로 심으면
+	#   횡단 다음의 **원 예고가 캡슐로 그려진다**(에러 없음). 이 변경에서 가장 조용히 깨지는 한 줄이다.
+	#   0.0은 셰이더에서 원·콘과 **비트 단위 항등**이다(그 파일 헤더의 증명).
+	mat.set_shader_parameter(&"half_len_px", half_len)
 	mat.set_shader_parameter(&"aa_px", TELEGRAPH_AA_PX)
 	mat.set_shader_parameter(&"border_px", TELEGRAPH_BORDER_PX)
 	mat.set_shader_parameter(&"fill_color", TELEGRAPH_FILL)
@@ -1098,6 +1489,9 @@ func _show_telegraph_visual(pat: BossPatternDef, center: Vector2, angle: float) 
 	_telegraph_total_s = _telegraph_duration(pat)   # 차오름 분모 = 표시 지속과 **같은 값**(§3)
 	_telegraph_left = _telegraph_total_s
 	_telegraph_mat = _telegraph.material as ShaderMaterial
+	# 단계 리셋 — 이 예고는 (다시) 「예고 구간」에서 시작한다. 캡슐이면 만료 시 돌진 구간으로 넘어간다.
+	_telegraph_phase = 0
+	_telegraph_pat = pat
 
 
 # --- 애니 표시 경로 (호스트/게스트 공용 — 판정과 무관) ---

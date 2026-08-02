@@ -75,10 +75,29 @@ const G_PICK_REQ := "pickreq"         # {k, did}      게스트→호스트: 픽
 const G_PICK_OK := "pickok"           # {k, did, pid} 호스트→전원: 픽업 확정. did despawn, pid==my_id인 클라만 인벤 반영(collect_drop)
 
 # 보스전 (2026-07-23). 상태 확정 권한 = 호스트 (§1·§3). 전부 저빈도(패턴/생성당 1회) → relay-worker 로그 제외 불필요.
-const G_BOSS_ATK := "batk"            # {k, eid, p, x, y, a} 호스트→전원: 보스 패턴 텔레그래프. p=패턴 id·(x,y)=판정 중심·a=각(rad). 타격 시각·판정 반경은 패턴 telegraph_s/range를 각자 로컬 리졸브 (matk 규약 확장)
+const G_BOSS_ATK := "batk"            # {k, eid, p, x, y, a, i} 호스트→전원: 보스 패턴 텔레그래프. p=패턴 id·(x,y)=판정 중심·a=각(rad). 타격 시각·판정 반경은 패턴 telegraph_s/range를 각자 로컬 리졸브 (matk 규약 확장). i = 돌진 **회차 인덱스**(0부터, 2026-08-02) — 게스트가 회차별 예고 단축을 같은 함수로 재현하는 데만 쓴다. 🔴 **없으면 0으로 폴백 = 도입 전과 항등**(구버전 호스트 호환). ⚠ 수치(단축 배율)는 안 싣는다 — 각자 로컬 `CombatMath.charge_telegraph_scale`로 리졸브한다(수치 무전송 = peer_weapon_id·projectile_params와 같은 철학)
 const G_SWAMP := "swamp"              # {k, s, sw}    호스트→전원: 늪 존 스폰. s=stage_token(유령 스폰 차단, G_DROP "s" 미러)·sw=[[sid,x,y,r,ttl,slow], …] sid=늪 고유 id·(x,y)=중심·r=반경·ttl=지속(초, 로컬 despawn)·slow=늪 안 이동 배율
-const G_ROCK := "rock"                # {k, s, rk}    호스트→전원: 낙석(P4) 바위 지형 스폰. s=stage_token(유령 스폰 차단, G_SWAMP "s" 미러)·rk=[[rid,x,y,r,ttl], …] rid=바위 고유 id·(x,y)=중심·r=충돌 반경·ttl=지속(초, 로컬 despawn). 판정 없음(지형)·돌진 충돌은 호스트 로컬(각 클라 자기 플레이어도 로컬 충돌) — G_SWAMP 미러(장판 대신 정적 몸)
+# {k, s, rid} 호스트→전원: 바위 파괴(돌진이 부수고 지나감 / 박아서 그로기). s=stage_token(G_ROCK 미러).
+# 🔴 **없으면 게스트 화면에 바위가 `rock_ttl`(10초)까지 서 있고 그 자리가 실제로 막힌다**(정적 몸 ·
+#   `collision_layer 1`) — 호스트는 통과하는데 게스트는 길이 막힌 것으로 본다(netreview I-1).
+#   판정 영향은 0이지만(바위는 데미지가 없다) **협동 좌표가 갈라진다** — 한 명이 "왼쪽으로 빠져"라고
+#   말하는데 상대 화면엔 벽이 있다. 에러 없음 · 호스트 화면에선 완벽 · 10초 뒤 저절로 사라져
+#   재현 신고가 애매해지는, 이 프로젝트가 가장 비싸게 값을 치른 결함 클래스와 **같은 모양**이다.
+# ⚠ 선재 결함이지만 횡단 돌진이 규모를 바꿨다 — P3는 판당 바위 1개였는데 횡단은 `charge_repeat`
+#   회 × 아레나 가로 전폭이라 **레인 위 바위를 전부** 부순다(낙석 P4와 페이즈2에서 상시 공존).
+# **수치는 안 싣는다(rid만)** — 반경·ttl은 각자 이미 G_ROCK으로 받아 들고 있다(§3 철학).
+const G_ROCK_BREAK := "rbrk"
+const G_ROCK := "rock"              # {k, s, rk}    호스트→전원: 낙석(P4) 바위 지형 스폰. s=stage_token(유령 스폰 차단, G_SWAMP "s" 미러)·rk=[[rid,x,y,r,ttl], …] rid=바위 고유 id·(x,y)=중심·r=충돌 반경·ttl=지속(초, 로컬 despawn). 판정 없음(지형)·돌진 충돌은 호스트 로컬(각 클라 자기 플레이어도 로컬 충돌) — G_SWAMP 미러(장판 대신 정적 몸)
 const G_BOSS_PHASE := "bphase"        # {k, ph}       호스트→전원: 페이즈 전환 표시 큐(연출/배너용). 정본 판정은 호스트 hp — 표시 동기화일 뿐
+# {k, on} 호스트→전원: 보스 패턴이 **넓은 화면**을 요구하는가 (표시 전용 · 판정 0 · 2026-08-02).
+# 🔴 **시간이 아니라 신호인 이유**: 횡단 돌진은 10~12초이고 그 길이가 왕복 회차·회차별 예고 단축·
+#   지연 보상에 따라 **가변**이다. 기존 카메라의 `WIDE_HOLD_S`(2.4s 고정)로는 원리적으로 못 맞춘다.
+# 🔴🔴 **`RTC_FAST_KINDS`에 절대 넣지 마라** — 종료는 "다음 패킷이 곧 덮어쓰는 것"이 아니라 **사건**이다.
+#   한 통 유실 = **카메라가 영영 안 돌아온다**(줌아웃에 갇힌다). ✅ 그 집합은 allowlist라 아무것도
+#   안 하면 safe이고, `test_net_transport_auto`가 집합을 단정하므로 실수로 넣으면 빨개진다.
+# ⚠ eid·패턴 id를 안 싣는다 — 카메라는 "누구의 패턴인가"가 아니라 "이 화면에서 보여줄 가치가
+#   있는가"만 본다(`camera_rig.gd` 주석이 정본). 실을 이유가 생기면 그때 넓힌다.
+const G_BOSS_VIEW := "bview"          # {k, on}
 const G_BOSS_SPRAY := "bspray"        # {k, eid, p, c} 호스트→전원: 물 뿌리기 N개 원 착탄 예고. p=패턴 id(반경·telegraph_s 로컬 리졸브)·c=[[x,y], …] 착탄 중심들. 판정은 호스트가 착탄점마다 is_strike_hit(표시 전용 메시지)
 
 # ── 코옵 파훼 기믹 (소울 브레이크: 둘이 동시에 F 눌러 시전 취소) ──
