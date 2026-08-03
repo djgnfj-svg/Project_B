@@ -1263,6 +1263,14 @@ const SWEEP_SCALLOP_MAX_PX := 2.0
 #   물리 틱을 바꾸면 여기도 고친다(안 고치면 상한만 조용히 틀려진다).
 const SWEEP_STEP_FPS := 60.0
 
+# 🔴 돌진 1회가 떨어뜨리는 낙석 수 상한. **근거는 면적이 아니라 「바위는 위협이 아니라 지형」이라는
+#   성질이다** — 낙석은 데미지 판정이 없고(`_fire_strike` 주석: 지형일 뿐이다) `rock_ttl` 동안 남는
+#   **정적 몸**이다. 즉 개수를 늘려도 위험이 커지는 것이 아니라 **아레나가 좁아진다**: 회차마다
+#   쌓이므로 실제 최대치는 이 값 × `charge_repeat`이고, 보스방은 768×416px밖에 안 된다.
+#   ⚠ 상한을 넘기면 「예고를 읽고 구른다」(GDD §5)가 **구를 자리가 없어서** 불가능해진다 —
+#   예고는 정상적으로 뜨고 판정도 정확하므로 **화면에 이유가 안 드러난다.**
+const MAX_DASH_ROCKS_PER_RUN := 3
+
 
 # 회차별 예고 배율 — 호스트(`_telegraph_hold_s` 확정)와 게스트(`_telegraph_duration`)가 **같은
 # 함수**를 지나야 「다 찼다 = 지금 맞는다」가 양쪽 화면에서 동시에 성립한다.
@@ -1301,6 +1309,36 @@ static func max_charge_speed(sweep_radius: float) -> float:
 	var r := maxf(sweep_radius, 0.01)
 	var inner := r - SWEEP_SCALLOP_MAX_PX
 	return 2.0 * SWEEP_STEP_FPS * sqrt(maxf(r * r - inner * inner, 0.0))
+
+
+# 돌진 1회가 **실제로** 지속되는 물리 프레임 수.
+# 🔴🔴 **`charge_dash_duration_s`와 헷갈리지 마라 — 그쪽은 타임아웃 상한이지 지속이 아니다.**
+#   돌진은 타이머가 아니라 **이동 거리**로 끝나고(`boss.gd`의 `State.CHARGE_DASH`), 프레임당 전진이
+#   `charge_speed ÷ SWEEP_STEP_FPS`로 양자화돼 있어 실제 종료는 그 나눗셈의 **올림 프레임**이다.
+#   ⚠ 리드가 2026-08-03에 정확히 이것을 혼동해 낙석 간격을 **2배로 잘못** 잡았다(모델 2개 · 실제
+#   1개). 타임아웃(`charge_dash_duration_s`)까지 사는 것은 **몸이 막혔을 때뿐**인데 `breaks_rock`
+#   패턴은 바위를 부수고 아레나 벽은 `_cross_segment`가 `body_radius` 안쪽으로 잡아 안 닿는다 —
+#   즉 정상 경로에서 그 상한은 **도달 불가**이고, 그것을 지속으로 쓰면 튜닝 손잡이가 죽는다.
+static func charge_dash_frames(pat: BossPatternDef) -> int:
+	if pat == null:
+		return 0
+	var step := maxf(pat.charge_speed, 1.0) / SWEEP_STEP_FPS
+	return int(ceil(maxf(pat.charge_travel_max, 0.0) / step))
+
+
+# 돌진 1회가 실제로 떨어뜨리는 낙석 수 — `boss._tick_dash_rockfall`의 카운트다운을 **프레임 산수로
+# 독립 유도**한다(첫 개는 한 간격 뒤에 떨어진다).
+# 🔴 코드(float 감산)와 테스트(정수 프레임)가 **다른 모델로 같은 답에 도달**하는 것이 요점이다 —
+#   같은 식을 공유하면 검출력이 0이 된다(§3 「코드와 테스트가 같은 모델을 공유하면」 판례).
+# 🔴 `boss.gd`가 아니라 여기 있는 이유 = 그 파일은 씬 글루라 `-s`가 preload를 못 해 `data/enemies`
+#   전수 트립와이어를 만들 수 없다(리뷰 J-1·J-2와 같은 규율).
+static func dash_rock_count(pat: BossPatternDef) -> int:
+	if pat == null or pat.dash_rock_interval <= 0.0:
+		return 0
+	var step_frames := int(ceil(pat.dash_rock_interval * SWEEP_STEP_FPS))
+	if step_frames <= 0:
+		return 0
+	return int(charge_dash_frames(pat) / step_frames)
 
 
 # 실제 가리비 깊이(px) — 트립와이어가 **값을 찍는** 용도(실패 조건이 아니다). 속도를 바꾼 사람이

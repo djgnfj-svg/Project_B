@@ -73,6 +73,17 @@ extends Resource
 # 🔴 `shatter()`가 콜리전을 즉시 끄므로 통과는 공짜지만, **수직 고정이 없으면 한 프레임 슬라이드로
 #   「판정 ⊆ 표시」가 깨진다.** 고정은 `move_and_slide()` **뒤** · `boss_sweep.emit` **앞**(순서가 계약).
 @export var breaks_rock: bool = false
+# 질주(CHARGE_DASH) 중 아레나 랜덤 위치에 낙석을 떨어뜨리는 간격(초). 0 = 없음 = **완전 항등**
+# (기존 P3·spray는 한 픽셀도 안 바뀐다).
+# 🔴 **반경·수명은 위의 `rock_radius`/`rock_ttl`을 그대로 재사용한다 — 전용 필드를 만들지 마라.**
+#   같은 바위인데 크기를 두 곳에서 정하면 다음 튜닝에서 갈라지고, `G_ROCK` 페이로드는 이미 그 둘을
+#   싣고 있어 새 필드는 곧 신뢰 표면이다(게이트 바위의 「ttl 한 축」 판단과 같은 이유).
+# 🔴🔴 **`rock_ttl > 0`이 계약이다** — `BossRock.is_dash_target(ttl)`가 `ttl > 0`으로 「돌진 표적인가」와
+#   「영구인가」를 **동시에** 정하므로, 0 이하를 넘기면 낙석이 **보스방 진입 게이트와 같은 영구 지형**이
+#   되어 아레나에 영구히 쌓인다. 전수 트립와이어가 지킨다.
+# 🔴 개수 상한 = `CombatMath.dash_rock_count()` ≤ `MAX_DASH_ROCKS_PER_RUN`. 간격을 줄이면 위험이
+#   커지는 것이 아니라 **구를 자리가 없어진다**(낙석은 판정 없는 정적 몸이다).
+@export var dash_rock_interval: float = 0.0
 
 # 🔴 예고 텍스처 필드는 없다 (2026-07-27 제거). 표시 기하는 위의 shape·range·half_angle에서
 # `boss.gd`의 `_apply_telegraph_geometry()` + `boss_telegraph.gdshader`가 **직접 그린다** — 텍스처에

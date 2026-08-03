@@ -123,6 +123,14 @@ const ROCK_BREAK_SHAKE := 2.4
 # 접근 도달 판정 여유(px) — 이 안에 들면 시작단에 **스냅**한다. 스냅이 계약인 이유는
 # `_enter_charge_approach` 주석 참조(각이 정확히 0/PI여야 판정선과 예고 띠가 겹친다).
 const CROSS_ARRIVE_EPS := 3.0
+# 질주 중 낙석 자리를 뽑는 시도 횟수 — 돌진선을 비켜난 점이 나올 때까지. 실패하면 그 개는 안 떨어진다.
+# ⚠ 상한이 있는 것이 계약이다 — 아레나가 좁거나 돌진선이 한가운데면 조건을 만족하는 점이 아예
+#   없을 수 있고, while로 돌면 그 프레임에 **물리 스레드가 멈춘다**(에러 없이 게임이 선다).
+const ROCK_SPOT_TRIES := 12
+# 낙석이 플레이어에게서 최소한 이만큼(+ 바위 반경) 떨어져 떨어진다 — 낙하 연출(`FALL_TIME` 0.28s)
+# 동안은 **그림이 없는데 몸은 있는** 구간이라, 발밑에 꽂히면 "안 보이는 벽"이 된다.
+# ⚠ 걸어서 접근하는 몫도 덮는다 — 전사 이속 100px/s × 0.28s ≈ 28px.
+const PLAYER_ROCK_CLEAR_PX := 34.0
 
 @export var eid: String = ""
 @export var def: BossDef
@@ -180,6 +188,9 @@ var _charge_start: Vector2 = Vector2.ZERO  # 이번 돌진 시작 위치 — 이
 #   `_charge_idx`는 패턴 **선택 시 0**으로 리셋되고 왕복마다 +1 된다. 게스트는 G_BOSS_ATK "i"로 받는다.
 var _charge_idx: int = 0
 var _charge_dir: Vector2 = Vector2.RIGHT   # 이번 돌진의 진행 방향(단위) — 선분 고정·애니 방향의 단일 소스
+# 질주 중 낙석 카운트다운(호스트 전용). 🔴 **회차마다 `_enter_charge_dash`가 재장전한다** — 안 하면
+#   직전 회차의 잔여가 넘어와 첫 개가 즉시 떨어지거나(0 근처) 한 개를 통째로 건너뛴다.
+var _dash_rock_accum: float = 0.0
 var _cross_start: Vector2 = Vector2.ZERO   # 이번 회차 횡단 시작단(아레나 가장자리)
 var _cross_end: Vector2 = Vector2.ZERO     # 반대편 끝 — `_begin_windup`에 이걸 넘기면 각이 정확히 0/PI가 된다
 var _home_pos: Vector2 = Vector2.ZERO      # _ready 위치 — `arena_rect` 메타가 없을 때의 폴백 기준(하네스)
@@ -188,8 +199,11 @@ var _home_pos: Vector2 = Vector2.ZERO      # _ready 위치 — `arena_rect` 메�
 # 흩으면 일곱 번째에서 빠진다 → 상태를 **매 프레임 재주장**하고 이 변수가 중복 emit을 막는다.
 var _wide_on: bool = false
 # 예고 단계 — 0 = 예고(WINDUP) · 1 = 돌진 중 연장(캡슐 전용, 설계 §7-2).
-# 🔴 돌진 내내 예고를 켜 두는 것이 이 패턴의 핵심 처방이다: 속도 1200에서 게스트 화면의 보스 몸은
-#   304~350px(스윕 반경의 4.2~4.9배) 뒤처지므로 **정확한 표시가 예고 도형 하나뿐**이 된다.
+# 🔴 돌진 내내 예고를 켜 두는 것이 이 패턴의 핵심 처방이다: **속도 1500**에서 게스트 화면의 보스 몸은
+#   380~437px(스윕 반경 72의 **5.3~6.1배**) 뒤처지므로 **정확한 표시가 예고 도형 하나뿐**이 된다.
+#   내역 = 송신 주기(10Hz) 150 + 편도 70~108ms 105~162 + 원격 lerp(1/12s) 125.
+#   ⚠ 2026-08-03에 1200 → 1500으로 올리며 재산정했다(옛 값 304~350 = 4.2~4.9배). **속도를 바꾸면
+#   이 수치도 같이 고쳐라** — 낡은 채 두면 다음 사람이 "예고 하나뿐"의 근거를 과소평가한다.
 var _telegraph_phase: int = 0
 var _telegraph_pat: BossPatternDef = null  # 지금 그려져 있는 예고의 패턴(호스트/게스트 공용 — 단계 전환이 읽는다)
 var _c1_frames: SpriteFrames = null    # C1 코옵 전용 클립 시트(roar/grab/groggy — mino_boss_c1) 지연 로드
@@ -950,6 +964,11 @@ func _host_ai(delta: float) -> void:
 			_pin_to_dash_line()
 			if Net.is_host():
 				EventBus.boss_sweep.emit(global_position, _strike_angle, _cur_pattern, _charge_seq)
+				# 🔴 스윕 **뒤** · 바위 충돌 조회 **앞**이 자리다. 뒤에 두면 이번 프레임에 갓 스폰한
+				#   바위가 `_dash_rock_collision`의 후보가 될 여지를 남긴다(물리 갱신이 다음 프레임이라
+				#   지금은 무해하지만, 그 무해함이 `add_child` 타이밍이라는 **다른 파일의 성질**에
+				#   기대게 된다). 순서로 못 박아 두면 그 의존이 아예 없다.
+				_tick_dash_rockfall(delta)
 			var rock: Node = _dash_rock_collision()
 			if rock != null and not _cur_pattern.breaks_rock:
 				_enter_charge_hit(rock)              # 🪨 바위 박음 → 회전 멈춤 + 그로기 처벌창(P3 현행)
@@ -1176,6 +1195,7 @@ func _enter_charge_dash() -> void:
 	#   여기서 식을 다시 쓰지 마라 — 옛 고정 상수(1.0s)로 되돌아가면 속도를 낮추는 순간 **조용히
 	#   미완주**가 되고(예고 띠는 끝까지 그려져 있다), `maxf`를 빼면 P3가 1.0 → 0.92s로 짧아진다.
 	_state_left = CombatMath.charge_dash_duration_s(_cur_pattern)
+	_dash_rock_accum = _cur_pattern.dash_rock_interval   # 첫 낙석은 한 간격 뒤 (0이면 tick이 즉시 return)
 	_state = State.CHARGE_DASH
 	if _cur_pattern.charge_spin_s > 0.0:
 		_start_spin_axe()                  # 회전 시트(mino_spin_full) spin 클립으로 몸통 통째 스왑
@@ -1189,8 +1209,9 @@ func _enter_charge_dash() -> void:
 			_face_dir = _dir_suffix(_charge_dir)
 			_play(&"walk")
 	# 🔴 **예고를 끄지 않는다(캡슐 한정)** — 돌진 내내 켜 두고 차오름만 재장전한다(설계 §7-2).
-	#   속도 1200에서 게스트 화면의 보스 몸은 304~350px(스윕 반경의 4.2~4.9배) 뒤처지므로
-	#   **정확한 표시가 예고 도형 하나뿐**이 된다. 단계 전환 자체는 `_advance_telegraph_phase()`가
+	#   **속도 1500**에서 게스트 화면의 보스 몸은 380~437px(스윕 반경의 5.3~6.1배) 뒤처지므로
+	#   **정확한 표시가 예고 도형 하나뿐**이 된다(내역은 `_telegraph_phase` 선언부가 정본).
+	#   단계 전환 자체는 `_advance_telegraph_phase()`가
 	#   타이머 만료로 이미 했다(호스트/게스트 공용 경로 — 게스트는 이 함수를 아예 안 탄다).
 	if _cur_pattern.shape != "capsule":
 		_hide_telegraph()
@@ -1440,6 +1461,86 @@ func _spawn_auto_swamp() -> void:
 	var sid := "%s:swamp:%d" % [eid, _swamp_seq]
 	EventBus.swamp_spawn_local.emit(
 		[[sid, center.x, center.y, def.swamp_radius, def.swamp_ttl, def.swamp_slow_factor]])
+
+
+# --- 질주 중 낙석 (2026-08-03) — 횡단 돌진이 지나가는 동안 아레나에 바위가 떨어진다 ---
+
+# 🔴 **신규 네트워크 메시지·필드 0개** — 호스트가 좌표를 확정해 기존 `rock_spawn_local`에 실으면
+#   RockField가 로컬 스폰 + `G_ROCK` 브로드캐스트까지 한다(`_fire_strike`의 spray 낙석과 **같은 경로**).
+#   ⚠ 그래서 **`randf`가 게스트와 갈라질 수 없다** — 굴리는 것은 호스트뿐이고 게스트는 결과 좌표만
+#   받는다(결정론 RNG가 필요 없는 이유이자, 여기서 게스트가 자기 굴림을 하면 안 되는 이유다).
+# ⚠ 호스트 전용 경로다(호출부가 `Net.is_host()` 안이다) — 게스트는 이 함수를 아예 안 탄다.
+func _tick_dash_rockfall(delta: float) -> void:
+	if _cur_pattern == null or _cur_pattern.dash_rock_interval <= 0.0:
+		return   # 0 = 이 축을 안 쓰는 패턴 = 도입 전과 완전 항등
+	_dash_rock_accum -= delta
+	if _dash_rock_accum > 0.0:
+		return
+	_dash_rock_accum = _cur_pattern.dash_rock_interval
+	var spot := _pick_rock_spot()
+	if spot == Vector2.INF:
+		return   # 비켜설 자리가 없다 — 이번 개는 거른다(억지로 경로 위에 놓지 않는다)
+	_rock_seq += 1
+	# 튜플 = [rid, x, y, r, ttl] — `_fire_strike`의 낙석과 **같은 포맷·같은 시퀀스**(rid 충돌 없음).
+	EventBus.rock_spawn_local.emit([[
+		"%s:rock:%d" % [eid, _rock_seq], spot.x, spot.y,
+		_cur_pattern.rock_radius, _cur_pattern.rock_ttl]])
+
+
+# 낙석 자리 — 아레나 안 균일 랜덤, 단 **세 가지를 비켜난 곳**. 셋 다 "안 비키면 조용히 깨지는" 축이다.
+#
+# ⑴ 🔴 **이번 돌진선** — 경로 위에 놓으면 `breaks_rock`이 방금 만든 바위를 **같은 회차에** 부수므로
+#    (화면 흔들림까지 딸려 나온다) 장애물이 안 남는다 = 이 기능이 화면에서 사라진다.
+#    여유 = 스윕 반경 + 바위 반경이라 보스 몸이 스치지도 않는다.
+# ⑵ 🔴 **양쪽 가장자리 = 다음 회차의 횡단 시작단** — `_cross_segment`가 시작단을 `rect ± body_radius`의
+#    **x 위 한 점**으로만 잡으므로, 바위가 그 점을 덮으면 `to_start.length() <= CROSS_ARRIVE_EPS`(3px)가
+#    **원리적으로 성립 불가**가 되어 접근이 반드시 타임아웃한다 → `charge_repeat`이 조용히 잘린다
+#    (4회를 적어 뒀는데 2~3회만 돈다). 🔴 **호스트 화면에서만 "제자리걸음"으로 보이고 게스트에는
+#    단서가 아예 없다** — 접근 구간엔 예고도 상태기계도 없기 때문이다(netreview M-3).
+#    ⚠ 배제 폭을 `_cross_segment`와 **같은 유도**(`body_radius`)에서 뽑는다 — 상수를 새로 만들면
+#    그 함수가 시작단을 옮길 때 여기만 낡는다.
+# ⑶ 🔴 **플레이어 근처** — `BossRock`은 `_ready`에서 콜리전을 **즉시** 세우는데 스프라이트는 낙하
+#    연출(`FALL_TIME` 0.28s) 동안 64px 위에 있다. 즉 그 0.28초는 **그림 없는 정적 몸**이 자리를
+#    막는다. P4(spray)는 착탄 예고 N개 원이 그 구간을 덮어 주지만 **질주 낙석은 예고가 0개**라
+#    "안 보이는 벽에 막힌다"가 된다(netreview M-2·m-3). 좌표는 판정 기준과 같은 `net_anchor`로 본다.
+#
+# ⚠ 실패(INF)는 정상 경로다 — 못 찾으면 **안 떨어뜨린다**. 개수는 손맛이고, 위 셋을 어기는 것은
+#   전부 계약 위반이라 "억지로 놓는 것"이 항상 더 나쁘다.
+# ⚠ 무한 직선까지의 거리로 잰다(선분이 아니라). 횡단은 아레나를 통째로 가로지르므로 둘이 같고,
+#   식이 더 짧아 다음 사람이 잘못 읽을 여지가 없다.
+func _pick_rock_spot() -> Vector2:
+	if _cur_pattern == null:
+		return Vector2.INF
+	var rect := _arena_rect()
+	var r := maxf(_cur_pattern.rock_radius, 1.0)
+	var body := def.body_radius if def != null else 0.0
+	var clear := _cur_pattern.charge_sweep_radius + r
+	var player_clear := r + PLAYER_ROCK_CLEAR_PX
+	# x는 양쪽 시작단(rect ± body_radius)에서 `body + r`만큼 안쪽으로 — ⑵.
+	var lo := Vector2(rect.position.x + body + body + r, rect.position.y + r)
+	var hi := Vector2(rect.end.x - body - body - r, rect.end.y - r)
+	if lo.x >= hi.x or lo.y >= hi.y:
+		return Vector2.INF   # 아레나가 좁다(하네스 폴백 rect) — 조용히 건너뛴다
+	var players := get_tree().get_nodes_in_group("player")
+	for _i in ROCK_SPOT_TRIES:
+		var p := Vector2(randf_range(lo.x, hi.x), randf_range(lo.y, hi.y))
+		if absf((p - _charge_start).cross(_charge_dir)) < clear:
+			continue                      # ⑴ 돌진선 위
+		if _is_near_player(p, player_clear, players):
+			continue                      # ⑶ 플레이어 위
+		return p
+	return Vector2.INF
+
+
+# ⑶의 술어 — 살아 있는 플레이어 중 하나라도 이 반경 안이면 true. 판정 기준과 같은 `net_anchor`로 본다.
+func _is_near_player(p: Vector2, clear: float, players: Array) -> bool:
+	for node: Node in players:
+		var pl := node as PlayerActor
+		if pl == null or not pl.is_alive():
+			continue
+		if p.distance_to(pl.net_anchor()) < clear:
+			return true
+	return false
 
 
 # 물뿌리기 착탄점 산개(호스트 확정) — 대상 주변 spread 반경 원판 안 N개. 첫 발은 대상 위(확실한 압박),

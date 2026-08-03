@@ -275,6 +275,31 @@ func _check_charge_pattern(label: String, p: BossPatternDef) -> void:
 		_check(p.charge_approach_speed > 0.0,
 			"%s: 캡슐(횡단)은 가장자리 접근이 필요하다 — charge_approach_speed %.0f > 0"
 			% [label, p.charge_approach_speed])
+	# ⑹ 🔴 질주 중 낙석 — **세 가지가 전부 에러 없이 깨진다.**
+	_check(p.dash_rock_interval >= 0.0,
+		"%s: dash_rock_interval %.2f ≥ 0 — 음수면 매 프레임 떨어진다" % [label, p.dash_rock_interval])
+	if p.dash_rock_interval > 0.0:
+		# 🔴🔴 `ttl > 0`이 「돌진 표적인가」와 「영구인가」를 **동시에** 정한다(`BossRock.is_dash_target`).
+		#    0 이하면 낙석이 보스방 진입 게이트와 같은 **영구 지형**이 되어 아레나에 영구히 쌓인다.
+		_check(p.rock_ttl > 0.0,
+			"★%s: dash 낙석은 rock_ttl %.1f > 0이어야 한다 — 0 이하면 영구 지형(게이트 바위)이 된다"
+			% [label, p.rock_ttl])
+		_check(p.rock_radius > 0.0,
+			"%s: dash 낙석은 rock_radius %.1f > 0 — 0이면 몸이 없어 아무것도 안 막는다"
+			% [label, p.rock_radius])
+		# 🔴 개수 상한 — 늘려도 위험이 커지지 않고 **구를 자리가 없어진다**(낙석은 판정 없는 정적 몸).
+		var rocks := CombatMath.dash_rock_count(p)
+		# ⚠ **실제 지속**(거리 도달, 프레임 양자화)을 찍는다 — `charge_dash_duration_s`는 타임아웃
+		#    상한이라 정상 경로의 2배 가까이 되고, 그 숫자를 여기 찍으면 간격을 조이는 사람이
+		#    **개수를 2배로 오산한다**(리드가 2026-08-03에 정확히 그렇게 틀렸다).
+		var dash_s := float(CombatMath.charge_dash_frames(p)) / CombatMath.SWEEP_STEP_FPS
+		_check(rocks <= CombatMath.MAX_DASH_ROCKS_PER_RUN,
+			"★%s: 돌진 1회 낙석 %d개 ≤ 상한 %d (간격 %.2fs · 실지속 %.3fs · 회차 %d → 최대 %d개 누적)"
+			% [label, rocks, CombatMath.MAX_DASH_ROCKS_PER_RUN, p.dash_rock_interval,
+			dash_s, p.charge_repeat, rocks * maxi(p.charge_repeat, 1)])
+		print("       질주 낙석 %d개/회 × %d회 = 최대 %d개 누적 (반경 %.0f · %.1fs 잔존 · 실지속 %.3fs = %d프레임)"
+			% [rocks, maxi(p.charge_repeat, 1), rocks * maxi(p.charge_repeat, 1), p.rock_radius,
+			p.rock_ttl, dash_s, CombatMath.charge_dash_frames(p)])
 
 
 # 🔴 패턴 공통 계약 (돌진 여부 무관) — 회피 가능성·조준 모드·형태 전제.
@@ -296,6 +321,10 @@ func _check_pattern_common(label: String, p: BossPatternDef) -> void:
 		"★%s: shape=capsule은 is_charge 전용 — 아니면 띠만 그려지고 돌진이 없다" % label)
 	_check(not p.breaks_rock or p.is_charge,
 		"%s: breaks_rock은 is_charge 전용 — 아니면 아무 분기도 안 탄다" % label)
+	# 🔴 질주 낙석도 같은 부류다 — `_tick_dash_rockfall`은 `State.CHARGE_DASH` 안에서만 도므로
+	#   비-돌진 패턴에 적으면 **런타임 효과 0인데 아래 ⑹ 검사도 안 돈다**(그쪽 게이트가 `is_charge`다).
+	_check(is_equal_approx(p.dash_rock_interval, 0.0) or p.is_charge,
+		"%s: dash_rock_interval은 is_charge 전용 — 아니면 아무 분기도 안 탄다" % label)
 	# ⑷ 🔴 **P3 항등 확인** — 돌진인데 확장 필드를 안 쓴 패턴은 도입 전과 완전히 같아야 한다.
 	if p.is_charge and p.charge_approach_speed <= 0.0:
 		_check(p.charge_repeat == 1 and p.shape != "capsule" and is_equal_approx(p.charge_speedup, 0.0),
