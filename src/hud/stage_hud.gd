@@ -26,8 +26,6 @@ const TOAST_POP_SCALE := 1.28   # 획득 토스트 등장 팝 배율 (연출값)
 const TOAST_POP_TIME := 0.22    # 팝이 1.0으로 돌아오는 시간 (연출값)
 const TOAST_COLOR_UNLOCK := Color(1, 0.85, 0.3, 1)  # 도면·하위 직업 해금 = 금색
 const TOAST_COLOR_LEVEL := Color(0.6, 1, 0.7, 1)  # 레벨업 = 연두
-const PHASE_BANNER_TIME := 2.0  # 페이즈2 배너 표시 시간 (연출값)
-const CROSS_BANNER := "돌진 주의 — 붉은 띠를 피해라!"  # 횡단 돌진 경고 배너 텍스트 (boss_wide_view 동안)
 # 구르기 쿨 바 채움 — 준비됨(밝음)/쿨 중(가라앉음). 색조는 ui_theme(ROLL_FILL)에서 오고 여기선 **밝기만**
 # 곱한다(팔레트를 두 곳에 적지 않는다). 연출값이라 스크립트 const (rules §0 예외).
 const ROLL_COOLING_DIM := Color(0.55, 0.58, 0.62, 1)
@@ -56,7 +54,6 @@ const BLUEPRINT_TEX := preload("res://assets/sprites/items/blueprint.png")  # �
 var _toast_queue: Array[Dictionary] = []  # 대기 중 토스트 — 같은 프레임에 여러 건(획득+레벨업)이 와도 차례로 보인다
 var _toast_busy: bool = false  # 현재 한 건을 표시 중인가 (타이머 만료 시 다음 것으로 넘어감)
 var _toast_tween: Tween = null  # 획득 팝 — 연타 시 이전 트윈이 scale을 중간값에 두고 죽지 않게 kill 후 재생성
-var _phase_banner_seq: int = 0  # 페이즈 배너 자동 숨김 타이머 경합 가드 (다른 배너가 덮으면 안 지움)
 var _settings: CanvasLayer = null  # Esc 통합 메뉴 — 방 정보·핑/경로/fps·초대 복사·레벨·소리
 var _inv_panel: CanvasLayer = null  # I키 인벤 창 — HUD가 무는 조합(어디서나 열림)
 var _debug_panel: CanvasLayer = null  # F1 디버그 창 — 게이트가 닫혀 있으면 null(만들지도 않는다)
@@ -140,13 +137,8 @@ func _ready() -> void:
 	EventBus.sub_job_unlocked.connect(_on_sub_job_unlocked)
 	# ⚠ 스킬 슬롯은 `_refresh_growth()` 안에서 함께 지어진다(메인 하위 직업이 그 둘의 공통 근거다).
 	_refresh_growth()
-	# 페이즈2 돌입 배너 — 호스트 확정, MobSync가 게스트에 G_BOSS_PHASE 중계. 잠깐 표시 후 자동 숨김.
-	EventBus.boss_phase_changed.connect(_on_boss_phase)
-	# 횡단 돌진 경고 — 광역 시야(boss_wide_view) on/off를 그대로 배너 on/off로 쓴다(2026-08-02).
-	# 🔴 **새 시그널·새 네트워크 필드 0** — 이 패턴은 이미 `boss_wide_view`를 호스트→게스트로 중계한다
-	#   (MobSync G_BOSS_VIEW). 카메라가 줌아웃하는 그 신호가 곧 "돌진이 온다"이므로 배너도 같은 훅을 탄다.
-	# 🔴 표시 전용 — 켜지면 경고 배너, 꺼지면(모든 출구가 `_set_wide(false)`로 모임) 지운다.
-	EventBus.boss_wide_view.connect(_on_boss_wide_view)
+	# ⚠ `boss_phase_changed`·`boss_wide_view` **구독은 2026-08-03에 끊었다** — 보스 안내 배너 삭제
+	#   (근거는 아래 `_show_banner` 위 주석). 시그널 자체는 카메라·중계가 계속 쓴다.
 	# 마지막 칸 클리어 = 챕터 완주 — 각 클라가 자기 GameState(G_SCENE 검증으로 동기)로 판별
 	EventBus.stage_cleared.connect(func() -> void: _show_banner(
 		"챕터 클리어! 마을로 귀환합니다" if GameState.is_last_stage() else "스테이지 클리어!"))
@@ -547,31 +539,17 @@ func _disp(name: String, fallback: String) -> String:
 	return name if not name.is_empty() else fallback
 
 
-# 페이즈2 돌입 배너 — 상태 배너(관전/클리어/전멸)와 같은 _banner 노드 재사용, 잠시 후 자동 숨김.
-# 자동 숨김은 그 사이 다른 배너가 텍스트를 덮지 않았을 때만(seq + 텍스트 확인) — 클리어/관전 배너 보존.
-# 횡단 돌진 경고 배너 — `boss_wide_view`(호스트→게스트 중계) on/off를 그대로 켜고 끈다. 표시 전용.
-# 🔴 끌 때는 **내가 띄운 텍스트일 때만** 지운다 — 그 사이 클리어/전멸/관전 배너가 덮었으면 보존한다
-#   (`_on_boss_phase`의 자동 숨김과 같은 관용구). 켤 때는 관전 배너(사망)를 덮지 않는다 — 죽었으면
-#   돌진 경고가 무의미하고 관전 안내가 더 중요하다.
-func _on_boss_wide_view(active: bool) -> void:
-	if active:
-		if _banner.visible and _banner.text.begins_with("관전"):
-			return
-		_show_banner(CROSS_BANNER)
-	elif _banner.visible and _banner.text == CROSS_BANNER:
-		_banner.visible = false
-
-
-func _on_boss_phase(phase: int) -> void:
-	if phase < 2:
-		return
-	_show_banner("페이즈 2!")
-	_phase_banner_seq += 1
-	var seq := _phase_banner_seq
-	get_tree().create_timer(PHASE_BANNER_TIME).timeout.connect(
-		func() -> void:
-			if is_instance_valid(_banner) and seq == _phase_banner_seq and _banner.text == "페이즈 2!":
-				_banner.visible = false)
+# 🔴 **보스 전투 안내 배너는 2026-08-03에 삭제했다 — 되살리지 마라**(사용자 지시:
+#   *"텍스트 뜨는 것도 다 지워줘, 알아서 보고 피하게"*). 지운 것 둘:
+#     ⑴ 「돌진 주의 — 붉은 띠를 피해라!」 (`boss_wide_view` 구독)
+#     ⑵ 「페이즈 2!」 (`boss_phase_changed` 구독)
+#   위협은 **화면이 말한다** — 붉은 띠 예고 도형·차오름·광역 줌아웃이 그 역할이고, 글자는 그것을
+#   읽는 습관을 오히려 늦춘다(GDD §5 기믹 원칙 = 예고를 **보고** 피한다).
+# 🔴 **시그널 자체는 살아 있다 — HUD 구독만 끊었다.** `EventBus.boss_wide_view`는 카메라 줌아웃
+#   (`camera_rig`)과 `mob_sync`의 `G_BOSS_VIEW` 중계가 쓰고, `EventBus.boss_phase_changed`는
+#   `mob_sync`의 `G_BOSS_PHASE` 중계와 시험장 램프가 쓴다. 지우면 광역 시야가 죽는다.
+# ⚠ `$Banner` 노드와 `_show_banner`는 **유지**다 — 클리어/전멸/관전은 게임 진행 상태라 대체 신호가
+#   없다(그 셋은 패턴 안내가 아니다).
 
 
 # 내 HP 바 분모 — 🔴 `player._apply_max_hp()`와 **같은 유도**(직업 기본 + 착용 장비 체력)를 쓴다.
