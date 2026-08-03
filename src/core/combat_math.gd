@@ -1341,6 +1341,65 @@ static func dash_rock_count(pat: BossPatternDef) -> int:
 	return int(charge_dash_frames(pat) / step_frames)
 
 
+# 목표점으로 다가가는 이번 프레임 속도 — **마지막 한 걸음을 잔여 거리로 clamp한다.**
+# 🔴🔴 **clamp가 없으면 「도착 판정 창」이 프레임 스텝보다 좁을 때 목표를 영원히 못 맞힌다.**
+#   등속 접근은 잔여 거리를 `speed·delta`씩 깎으므로 창(ε)에 들어가려면 `d₀ mod (speed·delta)`가
+#   `[0, ε]` 또는 `[speed·delta − ε, speed·delta]`에 있어야 하고, 그 밖이면 목표를 **지나쳐 되돌아오며
+#   두 값 사이를 진동**한다. 실측(2026-08-03): 횡단 접근 800px/s → 프레임당 13.33px vs 창 3px에서
+#   **55%가 도달 실패** → 타임아웃 → 패턴이 발동만 하고 사라진다(화면엔 아무 일도 안 일어난다).
+# 🔴 **창(ε)을 키워서 고치지 마라 — 그게 이 결함을 만든 방식이다.** ε을 `speed·delta`의 미러로 두면
+#   ⑴ 최대 한 프레임분(13px)의 **순간이동**이 생기고 ⑵ 속도를 바꿀 때마다 창이 따라와야 하는데
+#   사람이 그 미러를 지킨다(실제로 600 → 800으로 올렸을 때 안 따라와 실패율이 40% → 55%가 됐다).
+#   clamp는 잔여 거리를 **단조 감소**시켜 도달을 산수로 보장하므로 미러 자체가 생기지 않는다.
+# ⚠ 대가는 도달이 최대 1프레임 늦는 것뿐이다.
+static func approach_velocity(to_target: Vector2, speed: float, delta: float) -> Vector2:
+	var d := to_target.length()
+	if d <= 0.0 or delta <= 0.0:
+		return Vector2.ZERO
+	return (to_target / d) * minf(maxf(speed, 1.0), d / delta)
+
+
+# 🔴 이 패턴의 예고는 **띠(캡슐)** 여야 하는가 = 위협이 「이동하는 원」인가.
+#
+# 🔴🔴 **부채꼴로는 이동 원을 원리적으로 덮을 수 없다.** apex에서 콘의 반폭이 0이므로, 경로 위
+#   거리 t의 지점에서 콘이 반경 r 원을 품으려면 `t·sin(half_angle) ≥ r`이어야 하는데 동시에
+#   끝단이 `t + r ≤ range`도 만족해야 한다. P3 실측(r=72 · half_angle=0.3 · range=260)에서
+#   앞 조건은 t ≥ 243.6, 뒤 조건은 t ≤ 188 — **해가 없다.** 즉 경로 전 구간이 과소예고이고,
+#   최악은 apex 주변(보스 옆·뒤 72px)이 통째로 무예고다 = §3이 금지한 **「표시 < 판정」**.
+#   `boss_pattern_def.gd`가 캡슐을 만들며 이미 못 박은 결론인데 **P3만 마이그레이션이 안 됐다.**
+#
+# 🔴 **`shape` 문자열로 이 축을 판정하지 마라.** 그 필드는 애니 선택(`_play_dash_sheet` vs
+#   `play_spin_clip`) · 돌진선 핀(`_pin_to_dash_line`) · 표시 기하 **세 축의 공용 키**라,
+#   `.tres`에서 `cone` → `capsule`로 바꾸면 여섯 분기가 동시에 켜진다: 좌우 횡단 전용 시트가
+#   임의 각 돌진에 물리고, 회전 클립과 겹쳐 재생되고, P3가 명시적으로 배제한 돌진선 핀이 켜져
+#   「바위에 박으면 옆으로 미끄러진다」는 연출 계약이 사라진다. 표시 축만 떼어 여기 둔다.
+#
+# 🔴 이 함수가 `boss.gd`가 아니라 여기 있는 이유 = 그 파일은 씬 글루라 `-s`가 preload를 못 해
+#   `data/enemies` 전수 트립와이어를 만들 수 없다(리뷰 J-1·J-2). 위 부등식은 **데이터가 만족해야
+#   하는 것**이므로 반드시 여기서 유도한다.
+static func is_band_telegraph(pat: BossPatternDef) -> bool:
+	return pat != null and pat.is_charge and pat.charge_sweep_radius > 0.0
+
+
+# 🔴 **`boss_sweep`이 실제로 나가는 시간**(초) = 띠 예고를 켜 두어야 하는 시간과 **같은 값**이어야 한다.
+#   그 둘이 갈라지면 차이만큼 **무예고 스윕**이 된다(§3이 금지한 「표시 < 판정」의 시간축 형태).
+#
+# 🔴 종료 조건이 둘이라 갈래가 둘이다(`boss.gd`의 `State.CHARGE_DASH`):
+#   ⑴ `charge_spin_s > 0` → 도달 후에도 제자리 회전을 유지하므로 **타이머**(`charge_dash_duration_s`)가 끝낸다.
+#   ⑵ `charge_spin_s <= 0` → **이동 거리 도달**이 끝낸다 = 프레임 양자화된 `charge_dash_frames`.
+#
+# ⚠ 옛 유도 `maxf(charge_travel_s, charge_spin_s)`는 ⑵에서 **한 프레임 짧았다**(횡단 실측 0.428 vs
+#   실제 0.433) — 이동 시간을 연속값으로 쟀기 때문이다. 그 5ms가 곧 마지막 프레임의 무예고 스윕이다.
+# ⚠ ⑴에 `charge_dash_duration_s`를 쓰는 것이 옳다 — 거기 섞인 `CHARGE_TIMEOUT_MARGIN`은 「여유」가
+#   아니라 그 갈래에서 **상태가 실제로 사는 시간**이고, 그동안 스윕이 계속 나간다.
+static func charge_sweep_duration_s(pat: BossPatternDef) -> float:
+	if pat == null:
+		return 0.0
+	if pat.charge_spin_s > 0.0:
+		return charge_dash_duration_s(pat)
+	return float(charge_dash_frames(pat)) / SWEEP_STEP_FPS
+
+
 # 실제 가리비 깊이(px) — 트립와이어가 **값을 찍는** 용도(실패 조건이 아니다). 속도를 바꾼 사람이
 # 숫자를 보게 만드는 것이 목적이다(§9-2 4c).
 static func sweep_scallop_px(sweep_radius: float, speed: float) -> float:

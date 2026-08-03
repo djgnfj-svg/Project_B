@@ -2089,6 +2089,36 @@ func _initialize() -> void:
 			and not CombatMath.TARGET_MODES.has("alternate"),
 		"TARGET_MODES = 구현된 모드만 — \"alternate\"는 4인 게이트(rules §2)와 함께 열린다")
 
+	# 🔴🔴 **접근 도달 불변식** — 어떤 (초기 거리 × 속도)에서도 유한 프레임에 도착 창 안에 든다.
+	#   등속 접근은 잔여 거리를 `speed·delta`씩 깎으므로, 창(ε)이 그 스텝보다 좁으면 창을 **건너뛰고**
+	#   목표 양옆을 진동한다 — 실측(2026-08-03) 횡단 접근 800px/s(프레임당 13.3px) vs 창 3px에서
+	#   **55%가 도달 실패** → 타임아웃 → 패턴이 발동만 하고 화면엔 아무 일도 안 일어났다.
+	#   `approach_velocity`의 잔여 clamp가 그것을 산수로 닫는다.
+	# 🔴 **검출력**: clamp를 빼고 `to_target.normalized() * speed`로 되돌리면 (150px, 800)에서
+	#   3.33 ↔ 10.0 진동으로 이 단정이 빨개진다.
+	var dt := 1.0 / 60.0
+	var eps := 3.0                     # boss.gd의 CROSS_ARRIVE_EPS와 같은 크기의 창
+	var arrive_ok := true
+	var worst_frames := 0
+	for spd: float in [600.0, 800.0, 1500.0]:
+		for d0: float in [3.333, 26.0, 150.0, 155.24, 449.7, 700.0]:
+			var pos := Vector2.ZERO
+			var target := Vector2(d0, 0.0)
+			var n := 0
+			while pos.distance_to(target) > eps and n < 600:
+				pos += CombatMath.approach_velocity(target - pos, spd, dt) * dt
+				n += 1
+			if pos.distance_to(target) > eps:
+				arrive_ok = false
+			worst_frames = maxi(worst_frames, n)
+	failures += _check(arrive_ok,
+		"★접근 도달: 잔여 clamp가 있으면 어떤 (거리 × 속도)에서도 유한 프레임에 창 안 (최대 %d프레임)"
+		% worst_frames)
+	# 항등성 — 먼 거리에서는 clamp가 안 걸려 등속 그대로여야 한다(도착 직전 한 걸음만 줄인다).
+	var far := CombatMath.approach_velocity(Vector2(500.0, 0.0), 800.0, dt)
+	failures += _check(is_equal_approx(far.length(), 800.0),
+		"★접근 항등: 잔여가 한 프레임분보다 멀면 속도를 안 깎는다 (%.1f == 800)" % far.length())
+
 	if failures == 0:
 		print("TEST_OK combat_math")
 		quit(0)

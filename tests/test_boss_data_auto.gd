@@ -275,7 +275,38 @@ func _check_charge_pattern(label: String, p: BossPatternDef) -> void:
 		_check(p.charge_approach_speed > 0.0,
 			"%s: 캡슐(횡단)은 가장자리 접근이 필요하다 — charge_approach_speed %.0f > 0"
 			% [label, p.charge_approach_speed])
-	# ⑹ 🔴 질주 중 낙석 — **세 가지가 전부 에러 없이 깨진다.**
+	# ⑹ 🔴🔴 **이동 판정을 가진 패턴의 예고는 반드시 「띠」로 리졸브돼야 한다.**
+	#    부채꼴은 apex에서 반폭이 0이라 반경 r의 이동 원을 **원리적으로** 못 덮는다: 거리 t에서
+	#    `t·sin(half_angle) ≥ r`와 끝단 `t + r ≤ range`를 동시에 만족하는 t가 없다(P3 실측 = 앞은
+	#    t ≥ 243.6, 뒤는 t ≤ 188 → 해 없음). 즉 콘이면 §3이 금지한 **「표시 < 판정」**이 데이터에서
+	#    확정되고, 증상은 "보스 옆·뒤에서 예고도 없이 맞는다"인데 **화면에 이유가 안 드러난다.**
+	#    2026-08-03까지 P3(`pat_charge`)가 정확히 그 상태였다.
+	_check(CombatMath.is_band_telegraph(p),
+		"★%s: 돌진 예고가 띠로 리졸브돼야 한다 — 콘은 apex 반폭 0이라 스윕 원(%.0fpx)을 못 덮는다"
+		% [label, p.charge_sweep_radius])
+	# 🔴 **띠 예고 유지 ≥ 스윕이 실제로 나가는 시간.** 미달분이 곧 무예고 스윕이다.
+	#    ⚠ 기대값을 **테스트가 독립으로 유도한다** — `charge_sweep_duration_s`를 그대로 부르면
+	#      항등이 되어 검출력이 0이다(rules §3 N-1: "코드와 테스트가 같은 모델을 공유하면 0").
+	#      옛 단정(`hold >= charge_spin_s`)이 정확히 그 함정이었다 — `maxf(a, spin) >= spin`은
+	#      **어떤 데이터에서도 참**이라 뮤테이션이 원리적으로 불가능했다(netreview M-2가 적발).
+	var sweep_s := 0.0
+	if p.charge_spin_s > 0.0:
+		# 회전이 있는 갈래 = 타이머가 끝낸다(이동시간 + 타임아웃 여유와 회전 중 긴 쪽).
+		sweep_s = maxf(p.charge_spin_s,
+			p.charge_travel_max / maxf(p.charge_speed, 1.0) + CombatMath.CHARGE_TIMEOUT_MARGIN)
+	else:
+		# 회전이 없는 갈래 = 이동 거리 도달이 끝낸다 → 프레임 양자화(올림).
+		sweep_s = ceil(p.charge_travel_max / (maxf(p.charge_speed, 1.0) / CombatMath.SWEEP_STEP_FPS)) \
+			/ CombatMath.SWEEP_STEP_FPS
+	_check(CombatMath.charge_sweep_duration_s(p) >= sweep_s - 0.000001,
+		"★%s: 띠 예고 유지 %.3fs ≥ 스윕 지속 %.3fs — 미달분이 그대로 무예고 스윕이다"
+		% [label, CombatMath.charge_sweep_duration_s(p), sweep_s])
+	# ⚠ 물뿌리기(burst)와 돌진은 **배타여야 한다** — 겹치면 `_begin_windup`이 burst 갈래로 early-return해
+	#    `_telegraph_pat`이 띠인 채 N개 원이 뜨고, 만료가 돌진 단계 전환으로 새어 원이 안 사라진다.
+	_check(p.burst_count <= 1,
+		"★%s: 돌진 패턴에 burst_count %d — 물뿌리기와 겹치면 예고 원이 돌진 내내 안 사라진다"
+		% [label, p.burst_count])
+	# ⑺ 🔴 질주 중 낙석 — **세 가지가 전부 에러 없이 깨진다.**
 	_check(p.dash_rock_interval >= 0.0,
 		"%s: dash_rock_interval %.2f ≥ 0 — 음수면 매 프레임 떨어진다" % [label, p.dash_rock_interval])
 	if p.dash_rock_interval > 0.0:
