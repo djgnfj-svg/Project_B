@@ -38,3 +38,5 @@ assets/sprites/**/_ref*
 # 검수용 임시 산출물
 .tmp/
 __pycache__/
+# 로컬 비밀키 (OpenAI 등) — 커밋 금지
+.env
