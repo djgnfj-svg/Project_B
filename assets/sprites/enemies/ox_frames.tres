@@ -1,6 +1,7 @@
-[gd_resource type="SpriteFrames" load_steps=13 format=3]
+[gd_resource type="SpriteFrames" load_steps=18 format=3]
 
 [ext_resource type="Texture2D" path="res://assets/sprites/enemies/ox_anim.png" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/enemies/ox_dash.png" id="2"]
 
 [sub_resource type="AtlasTexture" id="f0"]
 atlas = ExtResource("1")
@@ -45,6 +46,22 @@ region = Rect2(432, 0, 48, 32)
 [sub_resource type="AtlasTexture" id="f10"]
 atlas = ExtResource("1")
 region = Rect2(480, 0, 48, 32)
+
+[sub_resource type="AtlasTexture" id="d0"]
+atlas = ExtResource("2")
+region = Rect2(0, 0, 48, 32)
+
+[sub_resource type="AtlasTexture" id="d1"]
+atlas = ExtResource("2")
+region = Rect2(48, 0, 48, 32)
+
+[sub_resource type="AtlasTexture" id="d2"]
+atlas = ExtResource("2")
+region = Rect2(96, 0, 48, 32)
+
+[sub_resource type="AtlasTexture" id="d3"]
+atlas = ExtResource("2")
+region = Rect2(144, 0, 48, 32)
 
 [resource]
 animations = [{"frames": [{
@@ -94,4 +111,21 @@ animations = [{"frames": [{
 "loop": false,
 "name": &"attack",
 "speed": 8.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("d0")
+}, {
+"duration": 1.0,
+"texture": SubResource("d1")
+}, {
+"duration": 1.0,
+"texture": SubResource("d2")
+}, {
+"duration": 1.0,
+"texture": SubResource("d3")
+}],
+"loop": true,
+"name": &"charge",
+"speed": 10.0
 }]

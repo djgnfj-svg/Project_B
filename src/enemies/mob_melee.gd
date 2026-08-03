@@ -109,13 +109,38 @@ const LUNGE_PX := 3.0     # 내지르는 거리(스프라이트 로컬 px — `s
 const LUNGE_OUT := 0.05   # 나가는 시간
 const LUNGE_BACK := 0.13  # 돌아오는 시간
 
+# 돌진 먼지 — 발밑에서 뒤로 튀는 흙(연출값, rules §0 파티클 예외). 🔴 흙바닥보다 **어둡게**(진한 흙 갈색)
+#   — 바닥이 밝은 사질이라 어두운 흙덩이가 대비로 읽힌다. 알파 페이드(color_ramp)로 옅게 사라진다.
+const DUST_COLOR := Color(0.376, 0.267, 0.161)
+
 # 원거리 조준선 — 연출값 (rules §0 예외)
 const AIM_LINE_WIDTH := 1.0
 const AIM_LINE_COLOR := Color(0.749, 0.247, 0.180, 0.5)  # #bf3f2e — 40색 팔레트의 경고 붉은
 const AIM_ALPHA_START := 0.22    # 조준 시작 — 옅게
 const AIM_ALPHA_END := 0.85      # 발사 직전 — 진하게(임박도)
 
-enum State { IDLE, CHASE, WINDUP, RECOVER, BACKOFF }
+# ⚠ CHARGE_DASH는 **끝에 붙였다** — 앞에 끼우면 기존 값의 정수가 밀린다(직렬화는 안 하지만 습관).
+enum State { IDLE, CHASE, WINDUP, RECOVER, BACKOFF, CHARGE_DASH }
+
+# --- 돌진 (2026-08-03, 들소 ox) — 보스 돌진의 **단순화판**(순간이동·왕복·회전 스윕 없음, 1회 직진) ---
+# 색·타이밍은 연출값(rules §0 예외). 레인 예고는 근접 예고 셰이더를 캡슐 모드로 재사용한다.
+const CHARGE_LANE_FILL := Color(0.847, 0.176, 0.141, 0.34)
+const CHARGE_LANE_BORDER := Color(1.000, 0.827, 0.353, 0.90)   # 근접 예고와 같은 황금 테두리(시인성 규약 공유)
+const CHARGE_LANE_STRIPE := Color(0.212, 0.043, 0.055, 0.52)
+# 돌진 선택 정렬 문턱 — 플레이어가 대략 정면(±이 각, rad)일 때만 돌진한다(옆·뒤로는 안 돌진).
+# ⚠ 예고를 보고 옆으로 피하는 것이 기믹이라(GDD §5) 너무 넓으면 회피가 불가능해진다.
+const CHARGE_ALIGN_HALF_ANGLE := 0.52   # ≈ 30°
+# 돌진을 **고려**하는 거리대(px) — 너무 붙으면(근접 사거리 안) 근접이 낫고, 너무 멀면 도달 전에 피한다.
+const CHARGE_MIN_DIST := 40.0
+const CHARGE_MAX_DIST := 300.0
+# 준비동작(발 구르기) — 예고 전반부에 뒤로 살짝 빼며 힘을 모은다(새 시트 없이 `_sprite.offset`).
+# 🔴 채널 = `_sprite.offset` **하나뿐** — 타격 순간 내지르기(`_lunge`)와 같은 채널이라 시간이 안 겹친다
+#   (준비는 WINDUP, 내지르기는 근접 STRIKE — 돌진엔 `_lunge`가 없다). Flinch(position)·HitStop(scale)·
+#   HitFlash(material)·anim_scale(speed) 넷과는 채널이 다르다.
+const CHARGE_PREP_BACK_PX := 3.0    # 뒤로 빼는 거리(스프라이트 로컬 px)
+const CHARGE_PREP_HZ := 8.0         # 발 구르기 진동수(Hz) — 후반부 떨림
+const CHARGE_PREP_SHAKE_PX := 1.0   # 떨림 진폭(px)
+const CHARGE_PREP_TINT := Color(1.0, 0.72, 0.62)  # 힘 모으는 붉은 기(연출) — 예고 후반부로 갈수록 짙어진다
 
 @export var eid: String = ""
 @export var def: EnemyDef
@@ -124,6 +149,23 @@ var _state: State = State.IDLE
 var _state_left: float = 0.0
 var _prev_hp: int = 0  # combat_impact 감소량 계산용
 var _strike_center: Vector2 = Vector2.ZERO
+# --- 돌진 (호스트 전용 AI 상태) ---
+var _can_charge: bool = false           # def에서 유도(_ready) — CombatMath.mob_can_charge 단일 소스
+var _is_charging: bool = false          # 이번 WINDUP이 돌진 예고인가(근접 예고와 갈래를 가른다)
+var _charge_cd_left: float = 0.0        # 다음 "돌진 선택"까지 남은 쿨다운(호스트 전용). 🔴 재돌진 없음 — 1회뿐
+var _charge_dir: Vector2 = Vector2.RIGHT   # 이번 돌진 방향(WINDUP 진입에 고정 — 조준 후 안 따라간다)
+var _charge_start: Vector2 = Vector2.ZERO  # 돌진 시작 좌표 — 이동 거리(travel_max) 판정 기준
+var _charge_end: Vector2 = Vector2.ZERO    # 돌진 끝점(= start + dir*travel) — 게스트 레인의 방향 소스(mob_telegraph center)
+var _charge_seq: int = 0                # 돌진 회차 id(단조 증가) — CombatAuthority가 스윕 dedup 키로 쓴다(돌진당 1회)
+var _charge_show_left: float = 0.0      # 🔴 게스트 전용 — 돌진 클립 표시 잔여 시간(레인 예고 만료에서 심는다).
+#   호스트의 CHARGE_DASH 상태는 네트워크로 안 온다(신규 필드 0). 게스트는 돌진 예고(레인)가 끝나는
+#   순간 = 발사로 인지해 이 창 동안 charge 클립을 재생한다 — 표시 전용, 판정·이동은 G_MOB_POS가 몬다.
+var _dust: CPUParticles2D = null        # 돌진 먼지 이미터(지연 생성 — 처음 켜질 때 만든다. 안 돌진하는 몹엔 안 생김)
+# 게스트: 이번 예고가 돌진 레인인가 + 레인 방향(호스트는 AI가 직접 심는다). show_telegraph가 def로 유도.
+var _lane_visible: bool = false
+var _lane_dir: Vector2 = Vector2.RIGHT
+var _prep_phase: float = 0.0            # 준비동작 진행도(0→1) — 예고 후반부로 갈수록 떨림·틴트가 짙어진다
+var _telegraph_is_lane: bool = false   # 현재 예고가 캡슐(돌진 레인)인가 — _reassert가 원/레인을 안 섞게
 var _remote_target: Vector2 = Vector2.ZERO
 var _remote_flip: bool = false
 var _telegraph_left: float = 0.0
@@ -238,21 +280,7 @@ func _setup_telegraph() -> void:
 		return
 	_telegraph_mat = TelegraphFx.apply_circle(
 		_telegraph, def.strike_radius, TELEGRAPH_AA_PX, TELEGRAPH_QUAD_MARGIN_PX)
-	# 아래는 전부 **연출값**이다(색·두께·주기) — 기하는 위 한 줄이 이미 전부 정했다.
-	_telegraph_mat.set_shader_parameter(&"border_px", TELEGRAPH_BORDER_PX)
-	_telegraph_mat.set_shader_parameter(&"fill_color", TELEGRAPH_FILL)
-	_telegraph_mat.set_shader_parameter(&"border_color", TELEGRAPH_BORDER)
-	_telegraph_mat.set_shader_parameter(&"stripe_dark", TELEGRAPH_STRIPE_DARK)
-	_telegraph_mat.set_shader_parameter(&"fill_fade", TELEGRAPH_FILL_FADE)
-	_telegraph_mat.set_shader_parameter(&"pulse_amp", TELEGRAPH_PULSE_AMP)
-	_telegraph_mat.set_shader_parameter(&"pulse_hz", TELEGRAPH_PULSE_HZ)
-	_telegraph_mat.set_shader_parameter(&"stripe_period", TELEGRAPH_STRIPE_PERIOD)
-	_telegraph_mat.set_shader_parameter(&"stripe_speed", TELEGRAPH_STRIPE_SPEED)
-	_telegraph_mat.set_shader_parameter(&"duty", TELEGRAPH_STRIPE_DUTY)
-	_telegraph_mat.set_shader_parameter(&"charge_color", TELEGRAPH_CHARGE)
-	_telegraph_mat.set_shader_parameter(&"lead_px", TELEGRAPH_LEAD_PX)
-	_telegraph_mat.set_shader_parameter(&"flash_color", TELEGRAPH_FLASH)
-	_telegraph_mat.set_shader_parameter(&"flash_start", TELEGRAPH_FLASH_START)
+	_apply_telegraph_style()  # 연출값(색·두께·주기) — show_lane과 공유(사본 방지)
 
 
 func _ready() -> void:
@@ -262,6 +290,8 @@ func _ready() -> void:
 	_telegraph.visible = false
 	# 근접/원거리 판별은 def 값에서 유도한다 (rules §3 단일 소스) — 배우·트립와이어가 같은 함수를 지난다.
 	_is_ranged = CombatMath.is_ranged_enemy(def)
+	# 돌진 판별도 값에서 유도한다 (rules §3 단일 소스). 원거리와 배타는 아니지만 ox는 근접+돌진이다.
+	_can_charge = CombatMath.mob_can_charge(def)
 	if _is_ranged:
 		_make_aim_line()
 	if def != null:
@@ -441,14 +471,22 @@ func _physics_process(delta: float) -> void:
 		# 예비 프레임 길이만큼 앞당겨 재생 → "내려침" 프레임이 텔레그래프 만료(=strike)와 겹친다
 		# ⚠ 원거리는 이 규약을 안 쓴다 — 당기는 모션 전체가 조준 창을 채우도록 `_start_draw_anim`이
 		#   `speed_scale`을 유도한다(고정 lead는 RTT 가변인 조준 창에 못 맞춘다).
-		elif before > ATTACK_ANIM_LEAD_S and _telegraph_left <= ATTACK_ANIM_LEAD_S:
+		# ⚠ 돌진 레인(캡슐)일 땐 근접 attack(들이받기 내려침)을 재생하지 마라 — 그 모션은 그 자리
+		#   한 방용이다. 돌진은 준비동작(_tick_charge_prep) 뒤 _play_charge_clip이 몬다.
+		elif not _telegraph_is_lane and before > ATTACK_ANIM_LEAD_S \
+				and _telegraph_left <= ATTACK_ANIM_LEAD_S:
 			_play(&"attack")
 		# 차오름(임박도) — 🔴 **`TIME`이 아니라 자기 예고 창에서 유도한다**(보스 판례 · §3 지연 보상).
 		#   호스트 창은 `strike_delay_s`만큼 길어 남은 시간이 클라마다 다르다. TIME으로 만들면
 		#   게스트가 **틀린 임박 신호**를 읽고, 그건 지연 보상이 없애려던 손해 그 자체다.
 		# ⚠ 판정 형태는 안 건드린다 — 셰이더는 이 값으로 **색만** 바꾼다(반경은 그대로).
 		if not _is_ranged and _telegraph_total_s > 0.0:
-			TelegraphFx.set_progress(_telegraph_mat, 1.0 - _telegraph_left / _telegraph_total_s)
+			var prog := 1.0 - _telegraph_left / _telegraph_total_s
+			TelegraphFx.set_progress(_telegraph_mat, prog)
+			# 소 준비동작 — 레인(돌진 예고)일 때만. 뒤로 살짝 빼며 후반부에 발 구르기 떨림 + 붉은 기.
+			#   호스트/게스트 둘 다 _lane_visible이 서서 양쪽 화면에서 같이 보인다(offset은 표시 채널).
+			if _lane_visible:
+				_tick_charge_prep(prog)
 		if _telegraph_left <= 0.0:
 			# 🔴 **타격 순간 FX는 여기서 난다 — `EventBus.mob_strike`가 아니다.** 그 시그널은
 			#   **호스트 전용 emit**이라(event_bus.gd) 매달면 게스트 화면엔 아무것도 안 뜬다.
@@ -458,9 +496,20 @@ func _physics_process(delta: float) -> void:
 			# ⚠ `visible` 게이트 = 사망 취소분이다. `_on_hp_changed`가 죽을 때 예고를 끄므로
 			#   시체가 안 하는 타격의 충격파가 남지 않는다(호스트도 그때 STRIKE를 안 낸다 — 사망이
 			#   `_state`를 IDLE로 돌린다). ⚠ `_telegraph.visible = false`보다 **먼저** 봐야 한다.
-			if not _is_ranged and _telegraph.visible:
+			# 돌진 레인은 충격파를 안 낸다 — 그건 원형 근접 타격의 지금 왔다다. 돌진의 지금 왔다는
+			#   레인이 사라지고 몸이 튀어나가는 것이다(호스트 _enter_charge_dash가 그 프레임에 발사).
+			if not _is_ranged and not _telegraph_is_lane and _telegraph.visible:
 				_play_strike_fx()
+			# 게스트: 방금 끝난 예고가 돌진 레인이면 이어지는 돌진(몸이 튀는 창) 동안 charge 클립을
+			#   재생하도록 표시 타이머를 심는다. 창 길이 = 호스트 _enter_charge_dash의 dash 창과 같은
+			#   식(travel_max / charge_speed + 0.4 여유)이라 def 하나로 양쪽이 맞는다. 호스트는 이 값을
+			#   안 쓴다(_state == CHARGE_DASH로 이미 안다) — `not Net.is_host()` 게이트가 그것을 못 박는다.
+			if _telegraph_is_lane and _can_charge and not Net.is_host():
+				_charge_show_left = def.charge_travel_max / maxf(def.charge_speed, 1.0) + 0.4
 			_telegraph.visible = false
+			_lane_visible = false
+			_sprite.offset = Vector2.ZERO   # 준비동작 offset 정리(레인 끝 = 발사) — 안 하면 어긋난 채 굳는다
+			_sprite.modulate = Color.WHITE
 			_hide_aim_line()
 	_shadow.visible = not _health.is_dead()  # 시체·부활 대기 중엔 그림자도 없앤다(플레이어 고스트와 같은 규칙)
 	if _health.is_dead() or def == null:
@@ -472,15 +521,35 @@ func _physics_process(delta: float) -> void:
 		#   `velocity`가 넉백 속도로 채워져 있는데, `_face()`는 넉백 분기 밖이라 몹이 플레이어를 본 채
 		#   뒤로 밀린다 = **뒤로 미끄러지는 걷기**. 호스트 화면에서만 보인다(게스트는 `_remote_target`
 		#   거리로 따로 판정한다) — 즉 두 화면이 서로 다르게 보이는 자리이기도 하다.
-		var walking := (_state == State.CHASE or _state == State.BACKOFF) \
-			and _knock_left <= 0.0 \
-			and velocity.length_squared() > 0.0
-		_update_move_anim(walking)
+		# 🔴 돌진 중엔 이동 애니를 덮지 않는다 — `_enter_charge_dash`가 켠 charge 클립(loop)이 애니를
+		#   소유한다. CHARGE_DASH는 CHASE/BACKOFF가 아니라 walking=false라, 여기서 _update_move_anim을
+		#   부르면 매 물리 프레임 idle로 덮여 돌진 클립이 화면에 한 프레임도 못 산다(2026-08-03 실기 확인).
+		#   attack(one-shot)이 _update_move_anim 안에서 예외인 것과 같은 부류 — 그쪽은 애니 이름으로,
+		#   여기는 상태로 가른다(돌진 클립은 loop라 "재생 중" 가드만으론 idle 복귀를 못 막는다).
+		if _state != State.CHARGE_DASH:
+			var walking := (_state == State.CHASE or _state == State.BACKOFF) \
+				and _knock_left <= 0.0 \
+				and velocity.length_squared() > 0.0
+			_update_move_anim(walking)
 	else:
 		var moving := global_position.distance_to(_remote_target) > REMOTE_MOVE_EPS
 		global_position = global_position.lerp(_remote_target, minf(1.0, REMOTE_LERP_SPEED * delta))
 		_sprite.flip_h = _remote_flip
-		_update_move_anim(moving)
+		# 🔴 게스트 돌진 표시 — 예고 만료에서 심은 창 동안 charge 클립을 이어 재생한다(호스트의
+		#   상태 기반 처방에 대응하는 게스트판). ⚠ `_play(&"charge")` — **force_restart 없이** 부른다.
+		#   `_play_charge_clip`은 force_restart=true라 매 프레임 부르면 프레임0에 얼어붙는다(돌진 발사
+		#   1회용). charge 애니가 없는 개체는 창만 흐르고 아래 이동 애니로 떨어진다(현행 유지).
+		if _charge_show_left > 0.0:
+			_charge_show_left -= delta
+		if _charge_show_left > 0.0 and _has_anim(&"charge"):
+			_play(&"charge")
+		else:
+			_update_move_anim(moving)
+	# 🔴 돌진 먼지 — 발밑에서 모래가 뒤로 튄다. 켜는 게이트는 charge 클립과 **동일**하다(호스트=CHARGE_DASH,
+	#   게스트=표시 창)라 그림과 먼지가 항상 함께 산다. 방향은 진행 반대(호스트 _charge_dir · 게스트 _lane_dir).
+	#   표시 전용 · 각 클라 로컬 · 네트워크 0(drop_fx 규약과 동형).
+	var dashing := (_state == State.CHARGE_DASH) if Net.is_host() else (_charge_show_left > 0.0)
+	_update_dust(dashing, (-_charge_dir) if Net.is_host() else (-_lane_dir))
 	# 🔴 **맨 끝에서 배속을 재주장한다** — 소유자가 매 프레임 자기 의도를 다시 심는 관용구
 	#   (rules §2 · boss._apply_anim_scale). 이 프레임에 무엇이 speed_scale을 건드렸든 여기가 마지막이다.
 	_apply_anim_scale()
@@ -493,6 +562,7 @@ func _physics_process(delta: float) -> void:
 func _host_ai(delta: float) -> void:
 	_state_left -= delta
 	_backoff_block_left -= delta
+	_charge_cd_left -= delta   # 다음 돌진 선택까지의 최소 간격 (재돌진 없음 — 한 번 쓰면 이만큼 근접만)
 	# 갇힘 감지는 **실제로 걷는 상태에서만** 의미가 있다 — 예고(WINDUP)로 서 있는 0.6~1.1s를
 	# "안 움직였다"로 읽으면 매 공격마다 헛되이 경로를 다시 낸다.
 	# ⚠ **넉백 중도 "자기 이동이 아니다"** (2026-08-02) — 넉백 변위(최대 12px)가
@@ -532,9 +602,17 @@ func _host_ai(delta: float) -> void:
 			#   답이 없다. 막혀 있으면 WINDUP에 안 들어가고 계속 추격 = **몹이 물을 돌아온다.**
 			#   ⚠ 층②(화살 자체의 지형 차단)는 arrow.gd·combat_authority가 따로 진다 — 이건 "결정",
 			#     저건 "결과"라 둘 다 필요하다(발사 후 표적이 엄폐물 뒤로 들어가는 경우).
+			# 🔴 돌진 선택 — 근접 사거리보다 **먼저** 본다(근접이 닿는 거리면 돌진 대신 그냥 때린다).
+			#   조건 전부는 `_should_charge`가 본다(쿨다운·거리대·정렬·사선). 하나라도 어긋나면 평소대로
+			#   추격/근접으로 떨어진다(도입 전과 항등). 🔴 **재돌진 없음** — 쓰면 쿨다운을 재장전한다.
+			if _can_charge and _charge_cd_left <= 0.0 and dist > def.attack_range \
+					and _should_charge(anchor, dist):
+				_enter_charge_windup(anchor)
+				return
 			if dist <= def.attack_range and (not _is_ranged or _has_line_of_sight(anchor)):
 				# 타격점 고정 — 예고를 보고 빠져나갈 수 있어야 한다 (GDD §5 기믹 원칙)
 				_strike_center = anchor
+				_is_charging = false   # 명시: 이 WINDUP은 근접/원거리다(돌진 아님) — WINDUP 종료 분기가 갈린다
 				_state = State.WINDUP
 				# 지연 보상(§3): 예고가 게스트 화면에 뜨기까지 편도 지연만큼 늦는다 — 그만큼 타격도 늦춰야
 				# 게스트도 온전한 telegraph_s를 갖는다. 솔로/로컬이면 0이라 기존 동작과 동일(항등).
@@ -583,17 +661,171 @@ func _host_ai(delta: float) -> void:
 			# 물러날 곳이 없으면(벽·물가) 그 자리에서 갈리는 대신 추격으로 돌아가 그냥 쏜다.
 			_tick_stuck(delta, true)
 		State.WINDUP:
+			# 돌진 예고가 다 차면 근접 타격(mob_strike)이 아니라 직진으로 넘어간다(재돌진 없음).
+			#   근접 예고는 그 자리 한 방, 돌진 예고는 이동 스윕 — WINDUP 진입 시 `_is_charging`이 갈랐다.
+			velocity = Vector2.ZERO  # 예고 중엔 제자리(준비동작은 스프라이트 offset — 판정 좌표 불변)
 			if _state_left <= 0.0:
-				if _is_ranged:
-					_fire_arrow()  # 실제 투사체 — 등록·판정은 CombatAuthority(호스트)
+				if _is_charging:
+					_enter_charge_dash()   # 자기 상태(CHARGE_DASH)·타이머를 직접 세운다 — 아래 RECOVER 안 탄다
 				else:
-					EventBus.mob_strike.emit(eid, _strike_center)  # 판정·확정은 CombatAuthority
-				_state = State.RECOVER
-				_state_left = def.attack_cooldown_s
+					if _is_ranged:
+						_fire_arrow()  # 실제 투사체 — 등록·판정은 CombatAuthority(호스트)
+					else:
+						EventBus.mob_strike.emit(eid, _strike_center, -1)  # 판정·확정은 CombatAuthority (-1 = 단발, dedup 없음)
+					# 🔴 근접·원거리 둘 다 RECOVER로 — 원거리가 이 전이를 놓치면 WINDUP에 갇혀 매 프레임 재발사한다.
+					_state = State.RECOVER
+					_state_left = def.attack_cooldown_s
+		# 돌진(1회 직진) — 보스 CHARGE_DASH의 단순화판. `_charge_start`로부터의 이동 거리로
+		#   종료를 판정한다(travel_max 도달 또는 타임아웃). 매 프레임 mob_strike를 `_charge_seq`와
+		#   함께 emit → CombatAuthority가 돌진당 1회 dedup(이동 히트박스라 프레임 dedup으론 매 프레임
+		#   데미지). 지형에 막히면 move_and_slide가 이동을 멈춰 이동 거리가 안 늘고, 그러면
+		#   타임아웃(_state_left)이 종료를 대신 진다 — 벽에 낀 채 영원히 안 끝나지 않게 하는 안전판.
+		State.CHARGE_DASH:
+			var traveled := _charge_start.distance_to(global_position)
+			if traveled >= def.charge_travel_max or _state_left <= 0.0:
+				_end_charge()
+			else:
+				velocity = _charge_dir * def.charge_speed
+				move_and_slide()
+				# 판정·표시가 같은 반경을 지난다(§3) — 스윕 원 중심 = 몸의 현재 위치.
+				#   호스트가 이 좌표에서 판정하고 게스트는 G_MOB_POS로 이 좌표를 따라온다.
+				EventBus.mob_strike.emit(eid, global_position, _charge_seq)
 		State.RECOVER:
 			if _state_left <= 0.0:
 				_state = State.CHASE
 
+
+
+# --- 돌진 (호스트 전용 AI — 보스 돌진의 단순화판: 순간이동·왕복·회전 스윕 없음, 1회 직진) ---
+
+# 돌진할 만한가 — 거리대·정렬·사선을 한 곳에서 본다(호출부가 쿨다운·can_charge는 이미 걸렀다).
+#   대략 정면(±CHARGE_ALIGN_HALF_ANGLE)일 때만 돌진한다 — 옆·뒤로 돌진하면 예고를 보고 옆으로
+#   피하는 기믹(GDD §5)이 무너진다. 사선이 막혀 있으면(물·낭떠러지 건너) 돌진해도 벽에 박으니 뺀다.
+func _should_charge(anchor: Vector2, dist: float) -> bool:
+	if dist < CHARGE_MIN_DIST or dist > CHARGE_MAX_DIST:
+		return false
+	var to_p := _dir_to(anchor)
+	# 현재 바라보는 방향(flip_h로 좌우만 안다)과의 정렬 — 몹은 상하 조준이 없으니 좌우 반평면으로 근사.
+	#   더 정확히: 플레이어가 좌/우 어느 쪽인지와 몹 facing이 같은 쪽인지. 정면이 아니면 먼저 돌아본다
+	#   (이 프레임은 CHASE로 떨어져 _face가 돌리고, 다음 판단에서 정렬되면 돌진).
+	var facing := -1.0 if _sprite.flip_h else 1.0
+	if signf(to_p.x) != facing and absf(to_p.x) > 0.2:
+		return false
+	return _has_line_of_sight(anchor)
+
+
+# 돌진 예고 진입(호스트). 방향·시작·끝점을 고정하고 레인 예고를 띄운다. 🔴 재돌진 없음 — 쿨다운은
+#   _end_charge에서 재장전한다(여기서 하면 예고 중 취소돼도 쿨다운이 도는 비대칭이 생긴다).
+func _enter_charge_windup(anchor: Vector2) -> void:
+	_is_charging = true
+	_charge_dir = _dir_to(anchor)
+	_charge_start = global_position
+	_charge_end = _charge_start + _charge_dir * def.charge_travel_max
+	_face(anchor)
+	_state = State.WINDUP
+	velocity = Vector2.ZERO
+	# 지연 보상(§3) — 근접 예고와 같은 규약: 게스트 화면 예고가 편도 지연만큼 늦게 뜨므로 그만큼
+	#   돌진 발사도 늦춘다(호스트가 자기 예고를 늘려 "보이는 예고 = 맞는 타이밍" 유지).
+	var telegraph_total := def.charge_telegraph_s + CombatMath.strike_delay_s(Net.max_remote_one_way_ms())
+	_state_left = telegraph_total
+	_prep_phase = 0.0
+	# 호스트 레인 표시 — 시작→끝점. 게스트는 아래 mob_telegraph(endpoint)로 방향을 유도한다.
+	show_lane(_charge_start, _charge_end, telegraph_total)
+	# 🔴 center = **끝점**을 실어 보낸다(신규 필드 0). 게스트가 `_is_charge_telegraph`로 근접(가까운
+	#   center)과 갈라, 끝점 방향으로 레인을 그린다. 근접은 여전히 strike_center(가까움)를 싣는다.
+	EventBus.mob_telegraph.emit(eid, _charge_end)
+
+
+# 돌진 발사(호스트). WINDUP 종료에서 불린다 — 회차 갱신 후 CHARGE_DASH로. 재돌진 없음.
+func _enter_charge_dash() -> void:
+	_charge_seq += 1                       # 스윕 dedup 회차(돌진당 1회) — CombatAuthority._mob_sweep_seq와 짝
+	# 🔴 _charge_start를 여기서 덮지 않는다 — 그려진 레인(windup start→endpoint)을 돌진이 그대로 따른다.
+	#   WINDUP 중 넉백으로 몸이 밀렸어도 판정 기준을 그린 레인에 맞춰 「보이는 곳 = 맞는 곳」을 지킨다.
+	_state = State.CHARGE_DASH
+	# 타임아웃 상한 = 이동시간 + 여유(지형에 막혀 거리가 안 늘 때 종료를 대신 지는 안전판).
+	_state_left = def.charge_travel_max / maxf(def.charge_speed, 1.0) + 0.4
+	# 레인은 발사 순간 꺼진다(_physics_process가 windup 끝에 visible=false) — 돌진의 「지금 왔다」는
+	#   레인이 사라지고 몸이 튀어나가는 것이다. offset은 그 블록이 이미 0으로 되돌렸다(이중 안전).
+	_sprite.offset = Vector2.ZERO
+	_sprite.modulate = Color.WHITE
+	_face(_charge_end)
+	# 스프라이트 스왑 훅 — 전용 ox_dash 시트가 붙으면 여기서 돌진 클립으로 갈린다(지금은 walk 폴백).
+	_play_charge_clip()
+
+
+# 돌진 종료(호스트). travel_max 도달·타임아웃에서. 🔴 여기서 쿨다운을 재장전한다(재돌진 없음).
+func _end_charge() -> void:
+	_is_charging = false
+	_charge_cd_left = def.charge_cooldown_s
+	velocity = Vector2.ZERO
+	_telegraph.visible = false
+	_sprite.offset = Vector2.ZERO
+	_sprite.modulate = Color.WHITE
+	_state = State.RECOVER
+	_state_left = def.attack_cooldown_s
+
+
+# 돌진 애니 클립 — 전용 시트(ox_dash)가 붙으면 여기서 스왑한다. 지금은 결합 없이 walk 폴백만.
+#   🔴 시트 스왑 훅을 최소로 남긴다(리드가 나중에 붙인다) — `_play_alt_clip`이 있으면 그것을,
+#   없으면 walk로 떨어진다(고속 이동 + 먼지·속도선 FX는 기존 재사용, 별도 에셋 불필요).
+func _play_charge_clip() -> void:
+	if _has_anim(&"charge"):
+		_play(&"charge", true)
+	else:
+		_play(&"walk")
+
+
+# 돌진 먼지 이미터 — 켤 때 처음 생성한다(안 돌진하는 몹엔 노드가 안 붙는다). 발밑(그림자 지점)에서
+#   모래가 진행 반대+살짝 위로 튀고 중력에 떨어진다. 🔴 웹 Compatibility 안전 = CPUParticles2D
+#   (GPU 파티클 회피 — drop_fx 규약). 표시 전용·각 클라 로컬. z는 상대 -1(뒤로 튄 먼지 = 소 뒤).
+func _update_dust(active: bool, back_dir: Vector2) -> void:
+	if _dust == null:
+		if not active:
+			return
+		_dust = CPUParticles2D.new()
+		_dust.one_shot = false            # 돌진 내내 흐르는 트레일(일회 버스트 아님)
+		_dust.emitting = false
+		_dust.amount = 52                      # 훨씬 풍성하게 — 돌진 내내 흙이 뭉텅뭉텅 튄다
+		_dust.lifetime = 0.55
+		_dust.initial_velocity_min = 25.0
+		_dust.initial_velocity_max = 120.0     # 속도 폭을 넓혀 가까운 흙덩이 + 멀리 튄 알갱이가 섞인다
+		_dust.spread = 60.0
+		_dust.gravity = Vector2(0.0, 280.0)    # 튄 뒤 바닥으로 떨어진다
+		_dust.scale_amount_min = 1.5
+		_dust.scale_amount_max = 4.5           # 큰 흙덩이 ~ 작은 알갱이
+		_dust.color = DUST_COLOR
+		# 알파 페이드 — 튄 흙이 옅어지며 사라진다(팝 없이). 최종색 = color × ramp.
+		var ramp := Gradient.new()
+		ramp.set_color(0, Color(1.0, 1.0, 1.0, 1.0))
+		ramp.set_color(1, Color(1.0, 1.0, 1.0, 0.0))
+		_dust.color_ramp = ramp
+		_dust.z_as_relative = true
+		_dust.z_index = -1
+		_dust.position = _shadow.position     # 발밑 = 그림자와 같은 지점
+		add_child(_dust)
+	_dust.emitting = active
+	if active and back_dir.length_squared() > 0.0001:
+		# 진행 반대 방향에 상향 성분을 섞는다 — 뒤로+위로 튄 뒤 중력에 떨어진다.
+		_dust.direction = (back_dir.normalized() + Vector2.UP * 0.7).normalized()
+
+
+# 소 준비동작(발 구르기) — 돌진 예고 동안 뒤로 살짝 빼며 후반부에 떨림 + 붉은 기. 새 시트 불필요.
+# 🔴 채널은 `_sprite.offset`(위치)·`_sprite.modulate`(색) 둘뿐이고 손맛 계층과 안 겹친다:
+#   Flinch(position)·HitStop(scale)·HitFlash(material)·anim_scale(speed)와 채널이 다르다.
+#   🔴 몸(CharacterBody2D) 좌표·scale은 절대 안 건드린다 — 그건 판정·그림자·길찾기로 새어 나간다.
+# ⚠ 방향은 `_lane_dir` **반대**(뒤로 뺀다) — 호스트/게스트 둘 다 show_lane에서 이 값을 세웠다.
+func _tick_charge_prep(progress: float) -> void:
+	var p := clampf(progress, 0.0, 1.0)
+	# 뒤로 빼기: 예고 내내 서서히 뒤로(=힘 모으기). 후반부에 발 구르기 떨림을 얹는다.
+	var back := -_lane_dir * (CHARGE_PREP_BACK_PX * p)
+	var shake := 0.0
+	if p > 0.5:
+		# 후반부에만 떨림 — sin이라 좌우로 자잘하게. TIME이 아니라 progress에서 위상을 만든다
+		#   (예고 창 길이가 클라마다 달라 TIME은 위상이 갈라진다 — 근접 차오름과 같은 부호).
+		shake = sin(p * CHARGE_PREP_HZ * TAU) * CHARGE_PREP_SHAKE_PX * ((p - 0.5) * 2.0)
+	_sprite.offset = back + Vector2(shake, 0.0)
+	# 붉은 기가 후반부로 갈수록 짙어진다(힘이 모인다) — modulate라 hit_flash material과 채널이 다르다.
+	_sprite.modulate = Color.WHITE.lerp(CHARGE_PREP_TINT, p)
 
 
 # --- 길찾기 (호스트 전용) ---
@@ -749,7 +981,18 @@ func show_telegraph(center: Vector2, duration: float = -1.0) -> void:
 		_aim_total = dur
 		_telegraph_left = dur      # 근접과 같은 카운트다운을 재사용(만료 시 선을 끈다)
 		return
+	# 🔴 게스트 돌진 판별 — center가 **끝점**(멀다)이면 레인, strike_center(가깝다)면 근접 원.
+	#   근접 타격점은 attack_range 안이고 돌진 끝점은 travel_max(먼)이라 거리 하나로 갈린다 —
+	#   **신규 필드 0개**(설계: 기존 경로에 데이터로 얹기). 호스트는 이 경로를 안 지난다(_enter_charge_windup이
+	#   show_lane을 직접 부르고 _is_charging으로 이미 안다) — 여기 판별은 게스트 전용이다.
+	if _can_charge and not Net.is_host() \
+			and global_position.distance_to(center) > def.attack_range + def.strike_radius:
+		_face(center)                            # 돌진 방향을 본다(자세) — show_lane이 _lane_dir도 세운다
+		show_lane(global_position, center, dur)  # 게스트: 몸 현재 위치(≈windup pos) → 끝점
+		return
+	_telegraph_is_lane = false
 	_telegraph_center = center
+	_refit_circle_telegraph()  # 직전이 레인(캡슐)이었을 수 있으니 원 형태로 되심는다(노드 재사용)
 	_telegraph.global_position = center
 	_telegraph.visible = true
 	_telegraph_left = dur
@@ -759,6 +1002,71 @@ func show_telegraph(center: Vector2, duration: float = -1.0) -> void:
 	# 🔴 0으로 되심는 것이 계약이다 — Telegraph 노드는 공격마다 재사용되므로 안 심으면 다음 예고가
 	#   **이전 회차의 다 찬 상태로 시작**한다(에러 없음, 임박 신호만 거짓).
 	TelegraphFx.set_progress(_telegraph_mat, 0.0)
+
+
+# 돌진 레인 예고(캡슐) — 호스트/게스트 공용. 시작→끝점 선분을 스윕 반경으로 부풀린 띠를 그린다.
+#   🔴 반경 = `CombatMath.mob_charge_sweep_radius`(= 호스트 스윕 판정 반경) 그대로 = "맞는 곳 = 보이는 곳"(§3).
+#   노드 원점 = 선분 중점, rotation = 방향. 차오름은 근접과 같은 카운트다운(_telegraph_left)이 민다.
+func show_lane(start: Vector2, end: Vector2, dur: float) -> void:
+	if def == null:
+		return
+	var seg := end - start
+	var half_len := seg.length() * 0.5
+	var angle := seg.angle() if seg.length() > 0.001 else 0.0
+	var radius := CombatMath.mob_charge_sweep_radius(def)
+	_lane_dir = _dir_to(end)
+	_lane_visible = true
+	_telegraph_is_lane = true
+	_telegraph_center = start + seg * 0.5   # 캡슐 원점 = 중점 (_reassert가 여기에 못 박는다)
+	_telegraph_mat = TelegraphFx.apply_capsule(
+		_telegraph, radius, half_len, angle, TELEGRAPH_AA_PX, TELEGRAPH_QUAD_MARGIN_PX)
+	# 색·테두리는 근접 예고와 톤을 맞춘다(같은 셰이더라 유니폼 이름이 같다).
+	_telegraph_mat.set_shader_parameter(&"border_px", TELEGRAPH_BORDER_PX)
+	_telegraph_mat.set_shader_parameter(&"fill_color", CHARGE_LANE_FILL)
+	_telegraph_mat.set_shader_parameter(&"border_color", CHARGE_LANE_BORDER)
+	_telegraph_mat.set_shader_parameter(&"stripe_dark", CHARGE_LANE_STRIPE)
+	_telegraph_mat.set_shader_parameter(&"fill_fade", TELEGRAPH_FILL_FADE)
+	_telegraph_mat.set_shader_parameter(&"pulse_amp", TELEGRAPH_PULSE_AMP)
+	_telegraph_mat.set_shader_parameter(&"pulse_hz", TELEGRAPH_PULSE_HZ)
+	_telegraph_mat.set_shader_parameter(&"stripe_period", TELEGRAPH_STRIPE_PERIOD)
+	_telegraph_mat.set_shader_parameter(&"stripe_speed", TELEGRAPH_STRIPE_SPEED)
+	_telegraph_mat.set_shader_parameter(&"duty", TELEGRAPH_STRIPE_DUTY)
+	_telegraph_mat.set_shader_parameter(&"charge_color", TELEGRAPH_CHARGE)
+	_telegraph_mat.set_shader_parameter(&"lead_px", TELEGRAPH_LEAD_PX)
+	_telegraph_mat.set_shader_parameter(&"flash_color", TELEGRAPH_FLASH)
+	_telegraph_mat.set_shader_parameter(&"flash_start", TELEGRAPH_FLASH_START)
+	_telegraph.global_position = _telegraph_center
+	_telegraph.visible = true
+	_telegraph_left = dur
+	_telegraph_total_s = dur
+	TelegraphFx.set_progress(_telegraph_mat, 0.0)
+
+
+# 근접 예고를 원 모드로 되돌린다 — 같은 Telegraph 노드가 직전에 레인(캡슐)이었을 수 있으므로
+#   반경·형태를 매번 다시 심는다(안 하면 근접 예고가 이전 레인의 캡슐로 그려진다 — 노드 재사용 함정).
+func _refit_circle_telegraph() -> void:
+	_lane_visible = false
+	_telegraph_mat = TelegraphFx.apply_circle(
+		_telegraph, def.strike_radius, TELEGRAPH_AA_PX, TELEGRAPH_QUAD_MARGIN_PX)
+	_apply_telegraph_style()
+
+
+# 예고 셰이더의 연출값(색·두께·주기)을 심는다 — _setup_telegraph와 show_lane이 공유(사본 방지).
+func _apply_telegraph_style() -> void:
+	_telegraph_mat.set_shader_parameter(&"border_px", TELEGRAPH_BORDER_PX)
+	_telegraph_mat.set_shader_parameter(&"fill_color", TELEGRAPH_FILL)
+	_telegraph_mat.set_shader_parameter(&"border_color", TELEGRAPH_BORDER)
+	_telegraph_mat.set_shader_parameter(&"stripe_dark", TELEGRAPH_STRIPE_DARK)
+	_telegraph_mat.set_shader_parameter(&"fill_fade", TELEGRAPH_FILL_FADE)
+	_telegraph_mat.set_shader_parameter(&"pulse_amp", TELEGRAPH_PULSE_AMP)
+	_telegraph_mat.set_shader_parameter(&"pulse_hz", TELEGRAPH_PULSE_HZ)
+	_telegraph_mat.set_shader_parameter(&"stripe_period", TELEGRAPH_STRIPE_PERIOD)
+	_telegraph_mat.set_shader_parameter(&"stripe_speed", TELEGRAPH_STRIPE_SPEED)
+	_telegraph_mat.set_shader_parameter(&"duty", TELEGRAPH_STRIPE_DUTY)
+	_telegraph_mat.set_shader_parameter(&"charge_color", TELEGRAPH_CHARGE)
+	_telegraph_mat.set_shader_parameter(&"lead_px", TELEGRAPH_LEAD_PX)
+	_telegraph_mat.set_shader_parameter(&"flash_color", TELEGRAPH_FLASH)
+	_telegraph_mat.set_shader_parameter(&"flash_start", TELEGRAPH_FLASH_START)
 
 
 # 🔴 예고는 **뜬 자리에 못 박혀 있어야 한다** — `$Telegraph`가 이 몸의 자식이라 몸이 움직이면

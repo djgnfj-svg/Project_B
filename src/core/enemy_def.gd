@@ -47,6 +47,20 @@ extends Resource
 # ⚠ `attack_range`보다 크면 자기 사거리 밖으로 물러나 영구 진동하며 한 발도 못 쏜다.
 @export var keep_dist: float = 0.0
 
+# --- 돌진 잔몹 (2026-08-03, 들소 ox) — "새 돌진 적 = 몇 칸 추가" (§4) ---
+# 🔴 판별은 값에서 유도한다: `CombatMath.mob_can_charge(def)` = can_charge and charge_speed > 0.
+#   별도 판별 함수 없이 `can_charge` 하나로 켜지만, `is_ranged_enemy`처럼 **속도가 0이면 꺼진다**
+#   (조용한 무동작 방지). 전부 기본값 false/0이라 기존 잔몹(미노 검사·궁수·소 근접) 전량과 **완전 항등**.
+# ⚠ 돌진은 보스의 **단순화판**이다 — 순간이동·왕복(재돌진)·wide_view·회전 스윕 없음. 1회 직진뿐.
+@export var can_charge: bool = false
+@export var charge_speed: float = 240.0        # 돌진 속도(px/s) — move_speed보다 훨씬 빨라야 "돌진"으로 읽힌다
+# 🔴 돌진 경로 스윕 **판정 반경** = 예고 레인 폭(반). "맞는 곳 = 보이는 곳"의 단일 소스(§3).
+#   0이면 `strike_radius`로 떨어진다(폴백) — 돌진은 몸통이 훑고 지나가는 것이라 보통 근접보다 넓다.
+@export var charge_sweep_radius: float = 0.0
+@export var charge_travel_max: float = 220.0   # 이동 거리 상한(px) — 여기 도달하거나 타임아웃이면 종료
+@export var charge_telegraph_s: float = 1.0    # 돌진 예고 길이(초) — 근접 telegraph_s보다 길게(피할 시간)
+@export var charge_cooldown_s: float = 4.0     # 돌진 재사용 대기(초). 🔴 **재돌진은 없다** — 이 쿨다운은 다음 "돌진 선택"까지의 최소 간격이다(그 사이엔 근접 공격)
+
 # 드랍 테이블 (골드·일반/핵심 재료·도면) — 없으면 드랍 없음. 호스트만 롤 (rules §1·§3). "새 적 = 파일 한 장" (§4)
 @export var drop_table: DropTable
 

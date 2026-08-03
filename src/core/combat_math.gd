@@ -1067,6 +1067,22 @@ static func is_ranged_enemy(def: EnemyDef) -> bool:
 	return def != null and def.proj_speed > 0.0 and def.proj_range > 0.0
 
 
+# 이 적이 돌진하는가 — **값에서 유도한다**(별도 판별 함수·트립와이어가 갈라지지 않게, is_ranged_enemy 판례).
+# 🔴 `can_charge`가 켜져 있어도 `charge_speed`가 0이면 꺼진다 — "돌진 켰는데 속도 0이라 조용히 안 움직임"
+#   을 값으로 막는다(is_ranged_enemy가 proj_speed로 하는 것과 같은 부호).
+static func mob_can_charge(def: EnemyDef) -> bool:
+	return def != null and def.can_charge and def.charge_speed > 0.0
+
+
+# 🔴 돌진 스윕 판정 반경 = 예고 레인 폭(반). **판정과 표시가 반드시 이 함수를 지난다**(§3 "맞는 곳 =
+#   보이는 곳"). 0이면 근접 `strike_radius`로 폴백 — 돌진은 몸통이 훑고 지나가는 것이라 값을 안 주면
+#   기존 근접 판정 반경을 그대로 쓰는 것이 안전한 방향이다(더 좁아질 뿐 넓어지지 않는다).
+static func mob_charge_sweep_radius(def: EnemyDef) -> float:
+	if def == null:
+		return 0.0
+	return def.charge_sweep_radius if def.charge_sweep_radius > 0.0 else def.strike_radius
+
+
 # 호스트의 발사 쿨다운 검증 — 발사 간격은 공격자 job 쿨다운(지터 여유 0.9배) 강제. 스팸해도 정직한 발사율 이상 못 얻는다.
 # 근접의 is_hit_cooldown_ok와 달리 SAME_SWING 다중타격 허용이 없다 — 화살 하나=한 발이라 매 발사 독립 게이트.
 static func is_fire_rate_ok(last_shot_msec: int, now_msec: int, job: JobDef, haste: float = 0.0) -> bool:

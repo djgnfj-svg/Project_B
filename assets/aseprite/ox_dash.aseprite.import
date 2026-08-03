@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://dvw1ckvotsgy0"
+path="res://.godot/imported/ox_dash.aseprite-2d800cf17a2cdd64ae066b0f6d244bb5.res"
+
+[deps]
+
+source_file="res://assets/aseprite/ox_dash.aseprite"
+dest_files=["res://.godot/imported/ox_dash.aseprite-2d800cf17a2cdd64ae066b0f6d244bb5.res"]
+
+[params]
+

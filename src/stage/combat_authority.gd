@@ -27,6 +27,7 @@ var _pending_php: Dictionary = {}  # peer_id -> hp (게스트 전용) — 스폰
 var _stage_over: bool = false  # 클리어↔전멸 상호 배제 + 종료 후 판정 중지
 var _boss_strike_frame: Dictionary = {}  # peer_id -> 보스 STRIKE 피격 물리 프레임 — 물뿌리기 원 겹침 시 같은 프레임 중복 확정 방지(per-cast dedup, 보스는 한 프레임에 한 패턴만 발화)
 var _boss_sweep_seq: Dictionary = {}  # peer_id -> 마지막 피격 dash_seq — 🔴 돌진(P3) 스윕은 매 프레임 발화라 여기서 **돌진 1회당 플레이어 1회**로 dedup(프레임 dedup으론 매 프레임 데미지). i-frame으로 안 맞으면 미기록 → 다음 프레임 재판정(구르며 반경 밖으로 빠지면 회피)
+var _mob_sweep_seq: Dictionary = {}  # [peer_id, eid] -> 마지막 피격 dash_seq — 잔몹 돌진(들소 CHARGE) dedup. boss_sweep과 같은 규약이나 **eid를 키에 넣는다**(여러 소가 동시에 돌진해도 서로 dedup을 안 덮게). 배열 키는 Dictionary가 값 비교라 안전
 var _arrows: Array = []  # 호스트 권한 화살(궁수 활): [{aid, pos:Vector2, dir:Vector2, life:float, shooter:int}, …] — _physics_process가 전진·명중 판정
 # 호스트 권한 **적** 화살(원거리 잔몹, 2026-08-01): [{aid, pos, dir, speed, life, radius, damage}, …]
 # 🔴 `_arrows`에 얹을 수 없다 — 저쪽 엔트리의 `shooter`는 peer id이고 명중 시 그 아바타에서
@@ -159,6 +160,10 @@ func _ready() -> void:
 		_pending_php.erase(peer_id)
 		_boss_strike_frame.erase(peer_id)  # 보스 STRIKE dedup 기록도 대칭 정리 (유한하나 정리 일관성)
 		_boss_sweep_seq.erase(peer_id)  # 돌진 스윕 dedup 기록도 대칭 정리 (재접속 id가 남의 돌진 피격 이월 방지)
+		# 잔몹 돌진 dedup은 [peer_id, eid] 복합 키라 그 피어의 항목을 전부 훑어 지운다(boss_sweep과 같은 목적)
+		for k: Variant in _mob_sweep_seq.keys():
+			if k is Array and (k as Array).size() == 2 and int((k as Array)[0]) == peer_id:
+				_mob_sweep_seq.erase(k)
 		GameState.drop_party_hp(peer_id)  # 챕터 내 잔류 이월 기록 정리 (재접속 id는 증가라 재사용 없음)
 		# 🔴🔴 **피어 이탈도 전멸 판정의 트리거다** (netreview M-2, 2026-08-02).
 		#   `_check_wipe`를 부르는 곳이 「HP 확정이 0 이하」 하나뿐이면 아래가 안 닫힌다:
@@ -958,7 +963,7 @@ func _on_player_hp_confirmed(peer_id: int, hp: int) -> void:
 
 # 호스트 전용(잔몹 AI가 호스트에서만 emit) — 타격 판정·확정. 판정 좌표 = net_anchor (rules §3),
 # 판정 반경 = def.strike_radius (텔레그래프 표시와 같은 값 — CombatMath.is_strike_hit 단일 소스).
-func _on_mob_strike(eid: String, center: Vector2) -> void:
+func _on_mob_strike(eid: String, center: Vector2, dash_seq: int = -1) -> void:
 	if not Net.is_host() or _stage_over:
 		return
 	var entry_v: Variant = _enemies.get(eid)
@@ -967,19 +972,34 @@ func _on_mob_strike(eid: String, center: Vector2) -> void:
 	var def := (entry_v as Dictionary)["def"] as EnemyDef
 	if def == null:
 		return
+	# 🔴 돌진(들소 CHARGE) 스윕 = **이동 원**이라 매 프레임 발화한다. dash_seq >= 0이면 **돌진당
+	#   플레이어 1회**로 dedup(boss_sweep과 같은 규약 — 프레임 dedup으론 매 프레임 데미지). 판정 반경도
+	#   근접 strike_radius가 아니라 `mob_charge_sweep_radius`(= 예고 레인 폭 = "맞는 곳=보이는 곳" §3).
+	#   단발(-1)이면 dedup 없이 기존 동작과 완전 항등.
+	var is_charge := dash_seq >= 0
+	var radius := CombatMath.mob_charge_sweep_radius(def) if is_charge else def.strike_radius
+	# 데미지는 근접과 같은 `attack_damage`(별도 돌진 데미지 필드 없음 — 밸런스는 예고·속도·쿨다운으로).
+	var damage := def.attack_damage
 	for node: Node in get_tree().get_nodes_in_group("player"):
 		var p := node as PlayerActor
 		if p == null or not p.is_alive():
+			continue
+		# 🔴 돌진 dedup — 이번 돌진(dash_seq)에서 이미 이 플레이어를 때렸으면 건너뛴다. i-frame으로 안
+		#   맞으면 미기록 → 다음 프레임 재판정(구르며 반경 밖으로 빠지면 회피, boss_sweep과 같은 공정성).
+		#   eid를 키에 넣어 여러 소가 동시에 돌진해도 서로의 dedup을 안 덮는다.
+		if is_charge and int(_mob_sweep_seq.get([p.peer_id, eid], -1)) == dash_seq:
 			continue
 		# 지연 보상(§3): 낡은 수신 좌표와 속도로 외삽한 추정 좌표가 **둘 다** 판정 안일 때만 확정.
 		# 호스트 자신은 one_way=0·is_local이라 두 좌표가 같아져 기존 동작과 동일하다(항등 폴백).
 		if not CombatMath.is_strike_hit_lagged(
 				p.net_anchor(), p.net_anchor_lead(Net.one_way_ms(p.peer_id)),
-				center, def.strike_radius):
+				center, radius):
 			continue
 		if _is_iframe_active(p):
 			continue  # 구르기 무적 (GDD §11 확정 2026-07-22)
-		(p.get_node("Health") as HealthComponent).apply_damage(def.attack_damage)
+		(p.get_node("Health") as HealthComponent).apply_damage(damage)
+		if is_charge:
+			_mob_sweep_seq[[p.peer_id, eid]] = dash_seq
 
 
 # 호스트 전용(보스 AI가 호스트에서만 emit) — 패턴 타격 판정·확정. 판정 좌표 = net_anchor (rules §3),

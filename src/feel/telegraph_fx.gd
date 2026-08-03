@@ -80,6 +80,36 @@ static func apply_circle(spr: Sprite2D, radius_px: float, aa_px: float,
 	return mat
 
 
+# 캡슐(방향 레인) 예고 한 장을 세운다 — 판정식 `capsule_depth(p, a, b, radius) >= 0`
+#   ≡ `CombatMath.capsule_depth`(= 선분 ±half_len을 반경 radius로 부풀린 것). 돌진 경로 표시가 이것.
+# 🔴 노드 원점 = **선분의 중점**, `rotation = angle`(로컬 x축을 따라 셰이더가 ±half_len_px로 그린다).
+#   보스 `_apply_telegraph_geometry`의 캡슐 갈래와 **같은 유도**(사본이 아니라 같은 규칙 — 그 함수가
+#   §3 등재 후 이 함수로 넘어오는 것이 다음 단계다. 그때까지 두 곳을 같이 고쳐라).
+# 🔴 `radius_px` = 스윕 판정 반경 그대로(= 레인 폭의 반). "보이는 곳 = 맞는 곳"의 단일 소스(§3).
+#   `half_len_px = 0`이면 원과 **비트 단위 항등**이라(셰이더·CombatMath.capsule_depth 헤더의 증명)
+#   길이 0 돌진도 무해하게 원으로 떨어진다.
+static func apply_capsule(spr: Sprite2D, radius_px: float, half_len_px: float, angle: float,
+		aa_px: float, margin_px: float) -> ShaderMaterial:
+	var radius := maxf(radius_px, 0.0)
+	var half_len := maxf(half_len_px, 0.0)
+	# 쿼드는 **양방향으로** 선분 반길이 + 반경을 덮어야 한다(원과 달리 x축으로 길다).
+	var quad := 2.0 * (half_len + radius + maxf(aa_px, 0.0) + maxf(margin_px, 0.0))
+	fit_quad(spr, quad)
+	spr.rotation = angle   # 🔴 fit_quad가 rotation을 0으로 되돌리므로 **그 뒤에** 심는다(순서 계약).
+	var mat := spr.material as ShaderMaterial
+	if mat == null or mat.shader != SHADER:
+		mat = ShaderMaterial.new()
+		mat.shader = SHADER
+		spr.material = mat
+	mat.set_shader_parameter(&"quad_px", quad)
+	mat.set_shader_parameter(&"radius_px", radius)
+	mat.set_shader_parameter(&"half_angle", PI)        # 각 검사 끈다(캡슐은 각으로 안 자른다)
+	mat.set_shader_parameter(&"half_len_px", half_len)
+	mat.set_shader_parameter(&"aa_px", maxf(aa_px, 0.0001))
+	mat.set_shader_parameter(&"progress", 0.0)
+	return mat
+
+
 # 차오름(임박도). 🔴 **`TIME`에서 유도하지 마라** — 예고 창 길이가 클라마다 다르다(호스트는
 #   `strike_delay_s`만큼 길다). 호출부가 **자기 예고 창**으로 나눈 값을 넘긴다(§3 지연 보상).
 static func set_progress(mat: ShaderMaterial, p: float) -> void:

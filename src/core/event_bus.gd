@@ -28,7 +28,7 @@ signal attack_hit(enemy: Node, job: JobDef, dir: Vector2)  # 로컬 공격 판�
 signal enemy_hp_confirmed(eid: String, hp: int)  # 호스트 전용 emit(enemy 권한 경로/부활) — stage가 ehp 브로드캐스트
 signal player_hp_confirmed(peer_id: int, hp: int)  # 확정 HP 통지 — 호스트=Health 권한 경로, 게스트=php 수신 경로. 호스트일 때만 stage가 php 브로드캐스트
 signal mob_telegraph(eid: String, center: Vector2)  # 호스트 전용 emit(잔몹 AI WINDUP) — MobSync가 matk 브로드캐스트
-signal mob_strike(eid: String, center: Vector2)     # 호스트 전용 emit(잔몹 AI STRIKE) — CombatAuthority가 데미지 확정
+signal mob_strike(eid: String, center: Vector2, dash_seq: int)     # 호스트 전용 emit(잔몹 AI STRIKE) — CombatAuthority가 데미지 확정. dash_seq: 근접 단발 = -1(프레임 1회) · 돌진(들소 CHARGE) = 회차 id(≥0, 매 프레임 발화라 CombatAuthority가 돌진당 플레이어 1회 dedup — boss_sweep과 같은 규약)
 # 원거리 잔몹 발사 — 호스트 AI가 emit(MobSync가 G_MOB_SHOOT 브로드캐스트 + CombatAuthority가 권한 화살 등록),
 # 게스트는 G_MOB_SHOOT 수신 시 **로컬 emit**한다(mob_telegraph→matk와 같은 미러 규약) → 양쪽 ArrowField가
 # 같은 경로로 표시 탄을 낸다. def를 동봉하는 것은 enemy_killed·boss_strike 선례와 같다(수치는 각자 로컬 리졸브).
