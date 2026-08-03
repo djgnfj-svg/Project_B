@@ -1,0 +1,14 @@
+[remap]
+
+importer="aseprite_wizard.plugin.noop"
+type="PackedDataContainer"
+uid="uid://bywfsvw1h0ao8"
+path="res://.godot/imported/job_panel_frame.aseprite-067d2ef1110d753d1870c7c48766813b.res"
+
+[deps]
+
+source_file="res://assets/aseprite/job_panel_frame.aseprite"
+dest_files=["res://.godot/imported/job_panel_frame.aseprite-067d2ef1110d753d1870c7c48766813b.res"]
+
+[params]
+

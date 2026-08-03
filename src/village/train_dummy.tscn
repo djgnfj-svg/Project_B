@@ -1,0 +1,22 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://src/village/train_dummy.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/enemies/dummy.png" id="2"]
+
+[sub_resource type="RectangleShape2D" id="shape_click"]
+size = Vector2(24, 30)
+
+[node name="TrainDummy" type="Area2D"]
+y_sort_enabled = true
+collision_layer = 64
+collision_mask = 0
+input_pickable = true
+script = ExtResource("1")
+
+[node name="Sprite" type="Sprite2D" parent="."]
+texture = ExtResource("2")
+offset = Vector2(-8, -16)
+
+[node name="Click" type="CollisionShape2D" parent="."]
+position = Vector2(0, -15)
+shape = SubResource("shape_click")

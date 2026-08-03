@@ -32,6 +32,8 @@ const MAP_RECT := Rect2(0, 0, 960, 576)
 @onready var _train_hint: Label = $TrainStation/Hint
 @onready var _train_sprite: Sprite2D = $TrainStation/Sprite
 @onready var _subjob_panel: CanvasLayer = $SubJobPanel
+@onready var _train_dummy: Area2D = $TrainDummy
+@onready var _job_select_panel: CanvasLayer = $JobSelectPanel
 
 
 func _ready() -> void:
@@ -47,6 +49,9 @@ func _ready() -> void:
 	_train_station.body_exited.connect(_on_train_body_exited)
 	_train_hint.visible = false
 	_apply_train_texture()
+	# 훈련소 허수아비 — 좌클릭하면 직업 선택 카드 창을 연다(클릭 전용, 전투 판정 없음).
+	#   각 클라 로컬 오버레이라 호스트 제한이 없다(제작대·훈련소 패널과 같은 규약).
+	_train_dummy.clicked.connect(_on_train_dummy_clicked)
 	set_meta("map_rect", MAP_RECT)  # 카메라 맵 클램프 — camera_rig가 스폰 시 읽는다
 	_style_world_hints()
 	# 🔴 **우상단 버전·인원 배지는 2026-08-02에 화면에서 뺐다** — ESC 메뉴로 갔다(사용자 요구:
@@ -80,6 +85,16 @@ func _apply_train_texture() -> void:
 
 # 출발 확인은 폴링이 아니라 _unhandled_input — UI(Control)가 소비한 입력은 여기 안 온다
 func _unhandled_input(event: InputEvent) -> void:
+	# 직업 선택(직업 변경) — H 키로 어디서든 토글. 허수아비 좌클릭이 불안정해 키 진입을 보탠 것(사용자 요청).
+	#   로컬 오버레이라 호스트 제한 없음 — 패널이 판 도중 잠금·거부를 GameState 기준으로 처리한다.
+	if event is InputEventKey and event.is_pressed() and not event.is_echo() \
+			and (event as InputEventKey).keycode == KEY_H:
+		if _job_select_panel.visible:
+			_job_select_panel.call("close")
+		else:
+			_job_select_panel.call("open")
+		get_viewport().set_input_as_handled()
+		return
 	if not event.is_action_pressed("interact"):
 		return
 	# 제작대 — 로컬 각자 열기(제작/강화는 로컬, 호스트 제한 없음). 패널 열고 입력 소비(같은 F가 패널 닫기에 안 걸리게).
@@ -149,3 +164,9 @@ func _on_train_body_exited(body: Node2D) -> void:
 		return
 	_local_in_train = false
 	_train_hint.visible = false
+
+
+# 허수아비 좌클릭 → 직업 선택 카드 창(로컬 오버레이). 마우스 클릭이므로 게이트 진입(F)과 무관하게
+# 어디서든 클릭으로 연다. 패널 자신이 판 도중 잠금·거부를 GameState 기준으로 처리한다.
+func _on_train_dummy_clicked() -> void:
+	_job_select_panel.call("open")

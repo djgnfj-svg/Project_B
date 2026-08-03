@@ -1,4 +1,4 @@
-[gd_scene load_steps=30 format=3]
+[gd_scene load_steps=32 format=3]
 
 [ext_resource type="Script" path="res://src/village/village.gd" id="1"]
 [ext_resource type="TileSet" path="res://assets/tilesets/forest_village.tres" id="2"]
@@ -24,6 +24,8 @@
 [ext_resource type="Texture2D" path="res://assets/sprites/village/decor/grass_d.png" id="22"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/decor/flower_a.png" id="23"]
 [ext_resource type="Texture2D" path="res://assets/sprites/village/decor/flower_b.png" id="24"]
+[ext_resource type="PackedScene" path="res://src/village/train_dummy.tscn" id="25"]
+[ext_resource type="PackedScene" path="res://src/ui/job_select_panel.tscn" id="26"]
 
 [sub_resource type="RectangleShape2D" id="shape_craft"]
 size = Vector2(60, 60)
@@ -188,3 +190,10 @@ color = Color(1, 0.98, 0.93, 1)
 [node name="CraftPanel" parent="." instance=ExtResource("10")]
 
 [node name="SubJobPanel" parent="." instance=ExtResource("11")]
+
+; 훈련소 허수아비 — 좌클릭하면 직업 선택 카드 창(JobSelectPanel)이 열린다. 클릭 전용(전투 판정 없음).
+;   훈련소 건물(TrainStation, 700,380) 곁에 세워 "직업을 바꾸는 곳"으로 묶는다.
+[node name="TrainDummy" parent="." instance=ExtResource("25")]
+position = Vector2(600, 380)
+
+[node name="JobSelectPanel" parent="." instance=ExtResource("26")]
