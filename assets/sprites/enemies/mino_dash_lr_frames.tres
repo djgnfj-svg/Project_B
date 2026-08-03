@@ -1,0 +1,137 @@
+[gd_resource type="SpriteFrames" load_steps=20 format=3]
+
+[ext_resource type="Texture2D" path="res://assets/sprites/enemies/mino_dash_lr.png" id="1_dashlr"]
+
+[sub_resource type="AtlasTexture" id="d00"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(0, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d01"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(64, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d02"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(128, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d03"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(192, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d04"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(256, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d05"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(320, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d06"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(384, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d07"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(448, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d08"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(512, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d09"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(576, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d10"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(640, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d11"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(704, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d12"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(768, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d13"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(832, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d14"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(896, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d15"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(960, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d16"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(1024, 0, 64, 64)
+
+[sub_resource type="AtlasTexture" id="d17"]
+atlas = ExtResource("1_dashlr")
+region = Rect2(1088, 0, 64, 64)
+
+[resource]
+animations = [{
+"frames": [{
+"duration": 1.4,
+"texture": SubResource("d00")
+}, {
+"duration": 1.0,
+"texture": SubResource("d01")
+}, {
+"duration": 1.0,
+"texture": SubResource("d02")
+}, {
+"duration": 1.0,
+"texture": SubResource("d03")
+}, {
+"duration": 1.2,
+"texture": SubResource("d04")
+}, {
+"duration": 1.0,
+"texture": SubResource("d05")
+}, {
+"duration": 1.2,
+"texture": SubResource("d06")
+}, {
+"duration": 1.0,
+"texture": SubResource("d07")
+}, {
+"duration": 0.7,
+"texture": SubResource("d08")
+}, {
+"duration": 0.6,
+"texture": SubResource("d09")
+}, {
+"duration": 0.5,
+"texture": SubResource("d10")
+}, {
+"duration": 0.5,
+"texture": SubResource("d11")
+}, {
+"duration": 0.6,
+"texture": SubResource("d12")
+}, {
+"duration": 1.0,
+"texture": SubResource("d13")
+}, {
+"duration": 1.4,
+"texture": SubResource("d14")
+}, {
+"duration": 1.0,
+"texture": SubResource("d15")
+}, {
+"duration": 1.0,
+"texture": SubResource("d16")
+}, {
+"duration": 1.2,
+"texture": SubResource("d17")
+}],
+"loop": false,
+"name": &"dash",
+"speed": 14.0
+}]

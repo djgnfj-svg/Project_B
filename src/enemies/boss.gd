@@ -106,6 +106,17 @@ const CHARGE_RECOIL_SPEED := 180.0  # 바위 충돌 시 뒤로 튕기는 초기 
 #      상수로 두면 이동 거리와 시간이 서로를 몰라 **속도를 낮추는 순간 조용히 미완주**다.
 #   지속 유도의 단일 소스 = `CombatMath.charge_dash_duration_s(pat)`.
 const WHIRL_OFFSET_Y := -13.0       # F7 회오리 시트(128px, 발밑 y96)를 방향 시트 발 높이에 맞추는 오프셋
+# 횡단 돌진 시트(mino_dash) 페이즈 = `dash` 태그 18프레임의 서브레인지. task 명세 미러:
+#   P1 사라짐 0-4 · P2 재등장 5-7 · P3 돌진 8-12 · P4 종료 13-17.
+# 🔴 이 상수를 시트 프레임 수와 미러다 — 시트를 다시 그려 프레임 수가 바뀌면 여기도 같이 고친다
+#   (`telegraph.png`·`blast.png` 미러 함정과 같은 부류). `_tick_dash_anim`이 총 프레임 수로 clamp해
+#   시트가 짧으면 조용히 얼지 않게 방어한다.
+const DASH_WINDUP_LAST := 7    # WINDUP 구간의 마지막 프레임(사라짐+재등장 = 0..7)
+const DASH_RUN_FIRST := 8      # 돌진 run 시작
+const DASH_RUN_LAST := 12      # 돌진 run 끝(루프 구간 8..12)
+const DASH_END_FIRST := 13     # 종료 첫 프레임(13..마지막)
+const DASH_RUN_FPS := 16.0     # 돌진 run 루프 속도(프레임/초) — 손맛값(rules §0 예외, docs/TUNING.md)
+const DASH_END_FPS := 18.0     # 종료 애니 속도
 # 바위를 부수고 지나갈 때의 화면 흔들림(§2 손맛 훅). 🔴 `HitStop.punch`는 쓰지 마라 —
 #   피격용이라 보스 `speed_scale`을 0으로 만들어 `_apply_anim_scale`과 채널이 겹친다.
 const ROCK_BREAK_SHAKE := 2.4
@@ -184,6 +195,19 @@ var _telegraph_pat: BossPatternDef = null  # 지금 그려져 있는 예고의 �
 var _c1_frames: SpriteFrames = null    # C1 코옵 전용 클립 시트(roar/grab/groggy — mino_boss_c1) 지연 로드
 var _spin_frames: SpriteFrames = null  # 돌진 회전 전용 풀캐릭터 시트(mino_spin_full) 지연 로드
 var _whirl_frames: SpriteFrames = null # F7 제자리 회오리 전용 시트(mino_whirl, 128px + 황금 에너지) 지연 로드
+# 횡단 돌진 전용 시트(mino_dash_lr / _rl, 64px 18프레임 단일 `dash` 태그) 지연 로드 —
+# 방향(L→R / R→L)마다 다른 시트라 둘을 캐시한다. 🔴 **설계 doc §9-0("새 애니 없음")을 대체한다** —
+# 그 문서 이후 아트가 나왔다(art 산출이 설계보다 나중이라 여기가 정본). 없으면 로드 실패 → 방향
+# 시트 walk 폴백으로 조용히 떨어진다(설계 doc §9-0 경로 = 완전 항등, 표시 축이라 판정 무관).
+var _dash_frames_lr: SpriteFrames = null   # L→R (진행 방향 x>0)
+var _dash_frames_rl: SpriteFrames = null   # R→L (진행 방향 x<0)
+# 돌진 시트가 지금 프레임을 몰고 있는가 + 어느 페이즈인가. 페이즈 = 시트 서브레인지(위치 로직과 동기):
+#   0 = 미사용(방향 시트) · 1 = WINDUP(사라짐 0-4 + 재등장 5-7, 코드가 예고 진행도로 frame을 몬다) ·
+#   2 = 돌진(run 8-12 루프) · 3 = 종료(end 13-17 1회).
+# 🔴 서브레인지를 코드가 몬다 — AnimatedSprite2D는 태그 안의 프레임 구간 재생을 직접 못 한다(task 명세).
+var _dash_phase: int = 0
+var _dash_frames_active: SpriteFrames = null  # 지금 물린 방향 시트(_tick_dash_anim이 프레임 총수 상한에 씀)
+var _dash_dir_x: float = 1.0                  # 이번 돌진 진행 x 부호 — 페이즈 전환 시 시트 방향 유지(호스트/게스트 공통)
 var _hitfall_frames: SpriteFrames = null  # 바위 충돌·그로기 클립 시트(mino_hit_fall) 지연 로드
 var _hitfall_active: bool = false          # 충돌/그로기 클립 재생 중 — 그로기 끝나면 end_c1_clip으로 복귀
 var _spin_anim_active: bool = false        # 제자리 회오리(pat_spin=F7) 클립 재생 중 — RECOVER 끝에 방향 시트 복귀
@@ -362,6 +386,10 @@ func _on_hp_changed(hp: int, dropped: bool) -> void:
 		_knock_show_px = -1.0
 		velocity = Vector2.ZERO
 		_state = State.IDLE
+		# 🔴 죽을 때 돌진 시트가 물려 있으면 방향 시트로 복원한다 — `death`는 `def.frames`에만 있어서
+		#   dash 시트가 물린 채 `_play(&"death")`를 부르면 `_has_anim(&"death")`가 false → **시체가
+		#   돌진 프레임으로 언다**(에러 없음). `_stop_dash_sheet`가 `end_c1_clip`으로 원복한다.
+		_stop_dash_sheet()
 		if _has_anim(&"death"):
 			visible = true
 			_play(&"death")  # 시체 남김(loop=false 전제) — 없으면 숨김
@@ -388,6 +416,9 @@ func _physics_process(delta: float) -> void:
 			_advance_telegraph_phase()
 		_update_telegraph_progress()
 	_apply_anim_scale()
+	# 횡단 돌진 시트 프레임 구동 — 호스트/게스트 공용(표시 축). `_dash_phase == 0`이면 즉시 return하니
+	# 다른 패턴·잔몹엔 무영향. WINDUP(P1)은 위에서 갱신된 예고 진행도를 읽으므로 이 자리가 계약이다.
+	_tick_dash_anim(delta)
 	_update_life_feel(delta)
 	# 🔴 **광역 시야 단일 choke point** — 출구를 세지 않고 "지금 넓어야 하는가"를 매 프레임
 	#   재주장한다(`_apply_anim_scale`·`_reassert_telegraph_pos`와 같은 관용구). 사망·결박·대상
@@ -613,6 +644,131 @@ func play_whirl_clip(clip: StringName) -> void:
 	_sprite.offset = Vector2(0, WHIRL_OFFSET_Y)
 
 
+# --- 횡단 돌진 시트(mino_dash) 배선 (task 명세) — 방향(L→R / R→L) 선택 + 페이즈별 서브레인지 ---
+# 🔴 `play_spin_clip`과 **같은 관용구**(`_play_alt_clip`으로 몸통 통째 스왑)이되, 64px라 whirl과 달리
+#   offset 0이다(task 명세). 스왑 후 프레임 서브레인지는 `_tick_dash_anim`이 매 프레임 몬다 —
+#   AnimatedSprite2D는 태그 안 구간 재생을 직접 못 하기 때문이다.
+# 🔴 시트가 없으면(로드 실패) `_play_alt_clip`이 early return하고 `_dash_phase`도 0으로 남아,
+#   호출부는 방향 시트 walk 폴백을 그대로 쓴다(설계 doc §9-0 = 완전 항등). 표시 축이라 판정 무관.
+func _dash_frames_for(dir_x: float) -> SpriteFrames:
+	if dir_x >= 0.0:
+		if _dash_frames_lr == null:
+			_dash_frames_lr = load("res://assets/sprites/enemies/mino_dash_lr_frames.tres") as SpriteFrames
+		return _dash_frames_lr
+	if _dash_frames_rl == null:
+		_dash_frames_rl = load("res://assets/sprites/enemies/mino_dash_rl_frames.tres") as SpriteFrames
+	return _dash_frames_rl
+
+
+# 돌진 시트를 물리고 페이즈를 연다. phase 1 = WINDUP(사라짐+재등장), 2 = 돌진 run, 3 = 종료.
+# 🔴 `_play_alt_clip`이 `_c1_active = true`로 만든다 → `_update_move_anim`·생명감 드리프트가 억제되고
+#   (클립이 곧 포즈) 피격 idle 복귀는 `_in_charge_states()` 가드가 이미 막는다. 복귀는 `end_c1_clip`.
+func _play_dash_sheet(dir_x: float, phase: int) -> void:
+	# 페이즈 전환(1→2→3)은 dir_x = 0으로 부를 수 있다 — 그때는 직전 방향을 유지한다.
+	if not is_zero_approx(dir_x):
+		_dash_dir_x = 1.0 if dir_x >= 0.0 else -1.0
+	var frames := _dash_frames_for(_dash_dir_x)
+	if frames == null or not frames.has_animation(&"dash"):
+		_dash_phase = 0
+		_dash_frames_active = null
+		return
+	# 방향이 바뀌었거나 아직 안 물렸으면 스왑(같은 시트 재장전은 프레임0으로 안 되돌리게 가드).
+	if _sprite.sprite_frames != frames or not _c1_active:
+		_play_alt_clip(frames, &"dash")
+		_sprite.offset = Vector2.ZERO   # 64px 시트 — whirl(128px)과 달리 오프셋 없음
+	_dash_frames_active = frames
+	_dash_phase = phase
+	# 🔴 **`stop()`을 먼저, 프레임 대입을 나중에** — Godot 4.x의 `AnimatedSprite2D.stop()`은 frame을
+	#   0으로 되돌린다. 순서가 뒤집히면 phase 2/3의 시작 프레임(8/13)이 stop에 지워져 **조용히 0으로
+	#   되돌아간다**(에러 없음, 페이즈 시작 프레임만 어긋남).
+	_sprite.stop()   # 프레임은 코드가 몬다(_play_alt_clip의 play를 멈춘다 — 서브레인지 밖으로 안 새게)
+	match phase:     # 시작 프레임을 페이즈 첫 칸에 놓는다(진행은 _tick_dash_anim이 벽시계로 몬다)
+		1: _sprite.set_frame_and_progress(0, 0.0)
+		2: _sprite.set_frame_and_progress(_dash_run_first(), 0.0)
+		3: _sprite.set_frame_and_progress(_dash_end_first(), 0.0)
+	_sprite.speed_scale = 1.0
+	_anim_scale = 1.0
+
+
+# 시트 총 프레임 수로 clamp된 서브레인지 경계 — 시트가 명세보다 짧아도 조용히 안 얼게 방어(미러 함정).
+func _dash_frame_count() -> int:
+	if _dash_frames_active == null:
+		return 0
+	return _dash_frames_active.get_frame_count(&"dash")
+
+
+func _dash_windup_last() -> int:
+	return mini(DASH_WINDUP_LAST, maxi(_dash_frame_count() - 1, 0))
+
+
+func _dash_run_first() -> int:
+	return mini(DASH_RUN_FIRST, maxi(_dash_frame_count() - 1, 0))
+
+
+func _dash_run_last() -> int:
+	return mini(DASH_RUN_LAST, maxi(_dash_frame_count() - 1, 0))
+
+
+func _dash_end_first() -> int:
+	return mini(DASH_END_FIRST, maxi(_dash_frame_count() - 1, 0))
+
+
+# 돌진 시트 프레임을 매 프레임 몬다 — `_physics_process`에서 `_dash_phase > 0`일 때만.
+# 🔴 위치 로직과 동기: WINDUP은 예고 진행도(progress)로 사라짐→재등장을 몰고, 돌진은 run을 루프,
+#   종료는 end를 1회 재생한다. 프레임을 코드가 쥐므로 히트스톱(speed_scale)과 채널이 겹치지 않는다
+#   (speed_scale은 안 쓴다 — `_apply_anim_scale`이 1.0을 재주장할 뿐).
+func _tick_dash_anim(delta: float) -> void:
+	if _dash_phase == 0 or _dash_frames_active == null:
+		return
+	match _dash_phase:
+		1:
+			# 사라짐(0-4)+재등장(5-7) — 예고 진행도에 매핑(0 → last). 코드가 몰아 위치와 동기.
+			var last := _dash_windup_last()
+			var prog := 0.0
+			if _telegraph_total_s > 0.0:
+				prog = clampf(1.0 - _telegraph_left / _telegraph_total_s, 0.0, 1.0)
+			_sprite.set_frame_and_progress(int(round(prog * float(last))), 0.0)
+		2:
+			# 돌진 run(8-12) 루프 — 벽시계로 자체 진행(속도는 히트스톱 무관 상수).
+			var first := _dash_run_first()
+			var last2 := _dash_run_last()
+			var span := last2 - first + 1
+			if span <= 0:
+				return
+			var t := _sprite.frame - first
+			var acc := _sprite.frame_progress + DASH_RUN_FPS * delta
+			while acc >= 1.0:
+				acc -= 1.0
+				t = (t + 1) % span
+			_sprite.set_frame_and_progress(first + t, acc)
+		3:
+			# 종료 end(13-끝) 1회 — 마지막 프레임에 닿으면 멈춘다.
+			# 🔴 호스트: RECOVER 종료(`_stop_dash_sheet`)가 방향 시트로 복귀시킨다 — 여기선 멈추기만.
+			#   게스트: 상태기계가 없어 여기가 유일한 복귀 지점 → 마지막 프레임에서 방향 시트로 복귀.
+			var first3 := _dash_end_first()
+			var lastf := maxi(_dash_frame_count() - 1, first3)
+			if _sprite.frame >= lastf:
+				_sprite.set_frame_and_progress(lastf, 0.0)
+				if not Net.is_host():
+					_stop_dash_sheet()   # 게스트 복귀 — 다음 예고(P1)가 오면 다시 물린다
+				return
+			var acc3 := _sprite.frame_progress + DASH_END_FPS * delta
+			var f := _sprite.frame
+			while acc3 >= 1.0 and f < lastf:
+				acc3 -= 1.0
+				f += 1
+			_sprite.set_frame_and_progress(f, minf(acc3, 0.999))
+
+
+# 돌진 시트를 끄고 방향 시트로 복귀 — `end_c1_clip`이 방향 시트 원복 + idle. 페이즈 리셋.
+func _stop_dash_sheet() -> void:
+	if _dash_phase == 0:
+		return
+	_dash_phase = 0
+	_dash_frames_active = null
+	end_c1_clip()
+
+
 # 돌진 회전 시작 — 풀캐릭터 회전 시트(mino_spin_full)의 spin 클립(루프)로 몸통을 통째 갈아끼운다.
 func _start_spin_axe() -> void:
 	play_spin_clip(&"spin")
@@ -821,6 +977,8 @@ func _host_ai(delta: float) -> void:
 				if _spin_anim_active:
 					_spin_anim_active = false
 					end_c1_clip()      # F7 제자리 회오리 끝 → 방향 시트 복귀
+				# 횡단 종료 애니(P4)가 물려 있으면 방향 시트로 복귀. `_stop_dash_sheet`는 미사용 시 무해.
+				_stop_dash_sheet()
 				_state = State.CHASE
 
 
@@ -844,6 +1002,39 @@ func _select_pattern(dist: float) -> BossPatternDef:
 				or (p.priority == best.priority and p.range < best.range):
 			best = p
 	return best
+
+
+# O키 = 횡단 돌진 강제 발동(개발/시연용, 호스트만). 실제 실행 경로(`debug_force_pattern`)를 그대로
+# 타므로 예고·판정·FX·네트워크 중계가 진짜와 동일하다 — 랩이 아니라 라이브 배우에서 부른다.
+# 🔴 **호스트 게이트가 계약이다** — 보스 AI·패턴 발동은 호스트 권한(rules §1). 게스트가 눌러도
+#   아무 일도 안 일어난다(패턴은 호스트가 확정해 G_BOSS_ATK로 중계한다). 신뢰 경계 무변경.
+# 🔴 특정 id를 박지 않고 **capsule(횡단) 패턴을 데이터에서 찾는다** — id가 바뀌어도 안 깨진다.
+# ⚠ KEY_O는 게임 입력과 안 겹친다(grep 확인: `KEY_O` 사용처 0). 물리 키코드로 본다.
+func _unhandled_input(event: InputEvent) -> void:
+	if def == null or _health.is_dead() or not Net.is_host():
+		return
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return
+	if key.keycode != KEY_O:
+		return
+	# 진행 중이면(예고/돌진/접근) 무시 — 겹쳐 발동하면 상태기계가 꼬인다.
+	if _state == State.WINDUP or _in_charge_states():
+		return
+	var cross := _find_cross_pattern()
+	if cross != null:
+		get_viewport().set_input_as_handled()
+		debug_force_pattern(cross.id)
+
+
+# data에서 횡단 돌진(capsule + 접근 단계) 패턴을 찾는다 — O키·시연이 id를 몰라도 부를 수 있게.
+func _find_cross_pattern() -> BossPatternDef:
+	if def == null:
+		return null
+	for p: BossPatternDef in def.patterns:
+		if p != null and p.shape == "capsule" and _has_cross_approach(p):
+			return p
+	return null
 
 
 # 테스트 랩 전용 — 특정 패턴 id를 즉시 강제 발동(쿨다운·거리·debug_hold 무시). 호스트만.
@@ -906,7 +1097,12 @@ func _begin_windup(pat: BossPatternDef, anchor: Vector2) -> void:
 		# 원: 대상 net_anchor 고정 — 예고를 보고 빠져나갈 수 있게 (GDD §5 기믹 원칙)
 		_strike_center = anchor
 	_show_telegraph_visual(pat, _strike_center, _strike_angle)
-	if pat.is_charge and pat.charge_spin_s > 0.0:
+	if pat.shape == "capsule":
+		# 횡단 돌진 — mino_dash 시트로 사라짐→가장자리 재등장(P1+P2)을 예고 동안 재생(task 명세).
+		# 🔴 방향은 이번 돌진 진행 방향의 x 부호 = `_strike_angle`(정확히 0/PI). `cos`이 부호를 준다.
+		#   시트가 없으면 `_dash_phase = 0`으로 떨어져 방향 시트 walk 폴백(설계 doc §9-0 = 항등).
+		_play_dash_sheet(cos(_strike_angle), 1)
+	elif pat.is_charge and pat.charge_spin_s > 0.0:
 		# 돌진 예비 자세 — 회전 시트(mino_spin_full)의 spin_prep(도끼 치켜듦→웅크림)을 예고 동안 재생.
 		# 예고(좁은 cone)는 "경로 예고(긁힘 선)"로 이미 _show_telegraph_visual이 그렸다.
 		# 🔴 게이트가 `charge_spin_s > 0`인 것이 요점이다 — 그 필드가 곧 "제자리 회전이 있는가"라
@@ -984,11 +1180,14 @@ func _enter_charge_dash() -> void:
 	if _cur_pattern.charge_spin_s > 0.0:
 		_start_spin_axe()                  # 회전 시트(mino_spin_full) spin 클립으로 몸통 통째 스왑
 	else:
-		# «확정» 새 애니 없음 — 방향 시트의 walk 루프를 진행 방향으로 튼다(설계 §9-0).
-		# ⚠ `_update_move_anim`이 CHARGE_DASH에서 early return하므로 여기서 한 번 심으면 유지된다.
-		#   반대로 여기서 안 심으면 **접근 방향의 walk**(= 반대편을 보는 자세)가 그대로 남는다.
-		_face_dir = _dir_suffix(_charge_dir)
-		_play(&"walk")
+		# 횡단 돌진 — mino_dash 시트의 run(P3, 8-12)을 튼다(task 명세). WINDUP에서 P1+P2를 이미
+		# 재생했고 여기서 P3로 넘어간다(같은 시트라 스왑 없이 프레임 페이즈만 바뀐다).
+		_play_dash_sheet(_charge_dir.x, 2)
+		# 🔴 시트 로드 실패 폴백 — 설계 doc §9-0의 방향 시트 walk 루프(완전 항등). `_dash_phase`가
+		#   0으로 떨어졌을 때만 = 시트가 없을 때만 탄다.
+		if _dash_phase == 0:
+			_face_dir = _dir_suffix(_charge_dir)
+			_play(&"walk")
 	# 🔴 **예고를 끄지 않는다(캡슐 한정)** — 돌진 내내 켜 두고 차오름만 재장전한다(설계 §7-2).
 	#   속도 1200에서 게스트 화면의 보스 몸은 304~350px(스윕 반경의 4.2~4.9배) 뒤처지므로
 	#   **정확한 표시가 예고 도형 하나뿐**이 된다. 단계 전환 자체는 `_advance_telegraph_phase()`가
@@ -1006,8 +1205,14 @@ func _end_charge_dash() -> void:
 	_charge_idx += 1
 	if _cur_pattern != null and _charge_idx < maxi(_cur_pattern.charge_repeat, 1) \
 			and _has_cross_approach(_cur_pattern) and _select_target(_cur_pattern) != null:
+		# 다음 회차 있음 — 시트는 다음 WINDUP(P1)에서 다시 물린다. 지금은 접근으로 넘어가며 정리.
+		_stop_dash_sheet()
 		_enter_charge_approach()
 		return
+	# 마지막 회차 — 종료 애니(P4, 13-17)를 잠깐 재생하고 RECOVER로. `_end_charge_pattern`이
+	# recover_s 동안 P4를 굴린 뒤 RECOVER 종료에서 방향 시트로 복귀한다.
+	if _dash_frames_active != null:
+		_play_dash_sheet(_charge_dir.x, 3)
 	_end_charge_pattern()
 
 
@@ -1289,7 +1494,13 @@ func show_boss_telegraph(pattern_id: String, center: Vector2, angle: float, idx:
 		return  # 모르는 패턴 id = 무시
 	_charge_idx = maxi(idx, 0)
 	_show_telegraph_visual(pat, center, angle)
-	_play_attack_anim(pat)  # 공격 애니 재생 (게스트는 자기 pat.telegraph_s 길이에 맞춘다)
+	if pat.shape == "capsule":
+		# 게스트 횡단 예고 — mino_dash 시트 P1(사라짐)+P2(재등장)를 예고 진행도로 재생(호스트와 미러).
+		# 방향은 예고 각의 cos 부호(정확히 0/PI라 ±1). 돌진 구간(P3)은 `_advance_telegraph_phase`가
+		# 텔레그래프 만료 시점에 넘긴다(호스트/게스트 공용 경로 — "예고 끝 = 돌진 시작"을 시간으로 안다).
+		_play_dash_sheet(cos(angle), 1)
+	else:
+		_play_attack_anim(pat)  # 공격 애니 재생 (게스트는 자기 pat.telegraph_s 길이에 맞춘다)
 
 
 # 물뿌리기 N개 원 텔레그래프 + 애니 (표시 전용, 판정 절대 없음 — 그건 CombatAuthority). 호스트/게스트 공용:
@@ -1366,8 +1577,20 @@ func _advance_telegraph_phase() -> void:
 		_telegraph_left = _telegraph_total_s
 		if _telegraph_mat != null:
 			_telegraph_mat.set_shader_parameter(&"progress", 0.0)   # 차오름 재장전(0 → 1 다시)
+		# 예고 끝 = 돌진 시작 — 돌진 시트를 run(P3)으로 넘긴다(호스트/게스트 공용). 호스트는
+		# `_enter_charge_dash`에서도 P2를 심지만 같은 시트·같은 페이즈라 idempotent(무해). 게스트는
+		# 이 경로가 유일한 P3 트리거다(돌진 시작 메시지를 따로 안 받는다 — 시간으로 안다).
+		if _dash_phase == 1:
+			_play_dash_sheet(0.0, 2)   # dir 0 = 직전 방향 유지(호스트/게스트 공통)
 		return
 	_telegraph.visible = false
+	# 캡슐 돌진 구간 종료(phase 1 만료) — 🔴 **게스트 전용 정리 경로**다. 호스트는 이 함수 밖(상태기계
+	#   `_end_charge_dash`)에서 P4·복귀를 몬다. 게스트는 상태기계가 없어 여기가 유일한 종료 신호다:
+	#   run 시트가 영영 안 멈추지 않게 종료(P4)로 넘긴다. 다음 회차 예고(show_boss_telegraph)가 오면
+	#   다시 P1로 물린다. ⚠ 호스트에서 이 자리에 도달할 때는 `_dash_phase`가 이미 상태기계에서
+	#   갱신됐거나(다음 회차 P1) `_state != CHARGE_DASH`라 무해하다.
+	if _dash_phase == 2 and not Net.is_host():
+		_play_dash_sheet(0.0, 3)
 
 
 # 예고를 월드에 못 박는다 — "예고는 뜬 자리에 그대로 있다"가 회피의 전제다(§3 "맞는 곳=보이는 곳"이
